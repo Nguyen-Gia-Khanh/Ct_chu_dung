@@ -1,0 +1,7 @@
+# Database and backup files
+*.db
+*.bak
+
+# Python cache directories and files
+__pycache__/
+*.pyc
