@@ -97,14 +97,6 @@ class WarehouseDatabase:
                     ON placements(slot_id);
                 """
             )
-            needs_side = "side" not in {
-                row["name"] for row in connection.execute("PRAGMA table_info(shelves)")
-            }
-            if needs_side:
-                backup_path = self.path.with_name(f"{self.path.name}.before-side-update.bak")
-                if not backup_path.exists():
-                    with closing(sqlite3.connect(backup_path)) as backup:
-                        connection.backup(backup)
             # Older versions called the commit time "assigned_at". Preserve it
             # under its correct name; the actual assignment time is unknown.
             # Rebuilding referenced layout tables needs foreign keys disabled
@@ -122,52 +114,9 @@ class WarehouseDatabase:
                     "ALTER TABLE placements ADD COLUMN stock_qty INTEGER "
                     "CHECK (stock_qty IS NULL OR (stock_qty >= 0 AND typeof(stock_qty) = 'integer'))"
                 )
-            if needs_side:
-                self._migrate_shelf_sides(connection)
             self._migrate_continuous_cells(connection)
-            if needs_side:
-                slots = connection.execute(
-                    """
-                    SELECT slots.slot_id, slots.slot_name, slots.slot_number, shelf_rows.row_number,
-                           shelves.floor, shelves.side, shelves.shelf_code
-                    FROM slots JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
-                    JOIN shelves ON shelves.shelf_id = shelf_rows.shelf_id
-                    """
-                ).fetchall()
-                self._rename_slots(connection, {
-                    row["slot_id"]: make_slot_name(
-                        row["floor"], row["shelf_code"], row["row_number"], row["slot_number"], side=row["side"],
-                    ) for row in slots
-                })
             if connection.execute("PRAGMA foreign_key_check").fetchall():
                 raise sqlite3.IntegrityError("Database upgrade found invalid location references; changes were rolled back.")
-
-    @staticmethod
-    def _migrate_shelf_sides(connection: sqlite3.Connection) -> None:
-        sequences = dict(connection.execute("SELECT name, seq FROM sqlite_sequence WHERE name = 'shelves'"))
-        # Build then replace the parent table while foreign keys are disabled.
-        # Keep shelf_id and its AUTOINCREMENT history so every reference survives.
-        connection.execute("""
-            CREATE TABLE shelves_new (
-                shelf_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                floor TEXT NOT NULL COLLATE NOCASE,
-                side TEXT NOT NULL DEFAULT '1' COLLATE NOCASE CHECK (length(trim(side)) > 0),
-                shelf_code TEXT NOT NULL COLLATE NOCASE,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (floor, side, shelf_code)
-            )
-        """)
-        connection.execute("""
-            INSERT INTO shelves_new (shelf_id, floor, side, shelf_code, created_at, updated_at)
-            SELECT shelf_id, floor, '1', shelf_code, created_at, updated_at FROM shelves
-        """)
-        connection.execute("DROP TABLE shelves")
-        connection.execute("ALTER TABLE shelves_new RENAME TO shelves")
-        for table, sequence in sequences.items():
-            cursor = connection.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?", (sequence, table))
-            if cursor.rowcount == 0:
-                connection.execute("INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)", (table, sequence))
 
     @staticmethod
     def _rename_slots(connection: sqlite3.Connection, names: dict[int, str]) -> None:
