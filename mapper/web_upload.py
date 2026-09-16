@@ -13,24 +13,24 @@ from typing import Callable
 
 
 # Change these settings here if your Chrome port or website changes.
-DEBUGGER_ADDRESS = "127.0.0.1:8000"
+DEBUGGER_ADDRESS = "127.0.0.1:9222"
 TAB_URL_CONTAINS = ""  # Optional URL fragment when several product tabs are open.
 TIMEOUT_SECONDS = 20
 
-SEARCH_XPATH = "/html/body/div[3]/div[2]/section/div[1]/article/div/div/input"
-EDIT_XPATH = (
-    "/html/body/div[3]/div[2]/section/div[2]/section[2]/section/article/div/div[2]"
-    "/table/tbody/tr[3]/td[2]/div/div/div/div[1]/div/div[7]/div[2]/a[1]"
-)
-# The popup's div[47]/div[68] number changes between openings. Anchor to its form.
-FORM_XPATH = "//kv-product-form/form"
-PANE_XPATH = FORM_XPATH + "/section/kv-tabs/div/div[2]/kv-tab-pane[1]/div/div/div[2]"
-QUANTITY_XPATH = PANE_XPATH + "/div[3]/div[2]/div/div[1]/div/div/input"
-LOCATION_FIELD_XPATH = PANE_XPATH + "/div[4]/div[2]/div/div[1]"
-CREATE_LOCATION_XPATH = LOCATION_FIELD_XPATH + "/div/div[1]/a"
-LOCATION_FORM_XPATH = "//kv-shelves-add-or-edit"
-NEW_LOCATION_XPATH = LOCATION_FORM_XPATH + "/div[1]/div/div/input"
-SAVE_XPATH = FORM_XPATH + "/div/div[2]/a[4]"
+SEARCH_XPATH = '//kv-multi-select-search//input'
+CLEAR_SEARCH_XPATH = '//*[@id="idDropdownSearch"]/button[1]'
+EDIT_XPATH = '//a[normalize-space()="Chỉnh sửa"]'
+FORM_XPATH = '//*[@id="product-addnew"]'
+QUANTITY_XPATH = '//kv-tab-pane/div/div/div[2]/div[3]/div[2]/div/div[1]/div/div/input'
+LOCATION_FIELD_XPATH = '//kv-tab-pane/div/div/div[2]/div[4]/div[2]/div/div[1]'
+
+# Location Creation Specific XPaths
+CREATE_LOCATION_XPATH = '//*[@id="pro_tabs"]/div/div[2]/kv-tab-pane[1]/div/div/div[2]/div[4]/div[2]/div/div[1]/div/div[1]/a'
+NEW_LOCATION_XPATH = '//*[@id="shelvesAddOrEdit"]'
+SAVE_LOCATION_XPATH = '//kv-shelves-add-or-edit//a[normalize-space()="Lưu"]'  # Robust fallback for /html/body/div[67]/div[2]/div/kv-shelves-add-or-edit/div[2]/div[2]/a[2]
+LOCATION_FORM_XPATH = '//kv-shelves-add-or-edit'
+
+SAVE_XPATH = '//a[normalize-space()="Lưu"]'
 
 # Usually detected from a Code/SKU/product-ID input in the edit form. If your
 # site's input has no identifying attributes, put its exact XPath here.
@@ -241,7 +241,7 @@ class WebsiteUploader:
             ) from error
         options = webdriver.ChromeOptions()
         options.debugger_address = DEBUGGER_ADDRESS
-        options.add_experimental_option("detach", True)
+        
         try:
             self.driver = webdriver.Chrome(options=options)
             self.driver.set_page_load_timeout(self.timeout)
@@ -305,45 +305,60 @@ class WebsiteUploader:
         return self._dom("identity", {"form": FORM_XPATH, "id": PRODUCT_ID_XPATH}, product.product_id)
 
     def _open_product(self, product: UploadProduct) -> None:
-        self._fill_and_enter(SEARCH_XPATH, product.product_id)
-        self._wait(
-            f"finding the exact result for {product.product_id}",
-            lambda: self._dom("row_matches", EDIT_XPATH, product.product_id),
-            check_errors=True,
-        )
-        self._click(EDIT_XPATH, "opening the product edit form")
-        self._wait("opening the edit form", lambda: self._dom("present", FORM_XPATH))
-        self._wait(
-            "checking the product ID (set PRODUCT_ID_XPATH if automatic detection fails)",
-            lambda: self._identity_matches(product),
-        )
+            # Wipe any existing search query first
+            self._wait("finding search input", lambda: self._dom("present", SEARCH_XPATH))
+            self._dom("set", SEARCH_XPATH, "")
+            
+            # Input product ID and search
+            self._fill_and_enter(SEARCH_XPATH, product.product_id)
+            self._wait(
+                f"finding the exact result for {product.product_id}",
+                lambda: self._dom("row_matches", EDIT_XPATH, product.product_id),
+                check_errors=True,
+            )
+            self._click(EDIT_XPATH, "opening the product edit form")
+            self._wait("opening the edit form", lambda: self._dom("present", FORM_XPATH))
+            self._wait(
+                "checking the product ID",
+                lambda: self._identity_matches(product),
+            )
 
     def _set_location(self, product: UploadProduct, progress: Callable[[str], None]) -> None:
-        target = product.location_id
-        self._wait("finding the location field", lambda: self._dom("present", LOCATION_FIELD_XPATH))
-        if self._dom("location_pick", LOCATION_FIELD_XPATH, target):
-            return
-        if self._dom("location_search", LOCATION_FIELD_XPATH, target):
-            try:
-                self._wait("looking for an existing location", lambda: self._dom(
-                    "location_pick", LOCATION_FIELD_XPATH, target
-                ), timeout=5, check_errors=True)
+            target = product.location_id
+            self._wait("finding the location field", lambda: self._dom("present", LOCATION_FIELD_XPATH))
+            if self._dom("location_pick", LOCATION_FIELD_XPATH, target):
                 return
-            except WaitExpired:
-                pass
-        progress(f"Creating location {target}…")
-        self._click(CREATE_LOCATION_XPATH, "opening Add location")
-        self._fill_and_enter(NEW_LOCATION_XPATH, target)
-        try:
-            self._wait("saving the location", lambda: not self._dom("present", LOCATION_FORM_XPATH), check_errors=True)
-        except UploadError as error:
-            raise UploadError(
-                f"Could not create/select location {target}. If it already exists, select it in Chrome. "
-                "The product Save button has not been pressed.\n\n" + str(error)
-            ) from error
-        self._wait("checking the selected location", lambda: self._dom(
-            "location_pick", LOCATION_FIELD_XPATH, target
-        ), check_errors=True)
+            if self._dom("location_search", LOCATION_FIELD_XPATH, target):
+                try:
+                    self._wait("looking for an existing location", lambda: self._dom(
+                        "location_pick", LOCATION_FIELD_XPATH, target
+                    ), timeout=5, check_errors=True)
+                    return
+                except WaitExpired:
+                    pass
+            
+            # Step 1: Click "Tạo mới" button
+            progress(f"Creating location {target}…")
+            self._click(CREATE_LOCATION_XPATH, "opening Add location modal")
+            
+            # Step 2: Enter location ID
+            self._wait("finding new location input", lambda: self._dom("present", NEW_LOCATION_XPATH))
+            self._dom("set", NEW_LOCATION_XPATH, target)
+            
+            # Step 3: Click Save on location modal
+            self._click(SAVE_LOCATION_XPATH, "saving new location")
+            
+            try:
+                self._wait("saving the location", lambda: not self._dom("present", LOCATION_FORM_XPATH), check_errors=True)
+            except UploadError as error:
+                raise UploadError(
+                    f"Could not create/select location {target}. "
+                    "The product Save button has not been pressed.\n\n" + str(error)
+                ) from error
+                
+            self._wait("checking the selected location", lambda: self._dom(
+                "location_pick", LOCATION_FIELD_XPATH, target
+            ), check_errors=True)
 
     def _values_match(self, product: UploadProduct) -> bool:
         quantity = self._dom("quantity", QUANTITY_XPATH)
