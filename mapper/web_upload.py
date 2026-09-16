@@ -368,6 +368,9 @@ class WebsiteUploader:
             progress(f"Selecting location {product.location_id}…")
             self._set_location(product, progress)
             self._wait("checking quantity, product ID, and location before Save", lambda: self._values_match(product), check_errors=True)
+
+            return "Fields filled. Press Lưu manually in Chrome."
+        
             progress("Saving the product on the website…")
             # From here onward a timeout has an uncertain outcome. Never retry Save.
             save_attempted = True
