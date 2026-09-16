@@ -104,10 +104,10 @@ The application creates `warehouse_locations.db` beside the script. This is a no
 
 The data model enforces one designated slot per product while allowing any number of different products in a slot.
 
-When updating from the earlier version, keep your existing `warehouse_locations.db`
-beside `warehouse_mapper.py`. No database migration or product re-import is needed.
-Existing row numbers and location names are preserved; Row 1 is now displayed at
-the bottom. The download does not contain a database that would replace your data.
+The application expects `warehouse_locations.db` to use the current schema,
+including shelf sides. If the database is from an older schema, delete it and
+let the application create a fresh database. The download does not contain a
+database that would replace your data.
 
 ## Checks
 
