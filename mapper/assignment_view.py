@@ -82,7 +82,7 @@ class StockQuantityDialog(tk.Toplevel):
 
 
 class AssignmentView(ttk.Frame):
-    def __init__(self, parent, on_search, on_assign, on_return, on_select, *, read_only=False):
+    def __init__(self, parent, on_search, on_assign, on_return, on_select, *, read_only=False, on_upload=None):
         super().__init__(parent, padding=10)
         self.read_only = read_only
         self.on_select = on_select
@@ -197,6 +197,20 @@ class AssignmentView(ttk.Frame):
                 text="Return selected products to queue",
                 command=on_return,
             ).pack(fill="x")
+            self.upload_button = ttk.Button(
+                details_footer, text="Upload to web", command=on_upload,
+                state="normal" if on_upload is not None else "disabled",
+            )
+            self.upload_button.pack(fill="x", pady=(6, 0))
+            ttk.Label(
+                details_footer,
+                text="Select one product. Upload updates the website; Commit saves SQLite.",
+                wraplength=300, foreground="#555555",
+            ).pack(anchor="w", pady=(5, 0))
+            self.upload_status_text = tk.StringVar(value="")
+            ttk.Label(
+                details_footer, textvariable=self.upload_status_text, wraplength=300,
+            ).pack(anchor="w", pady=(5, 0))
         ttk.Label(
             details_footer,
             text="Blue = searched product's slot; green = occupied" if read_only else "Yellow = staged; green = already saved",
