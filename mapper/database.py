@@ -54,6 +54,7 @@ class WarehouseDatabase:
                 CREATE TABLE IF NOT EXISTS products (
                     product_id   TEXT PRIMARY KEY,
                     product_name TEXT NOT NULL,
+                    shortened_name TEXT NOT NULL DEFAULT '',
                     imported_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -97,6 +98,13 @@ class WarehouseDatabase:
                     ON placements(slot_id);
                 """
             )
+            product_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(products)")
+            }
+            if "shortened_name" not in product_columns:
+                connection.execute(
+                    "ALTER TABLE products ADD COLUMN shortened_name TEXT NOT NULL DEFAULT ''"
+                )
             # Older versions called the commit time "assigned_at". Preserve it
             # under its correct name; the actual assignment time is unknown.
             # Rebuilding referenced layout tables needs foreign keys disabled
@@ -199,7 +207,7 @@ class WarehouseDatabase:
             if cursor.rowcount == 0:
                 connection.execute("INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)", (table, sequence))
 
-    def import_products(self, records: dict[str, str]) -> tuple[int, int]:
+    def import_products(self, records: dict[str, str | tuple[str, str]]) -> tuple[int, int]:
         if not records:
             return 0, 0
 
@@ -213,13 +221,19 @@ class WarehouseDatabase:
             }
             connection.executemany(
                 """
-                INSERT INTO products (product_id, product_name)
-                VALUES (?, ?)
+                INSERT INTO products (product_id, product_name, shortened_name)
+                VALUES (?, ?, ?)
                 ON CONFLICT(product_id) DO UPDATE SET
                     product_name = excluded.product_name,
+                    shortened_name = excluded.shortened_name,
                     imported_at = CURRENT_TIMESTAMP
                 """,
-                records.items(),
+                [
+                    (product_id, value[0], value[1] or value[0])
+                    if isinstance(value, tuple)
+                    else (product_id, value, value)
+                    for product_id, value in records.items()
+                ],
             )
         return len(records) - len(existing), len(existing)
 

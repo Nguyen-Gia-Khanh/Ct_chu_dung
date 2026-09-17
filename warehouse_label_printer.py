@@ -1,6 +1,7 @@
 """Separate Tkinter app for printing labels from the warehouse mapper database.
 
-Put this file and warehouse_label_pdf.py beside warehouse_mapper.py, then run:
+Put this file beside warehouse_mapper.py and keep warehouse_label_pdf.py inside
+the print_layout folder, then run:
     python warehouse_label_printer.py
 
 Only PDF generation needs an extra package: python -m pip install reportlab
@@ -76,9 +77,17 @@ class LabelDatabase:
                 rows = connection.execute(
                     "SELECT row_number, slot_count FROM shelf_rows WHERE shelf_id = ? ORDER BY row_number", (shelf_id,),
                 ).fetchall()
-                records = connection.execute("""
+                product_columns = {
+                    row["name"] for row in connection.execute("PRAGMA table_info(products)")
+                }
+                label_name = (
+                    "COALESCE(NULLIF(TRIM(p.shortened_name), ''), p.product_name)"
+                    if "shortened_name" in product_columns
+                    else "p.product_name"
+                )
+                records = connection.execute(f"""
                     SELECT sl.slot_id, sl.slot_name, r.row_number, sl.slot_number,
-                           p.product_id, p.product_name
+                           p.product_id, {label_name} AS label_name
                     FROM shelf_rows r JOIN slots sl ON sl.row_id = r.row_id
                     LEFT JOIN placements pl ON pl.slot_id = sl.slot_id
                     LEFT JOIN products p ON p.product_id = pl.product_id
@@ -90,7 +99,7 @@ class LabelDatabase:
                     slot_id = record["slot_id"]
                     metadata[slot_id] = record
                     if record["product_id"] is not None:
-                        products[slot_id].append(Product(record["product_id"], record["product_name"]))
+                        products[slot_id].append(Product(record["product_id"], record["label_name"]))
                 cells = tuple(Cell(
                     shelf_id, slot_id, record["row_number"], record["slot_number"],
                     record["slot_name"], tuple(products[slot_id]),
@@ -120,7 +129,7 @@ class LabelPrinterApp:
     def __init__(self, root: tk.Tk, database_path: Path):
         self.root = root
         self.root.title("Warehouse Label Printer")
-        self.root.geometry("1400x850")
+        self.root.state("zoomed")
         self.root.minsize(1080, 650)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.database = LabelDatabase(database_path)
@@ -137,7 +146,7 @@ class LabelPrinterApp:
         self.last_pdf = None
         self.db_text = tk.StringVar(value=str(self.database.path))
         self.search_text = tk.StringVar()
-        self.page_count = tk.StringVar(value="4")
+        self.label_height = tk.IntVar(value=7)
         self.summary_text = tk.StringVar(value="Select a shelf to begin.")
         self.location_text = tk.StringVar(value="Click a cell")
         self.status_text = tk.StringVar(value="Uses committed data. Commit changes in the mapper, then press Refresh here.")
@@ -154,7 +163,7 @@ class LabelPrinterApp:
         header = ttk.Frame(self.root, padding=(12, 10))
         header.pack(fill="x")
         ttk.Label(header, text="Warehouse Label Printer", font=("Segoe UI", 17, "bold")).pack(side="left")
-        ttk.Label(header, text="A4 labels from saved shelf contents").pack(side="left", padx=20)
+        ttk.Label(header, text="Landscape A4 labels from saved shelf contents").pack(side="left", padx=20)
         database_bar = ttk.Frame(self.root, padding=(12, 0, 12, 10))
         database_bar.pack(fill="x")
         ttk.Label(database_bar, text="Database:").pack(side="left")
@@ -220,14 +229,15 @@ class LabelPrinterApp:
         ttk.Label(footer, textvariable=self.summary_text).pack(anchor="w", pady=(0, 8))
         buttons = ttk.Frame(footer)
         buttons.pack(fill="x")
-        ttk.Label(buttons, text="Labels per A4:").pack(side="left")
-        ttk.Combobox(buttons, textvariable=self.page_count, values=("4", "3", "2"), state="readonly", width=4).pack(side="left", padx=(6, 15))
+        ttk.Label(buttons, text="Label height:").pack(side="left")
+        ttk.Radiobutton(buttons, text="7 cm (3 per landscape A4)", variable=self.label_height, value=7).pack(side="left", padx=(6, 8))
+        ttk.Radiobutton(buttons, text="15 cm (1 per landscape A4)", variable=self.label_height, value=15).pack(side="left", padx=(0, 15))
         self.print_all_button = ttk.Button(buttons, text="Print all cells (PDF)...", command=lambda: self.start_print(False))
         self.print_all_button.pack(side="left", padx=(0, 8))
         self.print_selected_button = ttk.Button(buttons, text="Print selected cells (PDF)...", command=lambda: self.start_print(True))
         self.print_selected_button.pack(side="left")
         ttk.Button(buttons, text="Open last PDF", command=self.open_last_pdf).pack(side="right")
-        ttk.Label(footer, text="Print buttons open an A4 PDF. Press Ctrl+P in the PDF viewer; use Actual size / 100%. Empty cells get location-only labels.").pack(anchor="w", pady=(8, 0))
+        ttk.Label(footer, text="Print buttons open a landscape A4 PDF. Press Ctrl+P in the PDF viewer; use Actual size / 100%. Empty cells get location-only labels.").pack(anchor="w", pady=(8, 0))
         ttk.Label(self.root, textvariable=self.status_text, relief="sunken", anchor="w", padding=(8, 4)).pack(fill="x")
         self.update_summary()
 
@@ -379,20 +389,20 @@ class LabelPrinterApp:
         try:
             shelves = self.database.read_shelves(self.selected_shelf_ids())
             cells = cells_for_printing(shelves, self.marked if selected_only else None)
-            per_page = int(self.page_count.get())
+            height_cm = int(self.label_height.get())
         except (OSError, sqlite3.Error, ValueError) as error:
             messagebox.showerror("Cannot print labels", str(error), parent=self.root)
             return
-        output = Path(__file__).resolve().parent / "label_printouts" / f"warehouse_labels_{datetime.now():%Y%m%d_%H%M%S_%f}.pdf"
+        output = Path(__file__).resolve().parent / "label_printouts" / f"warehouse_labels_{height_cm}cm_{datetime.now():%Y%m%d_%H%M%S_%f}.pdf"
         self.busy = True
         self.update_summary()
-        self.status_text.set(f"Preparing {label_count(cells)} labels from the latest committed placements...")
-        Thread(target=self._generate_pdf, args=(cells, output, per_page), daemon=True).start()
+        self.status_text.set(f"Preparing {label_count(cells)} labels at {height_cm} cm from the latest committed placements...")
+        Thread(target=self._generate_pdf, args=(cells, output, height_cm), daemon=True).start()
         self.poll_id = self.root.after(100, self._poll)
 
-    def _generate_pdf(self, cells, output, per_page):
+    def _generate_pdf(self, cells, output, height_cm):
         try:
-            result = render_labels_pdf(cells, output, labels_per_page=per_page, progress=lambda text: self.events.put(("progress", text)))
+            result = render_labels_pdf(cells, output, label_height_cm=height_cm, progress=lambda text: self.events.put(("progress", text)))
             self.events.put(("done", result))
         except Exception as error:
             self.events.put(("error", str(error)))

@@ -1,4 +1,4 @@
-"""A4 warehouse labels: a large location on the left, products on the right.
+"""Landscape A4 labels: a large location and one short line per product.
 
 Used by warehouse_label_printer.py. ReportLab is imported only when creating a
 PDF. Change the constants below to revise the printed design.
@@ -16,15 +16,18 @@ import unicodedata
 from xml.sax.saxutils import escape
 
 
-MARGIN_MM = 10
-GAP_MM = 3
-LEFT_WIDTH_MM = 60
+MARGIN_MM = 5
+GAP_MM = 0
+LEFT_WIDTH_MM = 80
 PADDING_MM = 4
-LOCATION_FONT_SIZE = 25
-MIN_LOCATION_FONT_SIZE = 12
-PRODUCT_FONT_SIZE = 10
-MIN_PRODUCT_FONT_SIZE = 8
-PRODUCTS_PER_LABEL = 4
+LOCATION_PADDING_MM = 4
+LOCATION_FONT_SIZE = 140
+MIN_LOCATION_FONT_SIZE = 20
+PRODUCT_FONT_SIZE = 28
+MIN_PRODUCT_FONT_SIZE = 16
+PRODUCTS_PER_LABEL = 3
+LABEL_HEIGHTS_MM = {7: 70, 15: 150}
+LABELS_PER_PAGE = {7: 3, 15: 1}
 # Normally discovered automatically. Set BOTH to override the system fonts.
 FONT_REGULAR_PATH = ""
 FONT_BOLD_PATH = ""
@@ -55,7 +58,7 @@ class PrintResult:
 
 
 def label_count(cells: list[Cell] | tuple[Cell, ...]) -> int:
-    # Extra labels preserve every product if a cell ever exceeds four products.
+    # Extra labels preserve every product if a cell ever exceeds three products.
     return sum(max(1, math.ceil(len(cell.products) / PRODUCTS_PER_LABEL)) for cell in cells)
 
 
@@ -85,7 +88,7 @@ def _font_files() -> tuple[Path, Path]:
 def render_labels_pdf(
     cells: list[Cell] | tuple[Cell, ...],
     output_path: Path,
-    *, labels_per_page: int = 4,
+    *, label_height_cm: int = 7,
     sample: bool = False,
     progress=lambda _text: None,
 ) -> PrintResult:
@@ -96,12 +99,11 @@ Output is replaced only after every label has been laid out successfully.
 """
     if not cells:
         raise ValueError("There are no cells to print.")
-    if labels_per_page not in (2, 3, 4):
-        raise ValueError("Choose 2, 3, or 4 labels per A4 page.")
+    if label_height_cm not in LABEL_HEIGHTS_MM:
+        raise ValueError("Choose a 7 cm or 15 cm label height.")
     try:
         from reportlab.lib import colors
-        from reportlab.lib.enums import TA_CENTER
-        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.pagesizes import A4, landscape
         from reportlab.lib.styles import ParagraphStyle
         from reportlab.lib.units import mm
         from reportlab.pdfbase import pdfmetrics
@@ -125,11 +127,15 @@ Output is replaced only after every label has been laid out successfully.
         # Canonical combining marks and XML escaping preserve Vietnamese and &/<.
         return escape(unicodedata.normalize("NFC", " ".join(str(value).split())))
 
-    page_w, page_h = A4
+    page_size = landscape(A4)
+    page_w, page_h = page_size
     margin, gap, padding = MARGIN_MM * mm, GAP_MM * mm, PADDING_MM * mm
-    header, footer = 6 * mm, 4 * mm
+    location_padding = LOCATION_PADDING_MM * mm
     label_w, left_w = page_w - 2 * margin, LEFT_WIDTH_MM * mm
-    label_h = (page_h - 2 * margin - header - footer - (labels_per_page - 1) * gap) / labels_per_page
+    label_h = LABEL_HEIGHTS_MM[label_height_cm] * mm
+    labels_per_page = LABELS_PER_PAGE[label_height_cm]
+    stack_h = labels_per_page * label_h + (labels_per_page - 1) * gap
+    top_margin = (page_h - stack_h) / 2
     right_w = label_w - left_w - 2 * padding
     body_h = label_h - 2 * padding
     labels = []
@@ -138,28 +144,37 @@ Output is replaced only after every label has been laid out successfully.
         labels.extend((cell, products, index + 1, len(chunks)) for index, products in enumerate(chunks))
     total_pages = math.ceil(len(labels) / labels_per_page)
     buffer = BytesIO()
-    canvas = Canvas(buffer, pagesize=A4, pageCompression=1)
+    canvas = Canvas(buffer, pagesize=page_size, pageCompression=1)
     canvas.setTitle("Warehouse location labels" + (" - draft sample" if sample else ""))
     canvas.setAuthor("Warehouse Label Printer")
 
     def product_blocks(products, location):
         for step in range(round((PRODUCT_FONT_SIZE - MIN_PRODUCT_FONT_SIZE) * 2) + 1):
             size = PRODUCT_FONT_SIZE - step / 2
-            name_style = ParagraphStyle("ProductName", fontName=regular, fontSize=size, leading=size * 1.2)
-            id_style = ParagraphStyle("ProductID", fontName=bold, fontSize=size, leading=size * 1.2)
+            leading = size * 1.15
+            line_style = ParagraphStyle(
+                "ProductLine", fontName=regular, fontSize=size, leading=leading
+            )
             blocks = []
             for product in products:
-                id_para = Paragraph(clean(product.product_id), id_style)
-                name_para = Paragraph(clean(product.name), name_style)
-                id_h = id_para.wrap(right_w, 10000)[1]
-                name_h = name_para.wrap(right_w, 10000)[1]
-                blocks.append((id_para, id_h, name_para, name_h))
-            total_h = sum(a + b + 2 for _, a, _, b in blocks) + max(0, len(blocks) - 1) * 8
-            if total_h <= body_h:
-                return blocks
+                line = Paragraph(
+                    # f"<b>{clean(product.product_id)}</b> | {clean(product.name)}",
+                    f"<b>{clean(product.product_id)}</b>",
+                    line_style,
+                )
+                line_h = line.wrap(right_w, 10000)[1]
+                blocks.append((line, line_h))
+            total_h = sum(height for _, height in blocks) + max(0, len(blocks) - 1) * 12
+            if all(height <= leading + 0.1 for _, height in blocks) and total_h <= body_h:
+                return blocks, total_h
+        next_step = (
+            "Choose the 15 cm size."
+            if label_height_cm == 7
+            else "Reduce the number of products or shorten the product names."
+        )
         raise ValueError(
-            f"The full text in {location} does not fit. Choose fewer labels per page "
-            "(2 gives the most space). Nothing was truncated or saved."
+            f"The full text in {location} does not fit the {label_height_cm} cm label. "
+            f"{next_step} Nothing was truncated or saved."
         )
 
     for index, (cell, products, part, parts) in enumerate(labels):
@@ -169,54 +184,64 @@ Output is replaced only after every label has been laid out successfully.
             if index:
                 canvas.showPage()
             progress(f"Creating A4 page {page} of {total_pages}...")
-            canvas.setFillColor(colors.HexColor("#555555"))
-            canvas.setFont(bold, 7)
-            canvas.drawString(margin, page_h - margin - 2, "WAREHOUSE LABELS" + (" / DRAFT SAMPLE" if sample else ""))
-            canvas.setFont(regular, 6.5)
-            canvas.drawRightString(page_w - margin, margin - 2, f"A4 / 100% scale / {page} of {total_pages}")
-            if sample:
-                canvas.drawString(margin, margin - 2, "Sample data - product names and IDs are illustrative.")
 
         x = margin
-        y = page_h - margin - header - (row + 1) * label_h - row * gap
+        y = page_h - top_margin - (row + 1) * label_h - row * gap
         canvas.setStrokeColor(colors.HexColor("#777777"))
         canvas.setLineWidth(0.55)
         canvas.rect(x, y, label_w, label_h)
         canvas.setStrokeColor(colors.HexColor("#BBBBBB"))
         canvas.line(x + left_w, y, x + left_w, y + label_h)
-        canvas.setFillColor(colors.HexColor("#666666"))
-        canvas.setFont(bold, 7)
-        canvas.drawString(x + padding, y + label_h - padding - 7, "LOCATION")
-
+        raw_location = unicodedata.normalize("NFC", " ".join(str(cell.location_id).split()))
+        location_lines = (raw_location[:4], raw_location[4:]) if len(raw_location) > 4 else (raw_location,)
+        widest_location_line = max(location_lines, key=lambda line: pdfmetrics.stringWidth(line, bold, LOCATION_FONT_SIZE))
         loc_size = LOCATION_FONT_SIZE
-        while loc_size > MIN_LOCATION_FONT_SIZE and pdfmetrics.stringWidth(cell.location_id, bold, loc_size) > left_w - 2 * padding:
+        location_body_h = label_h - 2 * location_padding
+        ascent, descent = pdfmetrics.getAscentDescent(bold, loc_size)
+        loc_h = (len(location_lines) - 1) * loc_size + ascent - descent
+        while loc_size > MIN_LOCATION_FONT_SIZE and (
+            pdfmetrics.stringWidth(widest_location_line, bold, loc_size)
+            > left_w - 2 * location_padding
+            or loc_h > location_body_h
+        ):
             loc_size -= 0.5
-        location_para = Paragraph(clean(cell.location_id), ParagraphStyle(
-            "Location", fontName=bold, fontSize=loc_size, leading=loc_size * 1.15, alignment=TA_CENTER,
-        ))
-        loc_h = location_para.wrap(left_w - 2 * padding, 10000)[1]
-        if loc_h > label_h - 2 * padding - 30:
+            ascent, descent = pdfmetrics.getAscentDescent(bold, loc_size)
+            loc_h = (len(location_lines) - 1) * loc_size + ascent - descent
+        if loc_h > location_body_h:
             raise ValueError(f"Location ID {cell.location_id!r} is too long for this label layout.")
-        location_para.drawOn(canvas, x + padding, y + (label_h - loc_h) / 2)
+        first_baseline = y + (label_h + loc_h) / 2 - ascent
+        canvas.setFillColor(colors.black)
+        canvas.setFont(bold, loc_size)
+        for line_number, line in enumerate(location_lines):
+            canvas.drawCentredString(
+                x + left_w / 2,
+                first_baseline - line_number * loc_size,
+                line,
+            )
         if parts > 1:
             canvas.setFont(regular, 7)
             canvas.drawCentredString(x + left_w / 2, y + padding, f"Part {part} of {parts}")
 
-        cursor_y = y + label_h - padding
         if not products:
             canvas.setFillColor(colors.HexColor("#777777"))
-            canvas.setFont(regular, 9)
-            canvas.drawString(x + left_w + padding, cursor_y - 11, "No products assigned")
-        for item, (id_para, id_h, name_para, name_h) in enumerate(product_blocks(products, cell.location_id)):
-            id_para.drawOn(canvas, x + left_w + padding, cursor_y - id_h)
-            cursor_y -= id_h + 2
-            name_para.drawOn(canvas, x + left_w + padding, cursor_y - name_h)
-            cursor_y -= name_h
-            if item < len(products) - 1:
+            canvas.setFont(regular, 24)
+            canvas.drawString(
+                x + left_w + padding,
+                y + label_h / 2 - 8,
+                "No products assigned",
+            )
+        else:
+            blocks, products_h = product_blocks(products, cell.location_id)
+            cursor_y = y + (label_h + products_h) / 2
+            for item, (line, line_h) in enumerate(blocks):
+                line.drawOn(canvas, x + left_w + padding, cursor_y - line_h)
+                cursor_y -= line_h
+                if item >= len(blocks) - 1:
+                    continue
                 canvas.setStrokeColor(colors.HexColor("#DDDDDD"))
                 canvas.setLineWidth(0.4)
-                canvas.line(x + left_w + padding, cursor_y - 4, x + label_w - padding, cursor_y - 4)
-                cursor_y -= 8
+                canvas.line(x + left_w + padding, cursor_y - 6, x + label_w - padding, cursor_y - 6)
+                cursor_y -= 12
 
     canvas.save()
     output_path = Path(output_path).expanduser().resolve()

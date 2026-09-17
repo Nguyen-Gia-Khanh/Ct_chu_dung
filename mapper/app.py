@@ -14,13 +14,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from .assignment_view import AssignmentView, StockQuantityDialog
-from .common import (
-    APP_TITLE,
-    MAX_VISIBLE_PRODUCTS,
-    application_directory,
-    make_slot_name,
-    normalize_search,
-)
+from .common import APP_TITLE, MAX_VISIBLE_PRODUCTS, application_directory, make_slot_name, normalize_search
 from .csv_import import ColumnMappingDialog, read_csv
 from .database import LayoutConflictError, Placement, WarehouseDatabase
 from .designer import ShelfDesigner
@@ -31,9 +25,7 @@ from .web_upload import UploadProduct, WebsiteUploader
 class WarehouseMapperApp:
     def __init__(self, root: tk.Tk, database_path: Path | None = None):
         self.root = root
-        self.database = WarehouseDatabase(
-            database_path or application_directory() / "warehouse_locations.db"
-        )
+        self.database = WarehouseDatabase(database_path or application_directory() / "warehouse_locations.db")
         self.products: dict[str, str] = {}
         self.product_search: dict[str, str] = {}
         self.committed_locations: dict[str, str] = {}
@@ -66,9 +58,7 @@ class WarehouseMapperApp:
             style.theme_use("vista")
         style.configure("Title.TLabel", font=("Segoe UI", 16, "bold"))
         style.configure("Heading.TLabel", font=("Segoe UI", 10, "bold"))
-        style.configure(
-            "Commit.TButton", font=("Segoe UI", 10, "bold"), padding=(14, 7)
-        )
+        style.configure("Commit.TButton", font=("Segoe UI", 10, "bold"), padding=(14, 7))
 
     def _build_ui(self) -> None:
         toolbar = ttk.Frame(self.root, padding=(12, 10))
@@ -76,19 +66,13 @@ class WarehouseMapperApp:
         toolbar.pack(fill="x")
         ttk.Label(toolbar, text=APP_TITLE, style="Title.TLabel").pack(side="left")
 
-        ttk.Button(toolbar, text="Import products CSV", command=self.import_csv).pack(
-            side="left", padx=(20, 6)
-        )
-        ttk.Button(toolbar, text="New shelf", command=self.new_shelf).pack(
-            side="left", padx=6
-        )
+        ttk.Button(toolbar, text="Import products CSV", command=self.import_csv).pack(side="left", padx=(20, 6))
+        ttk.Button(toolbar, text="New shelf", command=self.new_shelf).pack(side="left", padx=6)
 
         ttk.Label(toolbar, text="Existing shelf:").pack(side="left", padx=(18, 5))
         self.shelf_selector = ttk.Combobox(toolbar, state="readonly", width=28)
         self.shelf_selector.pack(side="left")
-        ttk.Button(toolbar, text="Load", command=self.load_selected_shelf).pack(
-            side="left", padx=(5, 6)
-        )
+        ttk.Button(toolbar, text="Load", command=self.load_selected_shelf).pack(side="left", padx=(5, 6))
 
         ttk.Button(
             toolbar,
@@ -101,17 +85,11 @@ class WarehouseMapperApp:
         self.notebook.pack(fill="both", expand=True, padx=12, pady=(0, 8))
 
         self.designer = ShelfDesigner(
-            self.notebook,
-            self.build_shelf_preview,
-            self.can_resize_rows,
-            self.on_rows_changed,
+            self.notebook, self.build_shelf_preview, self.can_resize_rows, self.on_rows_changed
         )
         self.assignments = AssignmentView(
-            self.notebook,
-            self.schedule_queue_refresh,
-            self.assign_selected_products,
-            self.return_selected_to_queue,
-            self.select_slot,
+            self.notebook, self.schedule_queue_refresh, self.assign_selected_products,
+            self.return_selected_to_queue, self.select_slot,
             on_upload=self.upload_selected_product,
         )
         self.notebook.add(self.designer, text="1. Shelf Designer")
@@ -121,13 +99,9 @@ class WarehouseMapperApp:
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
         self.status_text = tk.StringVar(value="Ready")
-        ttk.Label(
-            self.root,
-            textvariable=self.status_text,
-            relief="sunken",
-            anchor="w",
-            padding=(8, 3),
-        ).pack(fill="x", side="bottom")
+        ttk.Label(self.root, textvariable=self.status_text, relief="sunken", anchor="w", padding=(8, 3)).pack(
+            fill="x", side="bottom"
+        )
 
     def on_tab_changed(self, _event=None) -> None:
         if self.notebook.select() == str(self.lookup):
@@ -138,9 +112,7 @@ class WarehouseMapperApp:
 
     def _editor_state(self) -> tuple:
         return (
-            self.designer.floor_var.get(),
-            self.designer.side_var.get(),
-            self.designer.shelf_code_var.get(),
+            self.designer.floor_var.get(), self.designer.side_var.get(), self.designer.shelf_code_var.get(),
             self.designer.row_count_var.get(),
             tuple(count.get() for count in self.designer.row_inputs),
         )
@@ -148,23 +120,15 @@ class WarehouseMapperApp:
     def _slots_are_empty(self, removed_slots: set[str]) -> bool:
         """Check the working placements before removing any rows or cells."""
         locations = {
-            product_id: slot
-            for product_id, slot in self.committed_locations.items()
+            product_id: slot for product_id, slot in self.committed_locations.items()
             if product_id not in self.pending_unassignments
         }
-        locations.update(
-            {
-                product_id: placement.slot_name
-                for product_id, placement in self.staged_assignments.items()
-            }
-        )
-        occupied = sorted(
-            {slot for slot in locations.values() if slot in removed_slots}
-        )
+        locations.update({product_id: placement.slot_name for product_id, placement in self.staged_assignments.items()})
+        occupied = sorted({slot for slot in locations.values() if slot in removed_slots})
         if occupied:
             messagebox.showerror(
                 "Rows or cells still contain products",
-                f"Return or move the products in {occupied[0]} before removing this row or cell.",
+                f"Return or move the products in {occupied[0]} before removing this row or cell."
             )
             return False
         return True
@@ -200,63 +164,39 @@ class WarehouseMapperApp:
             )
             return False
         new_slots = {
-            (row_number, cell): make_slot_name(
-                floor, shelf_code, row_number, cell, side=side
-            )
+            (row_number, cell): make_slot_name(floor, shelf_code, row_number, cell, side=side)
             for row_number, count in enumerate(layout, start=1)
             for cell in range(1, count + 1)
         }
         valid_slots = set(new_slots.values())
         if len(valid_slots) != len(new_slots):
-            messagebox.showerror(
-                "Duplicate location IDs",
-                "Use a shelf code that gives each cell a distinct ID.",
-            )
+            messagebox.showerror("Duplicate location IDs", "Use a shelf code that gives each cell a distinct ID.")
             return False
         if self.preview_key:
             old_floor, old_side, old_code = self.preview_key
             old_slots = {
-                (row_number, cell): make_slot_name(
-                    old_floor, old_code, row_number, cell, side=old_side
-                )
+                (row_number, cell): make_slot_name(old_floor, old_code, row_number, cell, side=old_side)
                 for row_number, count in enumerate(self.current_layout, start=1)
                 for cell in range(1, count + 1)
             }
-            removed = {
-                name
-                for coordinate, name in old_slots.items()
-                if coordinate not in new_slots
-            }
+            removed = {name for coordinate, name in old_slots.items() if coordinate not in new_slots}
             if not self._slots_are_empty(removed):
                 return False
             if new_key != self.preview_key:
-                renamed = {
-                    name: new_slots[coordinate]
-                    for coordinate, name in old_slots.items()
-                    if coordinate in new_slots
-                }
+                renamed = {name: new_slots[coordinate] for coordinate, name in old_slots.items() if coordinate in new_slots}
                 self.staged_assignments = {
-                    product_id: Placement(
-                        renamed.get(item.slot_name, item.slot_name),
-                        item.stock_qty,
-                        item.assigned_at,
-                    )
+                    product_id: Placement(renamed.get(item.slot_name, item.slot_name), item.stock_qty, item.assigned_at)
                     for product_id, item in self.staged_assignments.items()
                 }
                 if self.current_shelf_id is not None:
                     # These are working display caches. Tab 3 reads the database
                     # independently and keeps showing saved metadata until Commit.
                     self.committed_placements = {
-                        product_id: Placement(
-                            renamed.get(item.slot_name, item.slot_name),
-                            item.stock_qty,
-                            item.assigned_at,
-                        )
+                        product_id: Placement(renamed.get(item.slot_name, item.slot_name), item.stock_qty, item.assigned_at)
                         for product_id, item in self.committed_placements.items()
                     }
                     self.committed_locations = {
-                        product_id: item.slot_name
-                        for product_id, item in self.committed_placements.items()
+                        product_id: item.slot_name for product_id, item in self.committed_placements.items()
                     }
                 self.selected_slot = renamed.get(self.selected_slot, self.selected_slot)
 
@@ -267,20 +207,13 @@ class WarehouseMapperApp:
         self.refresh_all_views()
         if switch_tab:
             self.notebook.select(self.assignments)
-        self.status_text.set(
-            "Shelf preview updated. Commit to save the layout and assignments."
-        )
+        self.status_text.set("Shelf preview updated. Commit to save the layout and assignments.")
         return True
 
     def render_shelf(self) -> None:
         floor, side, shelf_code = self.preview_key or ("", "", "")
         self.assignments.render_shelf(
-            floor,
-            shelf_code,
-            self.current_layout,
-            self.visible_slot_counts(),
-            self.selected_slot,
-            side=side,
+            floor, shelf_code, self.current_layout, self.visible_slot_counts(), self.selected_slot, side=side,
         )
         if self.current_layout:
             self.assignments.active_shelf_text.set(
@@ -300,10 +233,7 @@ class WarehouseMapperApp:
         saved: dict[str, int] = {}
         staged: dict[str, int] = {}
         for product_id, slot_name in self.committed_locations.items():
-            if (
-                product_id not in self.pending_unassignments
-                and product_id not in self.staged_assignments
-            ):
+            if product_id not in self.pending_unassignments and product_id not in self.staged_assignments:
                 saved[slot_name] = saved.get(slot_name, 0) + 1
         for placement in self.staged_assignments.values():
             slot_name = placement.slot_name
@@ -319,20 +249,14 @@ class WarehouseMapperApp:
             return
         selected_items = self.assignments.queue_tree.selection()
         if not selected_items:
-            messagebox.showinfo(
-                "Choose products", "Select one or more products from the queue."
-            )
+            messagebox.showinfo("Choose products", "Select one or more products from the queue.")
             return
 
         slot_name = self.selected_slot
         product_ids = [item_id.removeprefix("product::") for item_id in selected_items]
         dialog = StockQuantityDialog(
-            self.root,
-            slot_name,
-            [
-                (product_id, self.products.get(product_id, ""))
-                for product_id in product_ids
-            ],
+            self.root, slot_name,
+            [(product_id, self.products.get(product_id, "")) for product_id in product_ids],
         )
         self.root.wait_window(dialog)
         if dialog.result is None:
@@ -342,9 +266,7 @@ class WarehouseMapperApp:
         # this captured value, even if the shelf is saved much later.
         assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
         for product_id, quantity in dialog.result.items():
-            self.staged_assignments[product_id] = Placement(
-                slot_name, quantity, assigned_at
-            )
+            self.staged_assignments[product_id] = Placement(slot_name, quantity, assigned_at)
 
         self.refresh_all_views()
         self.status_text.set(
@@ -352,9 +274,7 @@ class WarehouseMapperApp:
         )
 
     def refresh_slot_contents(self) -> None:
-        self.assignments.contents_tree.delete(
-            *self.assignments.contents_tree.get_children()
-        )
+        self.assignments.contents_tree.delete(*self.assignments.contents_tree.get_children())
         if not self.selected_slot:
             self.assignments.selected_slot_text.set("No slot selected")
             return
@@ -378,18 +298,11 @@ class WarehouseMapperApp:
             for product_id in sorted(product_ids, key=str.casefold):
                 placement = placements[product_id]
                 self.assignments.contents_tree.insert(
-                    "",
-                    "end",
-                    iid=f"{state.lower()}::{product_id}",
+                    "", "end", iid=f"{state.lower()}::{product_id}",
                     values=(
-                        product_id,
-                        self.products.get(product_id, ""),
-                        placement.stock_qty
-                        if placement.stock_qty is not None
-                        else "Unknown",
-                        placement.assigned_at.replace("T", " ")
-                        if placement.assigned_at
-                        else "Unknown",
+                        product_id, self.products.get(product_id, ""),
+                        placement.stock_qty if placement.stock_qty is not None else "Unknown",
+                        placement.assigned_at.replace("T", " ") if placement.assigned_at else "Unknown",
                         state,
                     ),
                 )
@@ -397,34 +310,15 @@ class WarehouseMapperApp:
     def _selected_upload_product(self) -> UploadProduct:
         selected = self.assignments.contents_tree.selection()
         if len(selected) != 1:
-            raise ValueError(
-                "Select exactly one product in Selected slot contents, then press Upload to web."
-            )
+            raise ValueError("Select exactly one product in Selected slot contents, then press Upload to web.")
         state, separator, product_id = selected[0].partition("::")
-        if (
-            not separator
-            or state not in {"staged", "saved"}
-            or product_id not in self.products
-        ):
+        if not separator or state not in {"staged", "saved"} or product_id not in self.products:
             raise ValueError("Select a current product from the slot contents list.")
-        placements = (
-            self.staged_assignments if state == "staged" else self.committed_placements
-        )
+        placements = self.staged_assignments if state == "staged" else self.committed_placements
         placement = placements.get(product_id)
-        if (
-            placement is None
-            or placement.slot_name != self.selected_slot
-            or (
-                state == "saved"
-                and (
-                    product_id in self.pending_unassignments
-                    or product_id in self.staged_assignments
-                )
-            )
-        ):
-            raise ValueError(
-                "That selection changed. Select the product in its current slot again."
-            )
+        if (placement is None or placement.slot_name != self.selected_slot or
+                (state == "saved" and (product_id in self.pending_unassignments or product_id in self.staged_assignments))):
+            raise ValueError("That selection changed. Select the product in its current slot again.")
         if placement.stock_qty is None:
             raise ValueError(
                 "This product has no recorded quantity. Return it to the queue and assign it again "
@@ -438,25 +332,17 @@ class WarehouseMapperApp:
         try:
             product = self._selected_upload_product()
         except ValueError as error:
-            messagebox.showinfo(
-                "Choose a product to upload", str(error), parent=self.root
-            )
+            messagebox.showinfo("Choose a product to upload", str(error), parent=self.root)
             return
         # Capture the placement now. Later changes to the selected shelf/product
         # cannot alter an upload that is already in progress.
         self.web_upload_busy = True
         self.assignments.upload_button.configure(state="disabled")
-        self.assignments.upload_status_text.set(
-            f"Uploading {product.product_id} → {product.location_id}…"
-        )
-        self.status_text.set(
-            "Upload in progress. Leave the website tab untouched until it finishes."
-        )
+        self.assignments.upload_status_text.set(f"Uploading {product.product_id} → {product.location_id}…")
+        self.status_text.set("Upload in progress. Leave the website tab untouched until it finishes.")
         self.web_upload_events = Queue()
         Thread(
-            target=self._run_web_upload,
-            args=(product, self.web_upload_events),
-            daemon=True,
+            target=self._run_web_upload, args=(product, self.web_upload_events), daemon=True,
         ).start()
         self.web_upload_after_id = self.root.after(100, self._poll_web_upload)
 
@@ -464,9 +350,7 @@ class WarehouseMapperApp:
     def _run_web_upload(product: UploadProduct, events: Queue) -> None:
         # This worker never calls Tkinter and never writes to the local database.
         try:
-            result = WebsiteUploader().upload(
-                product, lambda text: events.put(("progress", text))
-            )
+            result = WebsiteUploader().upload(product, lambda text: events.put(("progress", text)))
         except Exception as error:
             events.put(("error", str(error)))
         else:
@@ -485,12 +369,8 @@ class WarehouseMapperApp:
             self.web_upload_busy = False
             self.assignments.upload_button.configure(state="normal")
             if event == "error":
-                self.assignments.upload_status_text.set(
-                    "Upload needs attention. See the message and check Chrome."
-                )
-                self.status_text.set(
-                    "Upload was not verified. Local staged changes are unchanged."
-                )
+                self.assignments.upload_status_text.set("Upload needs attention. See the message and check Chrome.")
+                self.status_text.set("Upload was not verified. Local staged changes are unchanged.")
                 messagebox.showerror("Upload to web", text, parent=self.root)
             else:
                 self.assignments.upload_status_text.set(text)
@@ -502,9 +382,7 @@ class WarehouseMapperApp:
     def return_selected_to_queue(self) -> None:
         selected_items = self.assignments.contents_tree.selection()
         if not selected_items:
-            messagebox.showinfo(
-                "Choose products", "Select products from the slot contents first."
-            )
+            messagebox.showinfo("Choose products", "Select products from the slot contents first.")
             return
 
         for item_id in selected_items:
@@ -514,9 +392,7 @@ class WarehouseMapperApp:
             else:
                 self.pending_unassignments.add(product_id)
         self.refresh_all_views()
-        self.status_text.set(
-            "Products returned to the working queue. Press Commit to save the change."
-        )
+        self.status_text.set("Products returned to the working queue. Press Commit to save the change.")
 
     def schedule_queue_refresh(self, *_args: object) -> None:
         if self.search_after_id:
@@ -533,9 +409,7 @@ class WarehouseMapperApp:
 
         available = []
         for product_id, product_name in self.products.items():
-            is_available = (
-                product_id not in committed or product_id in self.pending_unassignments
-            ) and product_id not in staged
+            is_available = (product_id not in committed or product_id in self.pending_unassignments) and product_id not in staged
             if not is_available:
                 continue
             if query and query not in self.product_search[product_id]:
@@ -544,22 +418,11 @@ class WarehouseMapperApp:
 
         self.assignments.queue_tree.delete(*self.assignments.queue_tree.get_children())
         for product_id, product_name in available[:MAX_VISIBLE_PRODUCTS]:
-            self.assignments.queue_tree.insert(
-                "",
-                "end",
-                iid=f"product::{product_id}",
-                values=(product_id, product_name),
-            )
+            self.assignments.queue_tree.insert("", "end", iid=f"product::{product_id}", values=(product_id, product_name))
 
         shown = min(len(available), MAX_VISIBLE_PRODUCTS)
-        suffix = (
-            " — narrow the search to see more"
-            if len(available) > MAX_VISIBLE_PRODUCTS
-            else ""
-        )
-        self.assignments.queue_count_text.set(
-            f"{len(available):,} matching · showing {shown:,}{suffix}"
-        )
+        suffix = " — narrow the search to see more" if len(available) > MAX_VISIBLE_PRODUCTS else ""
+        self.assignments.queue_count_text.set(f"{len(available):,} matching · showing {shown:,}{suffix}")
 
     def refresh_change_summary(self) -> None:
         changed_products = set(self.staged_assignments) | self.pending_unassignments
@@ -581,29 +444,21 @@ class WarehouseMapperApp:
         }
         self.committed_placements = self.database.get_placement_details()
         if self.current_shelf_id is not None and self.preview_key:
-            saved_floor, saved_side, saved_code, saved_layout = self.database.get_shelf(
-                self.current_shelf_id
-            )
+            saved_floor, saved_side, saved_code, saved_layout = self.database.get_shelf(self.current_shelf_id)
             if (saved_floor, saved_side, saved_code) != self.preview_key:
                 floor, side, code = self.preview_key
                 renamed = {
-                    make_slot_name(
-                        saved_floor, saved_code, row, cell, side=saved_side
-                    ): make_slot_name(floor, code, row, cell, side=side)
+                    make_slot_name(saved_floor, saved_code, row, cell, side=saved_side):
+                    make_slot_name(floor, code, row, cell, side=side)
                     for row, count in enumerate(saved_layout, start=1)
                     for cell in range(1, count + 1)
                 }
                 self.committed_placements = {
-                    product_id: Placement(
-                        renamed.get(item.slot_name, item.slot_name),
-                        item.stock_qty,
-                        item.assigned_at,
-                    )
+                    product_id: Placement(renamed.get(item.slot_name, item.slot_name), item.stock_qty, item.assigned_at)
                     for product_id, item in self.committed_placements.items()
                 }
         self.committed_locations = {
-            product_id: placement.slot_name
-            for product_id, placement in self.committed_placements.items()
+            product_id: placement.slot_name for product_id, placement in self.committed_placements.items()
         }
         self.refresh_shelf_selector()
         if hasattr(self, "assignments"):
@@ -625,11 +480,7 @@ class WarehouseMapperApp:
     def import_csv(self) -> None:
         selected = filedialog.askopenfilename(
             title="Import product list",
-            filetypes=(
-                ("CSV files", "*.csv"),
-                ("Text files", "*.txt"),
-                ("All files", "*.*"),
-            ),
+            filetypes=(("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")),
         )
         if not selected:
             return
@@ -643,29 +494,28 @@ class WarehouseMapperApp:
         self.root.wait_window(mapping_dialog)
         if mapping_dialog.result is None:
             return
-        id_index, name_index = mapping_dialog.result
+        id_index, name_index, short_name_index = mapping_dialog.result
 
-        records: dict[str, str] = {}
+        records: dict[str, tuple[str, str]] = {}
         skipped = 0
         duplicates = 0
-        required_index = max(id_index, name_index)
+        required_index = max(id_index, name_index, short_name_index)
         for row in csv_data.rows:
             if len(row) <= required_index:
                 skipped += 1
                 continue
             product_id = row[id_index].strip()
             product_name = row[name_index].strip()
+            shortened_name = row[short_name_index].strip() or product_name
             if not product_id or not product_name:
                 skipped += 1
                 continue
             if product_id in records:
                 duplicates += 1
-            records[product_id] = product_name
+            records[product_id] = (product_name, shortened_name)
 
         if not records:
-            messagebox.showerror(
-                "No products", "No valid product ID/name rows were found."
-            )
+            messagebox.showerror("No products", "No valid product ID/name rows were found.")
             return
         try:
             inserted, updated = self.database.import_products(records)
@@ -682,22 +532,18 @@ class WarehouseMapperApp:
             f"Blank/invalid rows skipped: {skipped:,}\n"
             f"Duplicate IDs inside CSV: {duplicates:,}",
         )
-        self.status_text.set(
-            f"Imported {len(records):,} product records from {Path(selected).name}."
-        )
+        self.status_text.set(f"Imported {len(records):,} product records from {Path(selected).name}.")
 
     def has_pending_changes(self) -> bool:
         return bool(
-            self.staged_assignments
-            or self.pending_unassignments
+            self.staged_assignments or self.pending_unassignments
             or (self.current_layout and self.current_shelf_id is None)
             or self._editor_state() != self.saved_editor_state
         )
 
     def confirm_discard_pending(self) -> bool:
         return not self.has_pending_changes() or messagebox.askyesno(
-            "Discard changes?",
-            "Discard the shelf or product changes that have not been committed?",
+            "Discard changes?", "Discard the shelf or product changes that have not been committed?"
         )
 
     def new_shelf(self) -> None:
@@ -754,18 +600,12 @@ class WarehouseMapperApp:
         if not self.build_shelf_preview(switch_tab=False):
             return False
         floor, side, shelf_code = self.preview_key
-        changed_products = len(
-            set(self.staged_assignments) | self.pending_unassignments
-        )
+        changed_products = len(set(self.staged_assignments) | self.pending_unassignments)
         try:
             shelf_id = self.database.commit_shelf(
-                floor,
-                shelf_code,
-                self.current_layout,
-                self.staged_assignments,
-                self.pending_unassignments,
-                side=side,
-                shelf_id=self.current_shelf_id,
+                floor, shelf_code, self.current_layout,
+                self.staged_assignments, self.pending_unassignments,
+                side=side, shelf_id=self.current_shelf_id,
             )
         except LayoutConflictError as error:
             messagebox.showerror("Shelf layout cannot be changed", str(error))
@@ -792,15 +632,13 @@ class WarehouseMapperApp:
     def on_close(self) -> None:
         if getattr(self, "web_upload_busy", False):
             messagebox.showinfo(
-                "Upload in progress",
-                "Wait for the current upload to finish before closing the mapper.",
+                "Upload in progress", "Wait for the current upload to finish before closing the mapper.",
                 parent=self.root,
             )
             return
         if self.has_pending_changes():
             choice = messagebox.askyesnocancel(
-                "Uncommitted changes",
-                "Commit shelf and product changes before closing?",
+                "Uncommitted changes", "Commit shelf and product changes before closing?"
             )
             if choice is None or (choice and not self.commit_changes()):
                 return
