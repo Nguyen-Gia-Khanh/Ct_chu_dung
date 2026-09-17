@@ -1,8 +1,9 @@
 """Upload ONE placement to the product page in an existing Chrome session.
 
 Selenium is optional and imported only when Upload is clicked. This module never
-opens SQLite, commits a shelf, logs in, or starts a product batch. Browser writes
-use JavaScript plus input/change events; Enter uses a real WebDriver key event.
+opens SQLite, commits a shelf, logs in, or starts a product batch. The selected
+SKU is looked up through the current KiotViet browser session, then the remaining
+form fields are changed one step at a time.
 """
 
 from __future__ import annotations
@@ -16,21 +17,19 @@ from typing import Callable
 DEBUGGER_ADDRESS = "127.0.0.1:9222"
 TAB_URL_CONTAINS = ""  # Optional URL fragment when several product tabs are open.
 TIMEOUT_SECONDS = 20
+STEP_DELAY_SECONDS = 2.0
+SAVE_ON_UPLOAD = False  # Keep False while testing; set True only for production.
+SET_LOCATION_ON_UPLOAD = True  # Set False to skip all location lookup/create/select work.
 
-SEARCH_XPATH = '//kv-multi-select-search//input'
-CLEAR_SEARCH_XPATH = '//*[@id="idDropdownSearch"]/button[1]'
-EDIT_XPATH = '//a[normalize-space()="Chỉnh sửa"]'
-FORM_XPATH = '//*[@id="product-addnew"]'
-QUANTITY_XPATH = '//kv-tab-pane/div/div/div[2]/div[3]/div[2]/div/div[1]/div/div/input'
-LOCATION_FIELD_XPATH = '//kv-tab-pane/div/div/div[2]/div[4]/div[2]/div/div[1]'
-
-# Location Creation Specific XPaths
-CREATE_LOCATION_XPATH = '//*[@id="pro_tabs"]/div/div[2]/kv-tab-pane[1]/div/div/div[2]/div[4]/div[2]/div/div[1]/div/div[1]/a'
-NEW_LOCATION_XPATH = '//*[@id="shelvesAddOrEdit"]'
-SAVE_LOCATION_XPATH = '//kv-shelves-add-or-edit//a[normalize-space()="Lưu"]'  # Robust fallback for /html/body/div[67]/div[2]/div/kv-shelves-add-or-edit/div[2]/div[2]/a[2]
-LOCATION_FORM_XPATH = '//kv-shelves-add-or-edit'
-
-SAVE_XPATH = '//a[normalize-space()="Lưu"]'
+# The popup's div[47]/div[68] number changes between openings. Anchor to its form.
+FORM_XPATH = "//kv-product-form/form"
+PANE_XPATH = FORM_XPATH + "/section/kv-tabs/div/div[2]/kv-tab-pane[1]/div/div/div[2]"
+QUANTITY_XPATH = PANE_XPATH + "/div[3]/div[2]/div/div[1]/div/div/input"
+LOCATION_FIELD_XPATH = PANE_XPATH + "/div[4]/div[2]/div/div[1]"
+CREATE_LOCATION_XPATH = LOCATION_FIELD_XPATH + "/div/div[1]/a"
+LOCATION_FORM_XPATH = "//kv-shelves-add-or-edit"
+NEW_LOCATION_XPATH = LOCATION_FORM_XPATH + "/div[1]/div/div/input"
+SAVE_XPATH = FORM_XPATH + "/div/div[2]/a[4]"
 
 # Usually detected from a Code/SKU/product-ID input in the edit form. If your
 # site's input has no identifying attributes, put its exact XPath here.
@@ -56,6 +55,378 @@ class UploadProduct:
             raise ValueError("A product ID and a location ID are required.")
         if type(self.stock_qty) is not int or not 0 <= self.stock_qty <= 2**53 - 1:
             raise ValueError("Upload needs a known whole-number quantity from 0 to 9,007,199,254,740,991.")
+
+
+# This replaces the old search-box + fixed-result-row XPaths. It runs inside the
+# already logged-in KiotViet tab, keeps the JWT inside that tab, waits for the API
+# lookup, and asks KiotViet's own Angular controller to open the exact product.
+OPEN_PRODUCT_SCRIPT = r"""
+const sku = String(arguments[0] || '').trim();
+const callback = arguments[arguments.length - 1];
+let finished = false;
+
+const finish = result => {
+    if (finished) return;
+    finished = true;
+    callback(result);
+};
+
+const fail = message => finish({
+    ok: false,
+    error: String(message || 'Unknown browser error')
+});
+
+const sleepMs = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+const decodeJwt = token => {
+    try {
+        let part = token.split('.')[1];
+        part = part.replace(/-/g, '+').replace(/_/g, '/');
+        part += '='.repeat((4 - part.length % 4) % 4);
+        const bytes = Uint8Array.from(atob(part), character => character.charCodeAt(0));
+        return JSON.parse(new TextDecoder().decode(bytes));
+    } catch (_error) {
+        return null;
+    }
+};
+
+const findCurrentAuth = () => {
+    const candidates = [];
+
+    for (const storageName of ['localStorage', 'sessionStorage']) {
+        let storage;
+        try {
+            storage = window[storageName];
+        } catch (_error) {
+            continue;
+        }
+
+        for (let index = 0; index < storage.length; index += 1) {
+            const key = storage.key(index);
+            const value = storage.getItem(key) || '';
+            const matches = value.match(
+                /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g
+            ) || [];
+
+            for (const token of matches) {
+                const payload = decodeJwt(token);
+                if (payload) candidates.push({token, payload});
+            }
+        }
+    }
+
+    const cookieMatches = document.cookie.match(
+        /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g
+    ) || [];
+
+    for (const token of cookieMatches) {
+        const payload = decodeJwt(token);
+        if (payload) candidates.push({token, payload});
+    }
+
+    const now = Date.now() / 1000;
+    return candidates
+        .filter(item => !item.payload.exp || item.payload.exp > now)
+        .sort((left, right) => {
+            const leftKiotViet = left.payload.kvrcode ? 1 : 0;
+            const rightKiotViet = right.payload.kvrcode ? 1 : 0;
+            if (leftKiotViet !== rightKiotViet) return rightKiotViet - leftKiotViet;
+            return (right.payload.exp || 0) - (left.payload.exp || 0);
+        })[0] || null;
+};
+
+const findUpdateProductScopeNow = () => {
+    if (!window.angular) return null;
+
+    const checkedScopes = new Set();
+    const checkScopeChain = start => {
+        let current = start;
+        while (current) {
+            const key = current.$id != null ? 'id:' + current.$id : current;
+            if (checkedScopes.has(key)) break;
+            checkedScopes.add(key);
+            if (typeof current.UpdateProduct === 'function') return current;
+            current = current.$parent;
+        }
+        return null;
+    };
+
+    const elements = [
+        document.documentElement,
+        document.body,
+        ...document.querySelectorAll(
+            '.ng-scope, [ng-controller], [data-ng-controller], [ng-view], [data-ng-view], [ui-view]'
+        )
+    ].filter(Boolean);
+
+    for (const element of elements) {
+        try {
+            const wrapped = window.angular.element(element);
+            const normal = typeof wrapped.scope === 'function' ? wrapped.scope() : null;
+            const fromNormal = checkScopeChain(normal);
+            if (fromNormal) return fromNormal;
+
+            const isolated = typeof wrapped.isolateScope === 'function' ? wrapped.isolateScope() : null;
+            const fromIsolated = checkScopeChain(isolated);
+            if (fromIsolated) return fromIsolated;
+        } catch (_error) {
+            // Some nodes are outside Angular; ignore them.
+        }
+    }
+
+    // Fallback: traverse Angular's scope tree directly. This catches controllers
+    // whose scope exists even when the Edit button has not been rendered yet.
+    let injector = null;
+    for (const element of elements) {
+        try {
+            const candidate = window.angular.element(element).injector();
+            if (candidate) {
+                injector = candidate;
+                break;
+            }
+        } catch (_error) {
+            // Keep searching.
+        }
+    }
+
+    if (!injector) return null;
+
+    try {
+        const root = injector.get('$rootScope');
+        const stack = [root];
+        const visited = new Set();
+
+        while (stack.length) {
+            const scope = stack.pop();
+            if (!scope) continue;
+            const key = scope.$id != null ? scope.$id : scope;
+            if (visited.has(key)) continue;
+            visited.add(key);
+
+            if (typeof scope.UpdateProduct === 'function') return scope;
+
+            for (let child = scope.$$childHead; child; child = child.$$nextSibling) {
+                stack.push(child);
+            }
+        }
+    } catch (_error) {
+        return null;
+    }
+
+    return null;
+};
+
+const waitForUpdateProductScope = async timeoutMs => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const scope = findUpdateProductScopeNow();
+        if (scope) return scope;
+        await sleepMs(200);
+    }
+    return null;
+};
+
+const lookupProduct = async (skuValue, auth) => {
+    const claims = auth.payload;
+    const retailer = String(claims.kvrcode || location.hostname.split('.')[0] || '');
+    const branchId = String(claims.kvbid || '');
+    const groupId = String(claims.kvrgid || '');
+
+    const url = 'https://api-man1.kiotviet.vn/api/products/suggest' +
+        '?tearm=' + encodeURIComponent(skuValue) +
+        '&IncludeCombo=true&ShowAllItem=false&IsShowOnHand=true' +
+        '&ExcludeProductIds=&IsGetTotalOnhand=false';
+
+    const response = await fetch(url, {
+        method: 'GET',
+        credentials: 'omit',
+        headers: {
+            authorization: 'Bearer ' + auth.token,
+            branchid: branchId,
+            retailer,
+            'x-group-id': groupId,
+            'x-retailer-code': retailer
+        }
+    });
+
+    if (!response.ok) {
+        const details = (await response.text()).slice(0, 500);
+        throw Error('Product lookup failed (' + response.status + '): ' + details);
+    }
+
+    const payload = await response.json();
+    const products = Array.isArray(payload) ? payload :
+        [payload && payload.Data, payload && payload.data,
+         payload && payload.Products, payload && payload.products]
+            .find(Array.isArray);
+
+    if (!products) throw Error('KiotViet returned an unexpected product-search response.');
+
+    const wanted = skuValue.toLowerCase();
+    const product = products.find(item =>
+        String(item && item.Code || '').trim().toLowerCase() === wanted
+    );
+
+    if (!product) throw Error('Exact SKU not found: ' + skuValue);
+    return product;
+};
+
+(async () => {
+    try {
+        if (!sku) return fail('The product ID is empty.');
+        if (!window.angular) return fail('KiotViet Angular is not available on this tab.');
+
+        const auth = findCurrentAuth();
+        if (!auth) return fail('Could not find the current KiotViet token in browser storage.');
+
+        // Do the API lookup first; it does not depend on the detail/Edit UI being rendered.
+        const product = await lookupProduct(sku, auth);
+
+        // UpdateProduct belongs to the product-list Angular scope. Search the whole
+        // scope tree instead of requiring the Chỉnh sửa button to already exist.
+        const scope = await waitForUpdateProductScope(10000);
+        if (!scope) {
+            return fail(
+                'KiotViet product controller is not loaded yet. ' +
+                'Leave the Hàng hóa > Danh sách hàng hóa page open and wait for the list to finish loading.'
+            );
+        }
+
+        const productForEdit = Object.assign({}, scope.dataItem || {}, product);
+        scope.$applyAsync(() => {
+            try {
+                scope.UpdateProduct(productForEdit);
+                finish({
+                    ok: true,
+                    product_id: String(product.Code || sku),
+                    kiotviet_id: String(product.Id || '')
+                });
+            } catch (error) {
+                fail(error && error.message ? error.message : error);
+            }
+        });
+    } catch (error) {
+        fail(error && error.message ? error.message : error);
+    }
+})();
+"""
+
+
+# Read KiotViet's current shelf/location master list directly from the same
+# authenticated browser session. The JWT never leaves the KiotViet tab.
+GET_SHELVES_SCRIPT = r"""
+const callback = arguments[arguments.length - 1];
+let finished = false;
+
+const finish = result => {
+    if (finished) return;
+    finished = true;
+    callback(result);
+};
+const fail = message => finish({ok: false, error: String(message || 'Unknown browser error')});
+
+const decodeJwt = token => {
+    try {
+        let part = token.split('.')[1];
+        part = part.replace(/-/g, '+').replace(/_/g, '/');
+        part += '='.repeat((4 - part.length % 4) % 4);
+        const bytes = Uint8Array.from(atob(part), character => character.charCodeAt(0));
+        return JSON.parse(new TextDecoder().decode(bytes));
+    } catch (_error) {
+        return null;
+    }
+};
+
+const findCurrentAuth = () => {
+    const candidates = [];
+
+    for (const storageName of ['localStorage', 'sessionStorage']) {
+        let storage;
+        try {
+            storage = window[storageName];
+        } catch (_error) {
+            continue;
+        }
+
+        for (let index = 0; index < storage.length; index += 1) {
+            const key = storage.key(index);
+            const value = storage.getItem(key) || '';
+            const matches = value.match(
+                /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g
+            ) || [];
+
+            for (const token of matches) {
+                const payload = decodeJwt(token);
+                if (payload) candidates.push({token, payload});
+            }
+        }
+    }
+
+    const cookieMatches = document.cookie.match(
+        /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g
+    ) || [];
+    for (const token of cookieMatches) {
+        const payload = decodeJwt(token);
+        if (payload) candidates.push({token, payload});
+    }
+
+    const now = Date.now() / 1000;
+    return candidates
+        .filter(item => !item.payload.exp || item.payload.exp > now)
+        .sort((left, right) => {
+            const leftKiotViet = left.payload.kvrcode ? 1 : 0;
+            const rightKiotViet = right.payload.kvrcode ? 1 : 0;
+            if (leftKiotViet !== rightKiotViet) return rightKiotViet - leftKiotViet;
+            return (right.payload.exp || 0) - (left.payload.exp || 0);
+        })[0] || null;
+};
+
+(async () => {
+    try {
+        const auth = findCurrentAuth();
+        if (!auth) return fail('Could not find the current KiotViet token in browser storage.');
+
+        const claims = auth.payload;
+        const retailer = String(claims.kvrcode || location.hostname.split('.')[0] || '');
+        const branchId = String(claims.kvbid || '');
+        const groupId = String(claims.kvrgid || '');
+
+        const response = await fetch(
+            'https://api-man1.kiotviet.vn/api/shelves?%24inlinecount=allpages',
+            {
+                method: 'GET',
+                credentials: 'omit',
+                headers: {
+                    authorization: 'Bearer ' + auth.token,
+                    branchid: branchId,
+                    retailer,
+                    'x-group-id': groupId,
+                    'x-retailer-code': retailer
+                }
+            }
+        );
+
+        if (!response.ok) {
+            const details = (await response.text()).slice(0, 500);
+            return fail('Shelf lookup failed (' + response.status + '): ' + details);
+        }
+
+        const payload = await response.json();
+        const shelves = Array.isArray(payload) ? payload : payload && payload.Data;
+        if (!Array.isArray(shelves)) return fail('KiotViet returned an unexpected shelves response.');
+
+        finish({
+            ok: true,
+            shelves: shelves.map(item => ({
+                id: String(item && item.Id || ''),
+                name: String(item && item.Name || '').trim()
+            })).filter(item => item.id && item.name)
+        });
+    } catch (error) {
+        fail(error && error.message ? error.message : error);
+    }
+})();
+"""
 
 
 # One small DOM adapter, kept here so selectors and website-specific behavior
@@ -161,6 +532,30 @@ const chooseLocation = (root, target) => {
     return selectedLocation(root, target);
 };
 
+if (action === 'product_page') {
+    const host = String(location.hostname || '').toLowerCase();
+    const href = String(location.href || '');
+    return !!window.angular && host.endsWith('.kiotviet.vn') && /\/man\/.*#\/Products/i.test(href);
+}
+if (action === 'product_controller') {
+    if (!window.angular) return false;
+    const elements = [document.documentElement, document.body,
+        ...document.querySelectorAll('.ng-scope, [ng-controller], [data-ng-controller]')].filter(Boolean);
+    const seen = new Set();
+    for (const element of elements) {
+        try {
+            let scope = window.angular.element(element).scope();
+            while (scope) {
+                const key = scope.$id != null ? scope.$id : scope;
+                if (seen.has(key)) break;
+                seen.add(key);
+                if (typeof scope.UpdateProduct === 'function') return true;
+                scope = scope.$parent;
+            }
+        } catch (_error) {}
+    }
+    return false;
+}
 if (action === 'element') return one(paths);
 if (action === 'present') return !!one(paths);
 if (action === 'set') { const e = one(paths); if (!e) return false; setValue(e, value); return true; }
@@ -168,11 +563,6 @@ if (action === 'click') {
     const e = one(paths);
     if (!e || e.disabled || e.getAttribute('aria-disabled') === 'true' || e.classList.contains('disabled')) return false;
     e.scrollIntoView({block: 'center'}); e.click(); return true;
-}
-if (action === 'row_matches') {
-    const button = one(paths);
-    const row = button && button.closest('tr');
-    return !!button && (exactText(row, value) || exactText(row && row.previousElementSibling, value));
 }
 if (action === 'identity') {
     if (paths.id) { const e = one(paths.id); return !!e && clean(e.value || e.textContent) === value; }
@@ -193,6 +583,27 @@ if (action === 'quantity') {
 }
 if (action === 'location_selected') return selectedLocation(one(paths), value);
 if (action === 'location_pick') return chooseLocation(one(paths), value);
+if (action === 'location_pick_id') {
+    const root = one(paths);
+    if (!root || !value) return false;
+
+    const targetId = clean(value.id);
+    const targetName = clean(value.name);
+    if (!targetId || !targetName) return false;
+
+    const select = root.querySelector('select[data-role="multiselect"]');
+    const w = window.jQuery && select && window.jQuery(select).data('kendoMultiSelect');
+    if (!w) return false;
+
+    const current = Array.from(w.value() || []).map(String);
+    if (!current.includes(targetId)) {
+        w.value([...new Set([...current, targetId])]);
+        w.trigger('change');
+    }
+    if (w.close) w.close();
+
+    return selectedLocation(root, targetName);
+}
 if (action === 'location_search') {
     const root = one(paths);
     if (!root) return false;
@@ -226,9 +637,16 @@ throw Error('Unknown DOM operation: ' + action);
 class WebsiteUploader:
     """One invocation owns one ChromeDriver connection, never the Chrome window."""
 
-    def __init__(self, driver=None, *, timeout: float = TIMEOUT_SECONDS):
+    def __init__(
+        self,
+        driver=None,
+        *,
+        timeout: float = TIMEOUT_SECONDS,
+        step_delay: float = STEP_DELAY_SECONDS,
+    ):
         self.driver = driver  # Dependency injection for offline workflow tests.
         self.timeout = timeout
+        self.step_delay = max(0.0, step_delay)
 
     def _connect(self) -> None:
         if self.driver is not None:
@@ -241,7 +659,6 @@ class WebsiteUploader:
             ) from error
         options = webdriver.ChromeOptions()
         options.debugger_address = DEBUGGER_ADDRESS
-        
         try:
             self.driver = webdriver.Chrome(options=options)
             self.driver.set_page_load_timeout(self.timeout)
@@ -273,24 +690,63 @@ class WebsiteUploader:
                 raise WaitExpired(f"Timed out while {description}. Inspect the open Chrome tab.")
             sleep(0.2)
 
+    def _pause(self) -> None:
+        if self.step_delay:
+            sleep(self.step_delay)
+
     def _choose_tab(self) -> None:
         original = self.driver.current_window_handle
-        candidates = []
-        for handle in self.driver.window_handles:
-            self.driver.switch_to.window(handle)
-            if TAB_URL_CONTAINS and TAB_URL_CONTAINS not in self.driver.current_url:
+        handles = list(self.driver.window_handles)
+        eligible = []
+        product_pages = []
+
+        for handle in handles:
+            try:
+                self.driver.switch_to.window(handle)
+                if TAB_URL_CONTAINS and TAB_URL_CONTAINS not in self.driver.current_url:
+                    continue
+                eligible.append(handle)
+                if self._dom("product_page"):
+                    product_pages.append(handle)
+            except Exception:
+                # Ignore internal/closing Chrome tabs that cannot run page JavaScript.
                 continue
-            if self._dom("present", SEARCH_XPATH):
-                candidates.append(handle)
-        if len(candidates) != 1:
+
+        if len(product_pages) == 1:
+            selected = product_pages[0]
+        elif len(eligible) == 1:
+            selected = eligible[0]
+        else:
             self.driver.switch_to.window(original)
+            if not eligible:
+                raise UploadError(
+                    "Chrome is connected, but no accessible tab matches TAB_URL_CONTAINS. "
+                    "Leave it blank or set it to part of your KiotViet product-page URL."
+                )
+            if len(product_pages) > 1:
+                raise UploadError(
+                    f"Chrome exposes {len(product_pages)} KiotViet product-list tabs. Close the extras or set "
+                    "TAB_URL_CONTAINS to a unique part of the tab URL."
+                )
             raise UploadError(
-                "Keep exactly one matching product-list tab open in debugging Chrome. "
-                "If needed, set TAB_URL_CONTAINS in mapper/web_upload.py."
+                f"Chrome exposes {len(eligible)} possible tabs but none is the KiotViet product-list page. "
+                "Open Hàng hóa > Danh sách hàng hóa, or set TAB_URL_CONTAINS to that tab."
             )
-        self.driver.switch_to.window(candidates[0])
+
+        self.driver.switch_to.window(selected)
         if self._dom("present", FORM_XPATH) or self._dom("present", LOCATION_FORM_XPATH):
             raise UploadError("Finish or cancel the existing website edit dialog before uploading.")
+
+        try:
+            self._wait(
+                "waiting for the KiotViet product page",
+                lambda: self._dom("product_page"),
+            )
+        except WaitExpired as error:
+            raise UploadError(
+                "The connected tab is not ready on Hàng hóa > Danh sách hàng hóa. "
+                "Open that page and wait for it to finish loading, then try again."
+            ) from error
 
     def _fill_and_enter(self, path: str, value: str) -> None:
         element = self._wait("finding an input", lambda: self._dom("element", path))
@@ -304,112 +760,211 @@ class WebsiteUploader:
     def _identity_matches(self, product: UploadProduct) -> bool:
         return self._dom("identity", {"form": FORM_XPATH, "id": PRODUCT_ID_XPATH}, product.product_id)
 
+    def _stock_matches(self, product: UploadProduct) -> bool:
+        quantity = self._dom("quantity", QUANTITY_XPATH)
+        if type(quantity) is bool or quantity is None:
+            return False
+        return quantity == product.stock_qty or str(quantity).strip() == str(product.stock_qty)
+
+    def _location_matches(self, product: UploadProduct) -> bool:
+        return bool(self._dom("location_selected", LOCATION_FIELD_XPATH, product.location_id))
+
+    def _all_values_match(self, product: UploadProduct) -> bool:
+        return (
+            self._identity_matches(product)
+            and self._stock_matches(product)
+            and (not SET_LOCATION_ON_UPLOAD or self._location_matches(product))
+        )
+
     def _open_product(self, product: UploadProduct) -> None:
-            # Wipe any existing search query first
-            self._wait("finding search input", lambda: self._dom("present", SEARCH_XPATH))
-            self._dom("set", SEARCH_XPATH, "")
-            
-            # Input product ID and search
-            self._fill_and_enter(SEARCH_XPATH, product.product_id)
-            self._wait(
-                f"finding the exact result for {product.product_id}",
-                lambda: self._dom("row_matches", EDIT_XPATH, product.product_id),
-                check_errors=True,
+        result = self.driver.execute_async_script(OPEN_PRODUCT_SCRIPT, product.product_id)
+        if not isinstance(result, dict) or not result.get("ok"):
+            detail = result.get("error") if isinstance(result, dict) else repr(result)
+            raise UploadError(f"Could not open product {product.product_id}: {detail}")
+
+        self._wait("opening the edit form", lambda: self._dom("present", FORM_XPATH))
+        self._wait(
+            "checking the product ID (set PRODUCT_ID_XPATH if automatic detection fails)",
+            lambda: self._identity_matches(product),
+        )
+
+    def _set_stock(self, product: UploadProduct) -> None:
+        self._wait("finding the stock input", lambda: self._dom("present", QUANTITY_XPATH))
+        if not self._dom("set", QUANTITY_XPATH, str(product.stock_qty)):
+            raise UploadError("The stock input disappeared.")
+        self._wait("checking the stock quantity", lambda: self._stock_matches(product), check_errors=True)
+
+    def _get_shelves_by_name(self) -> tuple[set[str], dict[str, str]]:
+        """Return ({location names}, {location name: KiotViet shelf ID}) from /api/shelves."""
+        result = self.driver.execute_async_script(GET_SHELVES_SCRIPT)
+        if not isinstance(result, dict) or not result.get("ok"):
+            detail = result.get("error") if isinstance(result, dict) else repr(result)
+            raise UploadError(f"Could not read KiotViet locations: {detail}")
+
+        shelves = result.get("shelves")
+        if not isinstance(shelves, list):
+            raise UploadError("KiotViet returned an invalid location list.")
+
+        names: set[str] = set()
+        ids_by_name: dict[str, str] = {}
+
+        for shelf in shelves:
+            if not isinstance(shelf, dict):
+                continue
+            name = str(shelf.get("name") or "").strip()
+            shelf_id = str(shelf.get("id") or "").strip()
+            if not name or not shelf_id:
+                continue
+            if name in ids_by_name and ids_by_name[name] != shelf_id:
+                raise UploadError(
+                    f"KiotViet has duplicate location name {name!r} with multiple shelf IDs."
+                )
+            names.add(name)
+            ids_by_name[name] = shelf_id
+
+        return names, ids_by_name
+
+    def _select_location_id(self, product: UploadProduct, shelf_id: str) -> None:
+        selected = self._dom(
+            "location_pick_id",
+            LOCATION_FIELD_XPATH,
+            {"id": str(shelf_id), "name": product.location_id},
+        )
+        if not selected:
+            raise UploadError(
+                f"Location {product.location_id} exists in KiotViet as shelf ID {shelf_id}, "
+                "but the edit form could not select it."
             )
-            self._click(EDIT_XPATH, "opening the product edit form")
-            self._wait("opening the edit form", lambda: self._dom("present", FORM_XPATH))
-            self._wait(
-                "checking the product ID",
-                lambda: self._identity_matches(product),
-            )
+        self._wait(
+            "checking the selected location",
+            lambda: self._location_matches(product),
+            check_errors=True,
+        )
 
     def _set_location(self, product: UploadProduct, progress: Callable[[str], None]) -> None:
-            target = product.location_id
-            self._wait("finding the location field", lambda: self._dom("present", LOCATION_FIELD_XPATH))
-            if self._dom("location_pick", LOCATION_FIELD_XPATH, target):
-                return
-            if self._dom("location_search", LOCATION_FIELD_XPATH, target):
-                try:
-                    self._wait("looking for an existing location", lambda: self._dom(
-                        "location_pick", LOCATION_FIELD_XPATH, target
-                    ), timeout=5, check_errors=True)
-                    return
-                except WaitExpired:
-                    pass
-            
-            # Step 1: Click "Tạo mới" button
-            progress(f"Creating location {target}…")
-            self._click(CREATE_LOCATION_XPATH, "opening Add location modal")
-            
-            # Step 2: Enter location ID
-            self._wait("finding new location input", lambda: self._dom("present", NEW_LOCATION_XPATH))
-            self._dom("set", NEW_LOCATION_XPATH, target)
-            
-            # Step 3: Click Save on location modal
-            self._click(SAVE_LOCATION_XPATH, "saving new location")
-            
-            try:
-                self._wait("saving the location", lambda: not self._dom("present", LOCATION_FORM_XPATH), check_errors=True)
-            except UploadError as error:
-                raise UploadError(
-                    f"Could not create/select location {target}. "
-                    "The product Save button has not been pressed.\n\n" + str(error)
-                ) from error
-                
-            self._wait("checking the selected location", lambda: self._dom(
-                "location_pick", LOCATION_FIELD_XPATH, target
-            ), check_errors=True)
+        target = product.location_id.strip()
+        self._wait("finding the location field", lambda: self._dom("present", LOCATION_FIELD_XPATH))
 
-    def _values_match(self, product: UploadProduct) -> bool:
-        quantity = self._dom("quantity", QUANTITY_XPATH)
-        # Avoid guessing whether commas/dots are decimal or grouping separators.
-        matches_quantity = (type(quantity) is not bool and quantity is not None and
-                            (quantity == product.stock_qty or str(quantity).strip() == str(product.stock_qty)))
-        return (self._identity_matches(product) and matches_quantity and
-                self._dom("location_selected", LOCATION_FIELD_XPATH, product.location_id))
+        # The API response is the source of truth for whether this location already exists.
+        location_names, ids_by_name = self._get_shelves_by_name()
+
+        if target in location_names:
+            progress(f"Selecting existing location {target}…")
+            self._select_location_id(product, ids_by_name[target])
+            return
+
+        # The location is genuinely absent from KiotViet, so create it once through
+        # the site's existing UI. Most warehouse slots are expected to take this path.
+        progress(f"Creating location {target}…")
+        self._click(CREATE_LOCATION_XPATH, "opening Add location")
+        self._fill_and_enter(NEW_LOCATION_XPATH, target)
+
+        try:
+            self._wait(
+                "saving the location",
+                lambda: not self._dom("present", LOCATION_FORM_XPATH),
+                check_errors=True,
+            )
+        except UploadError as error:
+            raise UploadError(
+                f"Could not create location {target}. The product Save button has not been pressed.\n\n"
+                + str(error)
+            ) from error
+
+        # Re-read /api/shelves after creation so we use KiotViet's real new shelf ID,
+        # rather than assuming what the UI generated.
+        deadline = monotonic() + 5
+        new_id = None
+        while monotonic() < deadline:
+            location_names, ids_by_name = self._get_shelves_by_name()
+            if target in location_names:
+                new_id = ids_by_name[target]
+                break
+            sleep(0.4)
+
+        if not new_id:
+            raise UploadError(
+                f"KiotViet closed the Create location form, but {target!r} did not appear in /api/shelves."
+            )
+
+        progress(f"Selecting new location {target}…")
+        self._select_location_id(product, new_id)
+
+    def _save_product(self, product: UploadProduct, progress: Callable[[str], None]) -> str:
+        """PRODUCTION STEP: press Lưu once, then reload and verify the saved values."""
+        progress("Saving the product on the website…")
+
+        try:
+            # From this call onward a timeout has an uncertain outcome. Never retry Save.
+            self._click(SAVE_XPATH, "pressing Save")
+            self._wait(
+                "waiting for Save to finish",
+                lambda: not self._dom("present", FORM_XPATH),
+                check_errors=True,
+            )
+        except Exception as error:
+            detail = str(error).split("Stacktrace:")[0][:1400]
+            raise UploadError(
+                "Save may have reached the website, but the result was not verified. "
+                "Check this product in Chrome before trying again. No automatic retry was made.\n\n" + detail
+            ) from error
+
+        progress("Reloading the saved product to verify quantity and location…")
+        self.driver.refresh()
+        self._wait("waiting for the product page after reload", lambda: self._dom("product_page"))
+        self._pause()
+        self._open_product(product)
+        self._wait("verifying the saved values", lambda: self._all_values_match(product), check_errors=True)
+
+        note = ""
+        try:
+            self.driver.refresh()  # Close the verification edit, ready for next product.
+        except Exception:
+            note = " Close the verification form in Chrome before the next upload."
+
+        return (
+            f"Uploaded and verified: {product.product_id} · qty {product.stock_qty} · "
+            f"{product.location_id}.{note}"
+        )
 
     def upload(self, product: UploadProduct, progress: Callable[[str], None] = lambda _message: None) -> str:
-        save_attempted = False
         try:
             progress("Connecting to Chrome…")
             self._connect()
             self._choose_tab()
+
+            self._pause()
             progress(f"Finding product {product.product_id}…")
             self._open_product(product)
+
+            self._pause()
             progress(f"Setting stock to {product.stock_qty}…")
-            self._wait("finding the stock input", lambda: self._dom("present", QUANTITY_XPATH))
-            if not self._dom("set", QUANTITY_XPATH, str(product.stock_qty)):
-                raise UploadError("The stock input disappeared.")
-            progress(f"Selecting location {product.location_id}…")
-            self._set_location(product, progress)
-            self._wait("checking quantity, product ID, and location before Save", lambda: self._values_match(product), check_errors=True)
+            self._set_stock(product)
+
+            if SET_LOCATION_ON_UPLOAD:
+                self._pause()
+                progress(f"Selecting location {product.location_id}…")
+                self._set_location(product, progress)
+
+            self._pause()
+            self._wait(
+                "checking product fields before Save",
+                lambda: self._all_values_match(product),
+                check_errors=True,
+            )
+
+            # PRODUCTION ONLY. Keep SAVE_ON_UPLOAD = False while testing.
+            if SAVE_ON_UPLOAD:
+                return self._save_product(product, progress)
 
             return "Fields filled. Press Lưu manually in Chrome."
-        
-            progress("Saving the product on the website…")
-            # From here onward a timeout has an uncertain outcome. Never retry Save.
-            save_attempted = True
-            self._click(SAVE_XPATH, "pressing Save")
-            self._wait("waiting for Save to finish", lambda: not self._dom("present", FORM_XPATH), check_errors=True)
-            progress("Reloading the saved product to verify quantity and location…")
-            self.driver.refresh()
-            self._open_product(product)
-            self._wait("verifying the saved values", lambda: self._values_match(product), check_errors=True)
-            note = ""
-            try:
-                self.driver.refresh()  # Close the read-only verification edit, ready for next product.
-            except Exception:
-                note = " Close the verification form in Chrome before the next upload."
-            return f"Uploaded and verified: {product.product_id} · qty {product.stock_qty} · {product.location_id}.{note}"
+
+        except UploadError:
+            raise
         except Exception as error:
             detail = str(error).split("Stacktrace:")[0][:1400]
-            if save_attempted:
-                raise UploadError(
-                    "Save may have reached the website, but the result was not verified. "
-                    "Check this product in Chrome before trying again. No automatic retry was made.\n\n" + detail
-                ) from error
             raise UploadError(
-                "Upload stopped before pressing the product Save button. "
+                "Upload stopped before the final Save step. "
                 "Any new location already created may remain on the website.\n\n" + detail
             ) from error
         finally:
