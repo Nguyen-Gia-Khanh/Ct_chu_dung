@@ -635,7 +635,10 @@ throw Error('Unknown DOM operation: ' + action);
 
 
 class WebsiteUploader:
-    """One invocation owns one ChromeDriver connection, never the Chrome window."""
+    """Keep one ChromeDriver attachment while the mapper is open.
+
+    Stopping this attachment never closes the user's existing Chrome window.
+    """
 
     def __init__(
         self,
@@ -647,6 +650,39 @@ class WebsiteUploader:
         self.driver = driver  # Dependency injection for offline workflow tests.
         self.timeout = timeout
         self.step_delay = max(0.0, step_delay)
+
+    def is_connected(self) -> bool:
+        if self.driver is None:
+            return False
+        try:
+            self.driver.current_window_handle
+        except Exception:
+            self.disconnect()
+            return False
+        return True
+
+    def connect(self, progress: Callable[[str], None] = lambda _message: None) -> str:
+        """Attach once and verify that the KiotViet product page is available."""
+        if self.driver is None:
+            progress("Connecting to Chrome…")
+        elif self.is_connected():
+            progress("Checking the existing Chrome connection…")
+        else:
+            progress("The old Chrome connection ended. Attaching again…")
+        self._connect()
+        progress("Checking the KiotViet product tab…")
+        self._choose_tab()
+        return "Chrome connected. Select a shelf product and press Upload to web."
+
+    def disconnect(self) -> None:
+        """Release ChromeDriver without closing the user's debugging Chrome."""
+        if self.driver is None:
+            return
+        try:
+            self.driver.service.stop()
+        except Exception:
+            pass
+        self.driver = None
 
     def _connect(self) -> None:
         if self.driver is not None:
@@ -928,9 +964,12 @@ class WebsiteUploader:
         )
 
     def upload(self, product: UploadProduct, progress: Callable[[str], None] = lambda _message: None) -> str:
+        if not self.is_connected():
+            raise UploadError(
+                "Chrome is not connected. Press Connect Chrome beside the shelf Load button first."
+            )
         try:
-            progress("Connecting to Chrome…")
-            self._connect()
+            progress("Checking the connected Chrome tab…")
             self._choose_tab()
 
             self._pause()
@@ -964,11 +1003,3 @@ class WebsiteUploader:
                 "Upload stopped before the final Save step. "
                 "Any new location already created may remain on the website.\n\n" + detail
             ) from error
-        finally:
-            if self.driver is not None:
-                # Do NOT quit(): this is the user's existing logged-in browser.
-                try:
-                    self.driver.service.stop()
-                except Exception:
-                    pass
-                self.driver = None
