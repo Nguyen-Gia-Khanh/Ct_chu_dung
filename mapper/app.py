@@ -21,7 +21,6 @@ from .designer import ShelfDesigner
 from .lookup_view import ProductLookupView
 from .web_upload import LocationUpdate, UploadProduct, WebsiteUploader
 
-from utils.barcode_scanner import format_product_id
 
 class WarehouseMapperApp:
     def __init__(self, root: tk.Tk, database_path: Path | None = None):
@@ -42,7 +41,6 @@ class WarehouseMapperApp:
         self.selected_slot: str | None = None
         self.shelf_choices: dict[str, int] = {}
         self.search_after_id: str | None = None
-        self.catalog_search_after_id: str | None = None
         self.website_uploader = WebsiteUploader()
         self.chrome_connected = False
         self.chrome_connect_busy = False
@@ -116,7 +114,7 @@ class WarehouseMapperApp:
             on_modify_stock=self.modify_selected_stock,
             on_transfer=self.transfer_selected_products,
             on_preassign_stock=self.preassign_queue_stock,
-            on_catalog_search=self.schedule_catalog_refresh,
+            on_catalog_to_queue=self.transfer_catalog_selection_to_queue,
         )
         self.notebook.add(self.designer, text="1. Shelf Designer")
         self.notebook.add(self.assignments, text="2. Assign Products")
@@ -243,7 +241,7 @@ class WarehouseMapperApp:
         )
         if self.current_layout:
             self.assignments.active_shelf_text.set(
-                f"Floor {floor} Â· Side {side} Â· Shelf {shelf_code} Â· {len(self.current_layout)} rows Â· "
+                f"Floor {floor} · Side {side} · Shelf {shelf_code} · {len(self.current_layout)} rows · "
                 f"{sum(self.current_layout)} slots"
             )
         else:
@@ -405,7 +403,7 @@ class WarehouseMapperApp:
         )
         self.refresh_all_views()
         self.status_text.set(
-            f"Staged stock change for {product_id}: {current_text} â†’ {quantity}. Press Commit to save."
+            f"Staged stock change for {product_id}: {current_text} → {quantity}. Press Commit to save."
         )
 
     def transfer_selected_products(self) -> None:
@@ -446,6 +444,67 @@ class WarehouseMapperApp:
         self.refresh_all_views()
         self.status_text.set(
             f"Transferred {transferred_count} product(s) to queue with stock retained. Select a new slot to assign."
+        )
+
+    def transfer_catalog_selection_to_queue(self) -> None:
+        selected_items = self.assignments.catalog_tree.selection()
+        product_ids = [
+            item_id.removeprefix("catalog::")
+            for item_id in selected_items
+            if item_id.startswith("catalog::")
+            and item_id.removeprefix("catalog::") in self.catalog_products
+        ]
+        if not product_ids:
+            messagebox.showinfo(
+                "Choose catalog products",
+                "Select one or more products from the full catalog first.",
+                parent=self.root,
+            )
+            return
+
+        existing_products = set(self.products)
+        records = {
+            product_id: self.catalog_products[product_id]
+            for product_id in product_ids
+        }
+        try:
+            self.database.import_products(records)
+        except Exception as error:
+            messagebox.showerror("Transfer failed", str(error), parent=self.root)
+            return
+
+        new_products = 0
+        moved_assignments = 0
+        already_waiting = 0
+        for product_id in product_ids:
+            if product_id not in existing_products:
+                new_products += 1
+            staged = self.staged_assignments.pop(product_id, None)
+            saved = self.committed_placements.get(product_id)
+            was_pending = product_id in self.pending_unassignments
+            if staged is not None and staged.stock_qty is not None:
+                self.transferred_stock[product_id] = staged.stock_qty
+            elif saved is not None and saved.stock_qty is not None:
+                self.transferred_stock[product_id] = saved.stock_qty
+
+            if saved is not None:
+                self.pending_unassignments.add(product_id)
+            if staged is not None or (saved is not None and not was_pending):
+                moved_assignments += 1
+            elif product_id in existing_products:
+                already_waiting += 1
+
+        self.reload_database_state()
+        self.refresh_all_views()
+
+        summary = [f"{new_products} added"]
+        if moved_assignments:
+            summary.append(f"{moved_assignments} moved from a slot")
+        if already_waiting:
+            summary.append(f"{already_waiting} already in queue")
+        self.status_text.set(
+            "Catalog transfer: " + ", ".join(summary)
+            + ". Catalog entries were kept. Press Commit to save slot removals."
         )
 
     def preassign_queue_stock(self) -> None:
@@ -493,8 +552,8 @@ class WarehouseMapperApp:
             return
 
         self.chrome_connect_busy = True
-        self.connect_chrome_button.configure(text="Connectingâ€¦", state="disabled")
-        self.status_text.set("Connecting to the debugging Chrome session on port 9222â€¦")
+        self.connect_chrome_button.configure(text="Connecting…", state="disabled")
+        self.status_text.set("Connecting to the debugging Chrome session on port 9222…")
         self.chrome_connect_events = Queue()
         Thread(
             target=self._run_chrome_connect,
@@ -615,7 +674,7 @@ class WarehouseMapperApp:
         self.assignments.modify_location_button.configure(state="disabled")
         action = "Updating location" if location_only else "Uploading"
         self.assignments.upload_status_text.set(
-            f"{action} {product.product_id} â†’ {product.location_id}â€¦"
+            f"{action} {product.product_id} → {product.location_id}…"
         )
         self.status_text.set(
             f"{action} in progress. Leave the website tab untouched until it finishes."
@@ -699,18 +758,19 @@ class WarehouseMapperApp:
     def schedule_queue_refresh(self, *_args: object) -> None:
         if self.search_after_id:
             self.root.after_cancel(self.search_after_id)
-        self.search_after_id = self.root.after(180, self.refresh_product_queue)
+        self.search_after_id = self.root.after(180, self.refresh_product_lists)
 
-    def schedule_catalog_refresh(self, *_args: object) -> None:
-        if getattr(self, "catalog_search_after_id", None):
-            self.root.after_cancel(self.catalog_search_after_id)
-        self.catalog_search_after_id = self.root.after(180, self.refresh_catalog)
+    def refresh_product_lists(self) -> None:
+        """Apply the one product search field to both working lists."""
+        self.refresh_product_queue()
+        self.refresh_catalog()
 
     def refresh_product_queue(self) -> None:
         if self.search_after_id:
             self.root.after_cancel(self.search_after_id)
             self.search_after_id = None
-        query = normalize_search(self.assignments.search_var.get().strip())
+        raw_query = self.assignments.search_var.get().strip()
+        query = normalize_search(raw_query)
         committed = set(self.committed_locations)
         staged = set(self.staged_assignments)
 
@@ -722,6 +782,12 @@ class WarehouseMapperApp:
             if query and query not in self.product_search[product_id]:
                 continue
             available.append((product_id, product_name))
+        available.sort(
+            key=lambda product: (
+                product[0].casefold() != raw_query.casefold(),
+                product[0].casefold(),
+            )
+        )
 
         self.assignments.queue_tree.delete(*self.assignments.queue_tree.get_children())
         for product_id, product_name in available[:MAX_VISIBLE_PRODUCTS]:
@@ -735,23 +801,14 @@ class WarehouseMapperApp:
             )
 
         shown = min(len(available), MAX_VISIBLE_PRODUCTS)
-        suffix = " â€” narrow the search to see more" if len(available) > MAX_VISIBLE_PRODUCTS else ""
-        self.assignments.queue_count_text.set(f"{len(available):,} matching Â· showing {shown:,}{suffix}")
+        suffix = " — narrow the search to see more" if len(available) > MAX_VISIBLE_PRODUCTS else ""
+        self.assignments.queue_count_text.set(f"{len(available):,} matching · showing {shown:,}{suffix}")
 
     def refresh_catalog(self) -> None:
-        if getattr(self, "catalog_search_after_id", None):
-            self.root.after_cancel(self.catalog_search_after_id)
-            self.catalog_search_after_id = None
         if not hasattr(self.assignments, "catalog_tree"):
             return
 
-        raw_query = self.assignments.catalog_search_var.get().strip()
-        formatted_query = format_product_id(raw_query)
-
-        if formatted_query != raw_query:
-            self.assignments.catalog_search_var.set(formatted_query)
-            raw_query = formatted_query
-
+        raw_query = self.assignments.search_var.get().strip()
         query = normalize_search(raw_query)
         matches = [
             (product_id, product_name, shortened_name)
@@ -776,29 +833,73 @@ class WarehouseMapperApp:
             )
 
         shown = min(len(matches), MAX_VISIBLE_PRODUCTS)
-        suffix = " â€” narrow the search to see more" if len(matches) > MAX_VISIBLE_PRODUCTS else ""
+        suffix = " — narrow the search to see more" if len(matches) > MAX_VISIBLE_PRODUCTS else ""
         self.assignments.catalog_count_text.set(
-            f"{len(matches):,} matching / {len(self.catalog_products):,} total Â· "
+            f"{len(matches):,} matching / {len(self.catalog_products):,} total · "
             f"showing {shown:,}{suffix}"
         )
+        self.refresh_search_location(raw_query)
+
+    def refresh_search_location(self, raw_query: str | None = None) -> None:
+        location_text = getattr(self.assignments, "search_location_text", None)
+        if location_text is None:
+            return
+
+        raw_query = (
+            self.assignments.search_var.get().strip()
+            if raw_query is None
+            else raw_query.strip()
+        )
+        if not raw_query:
+            location_text.set("Enter an exact product ID to show its current location.")
+            return
+
+        product_id = next(
+            (
+                candidate
+                for candidate in self.catalog_products.keys() | self.products.keys()
+                if candidate.casefold() == raw_query.casefold()
+            ),
+            None,
+        )
+        if product_id is None:
+            location_text.set("Location: enter an exact product ID to look it up.")
+            return
+
+        staged = self.staged_assignments.get(product_id)
+        saved = self.committed_placements.get(product_id)
+        if staged is not None:
+            stock = f" · stock {staged.stock_qty}" if staged.stock_qty is not None else ""
+            location_text.set(f"Location: {staged.slot_name} · staged{stock}")
+        elif product_id in self.pending_unassignments:
+            origin = saved.slot_name if saved is not None else "transfer queue"
+            location_text.set(f"Location: {origin} · queued for transfer (not committed)")
+        elif saved is not None:
+            stock = f" · stock {saved.stock_qty}" if saved.stock_qty is not None else ""
+            location_text.set(f"Location: {saved.slot_name} · saved{stock}")
+        else:
+            location_text.set("Location: not assigned to a shelf")
 
     def refresh_change_summary(self) -> None:
         changed_products = set(self.staged_assignments) | self.pending_unassignments
         self.assignments.change_summary_text.set(
-            f"{len(changed_products):,} staged product change(s) Â· Commit writes them to SQLite"
+            f"{len(changed_products):,} staged product change(s) · Commit writes them to SQLite"
         )
 
     def refresh_all_views(self) -> None:
-        self.refresh_product_queue()
+        self.refresh_product_lists()
         self.render_shelf()
         self.refresh_change_summary()
 
     def reload_database_state(self) -> None:
-        product_rows = self.database.get_products()
-        self.products = dict(product_rows)
+        product_rows = self.database.get_product_records()
+        self.products = {
+            product_id: product_name
+            for product_id, product_name, _shortened_name in product_rows
+        }
         self.product_search = {
-            product_id: normalize_search(f"{product_id} {product_name}")
-            for product_id, product_name in product_rows
+            product_id: normalize_search(f"{product_id} {product_name} {shortened_name}")
+            for product_id, product_name, shortened_name in product_rows
         }
         catalog_rows = self.database.get_catalog_products()
         self.catalog_products = {
@@ -833,13 +934,12 @@ class WarehouseMapperApp:
             self.transferred_stock = {pid: qty for pid, qty in self.transferred_stock.items() if pid in self.products}
         self.refresh_shelf_selector()
         if hasattr(self, "assignments"):
-            self.refresh_product_queue()
-            self.refresh_catalog()
+            self.refresh_product_lists()
 
     def refresh_shelf_selector(self) -> None:
         choices = self.database.list_shelves()
         self.shelf_choices = {
-            f"Floor {floor} â€” Side {side} â€” Shelf {shelf_code}": shelf_id
+            f"Floor {floor} — Side {side} — Shelf {shelf_code}": shelf_id
             for shelf_id, floor, side, shelf_code in choices
         }
         self.shelf_selector.configure(values=list(self.shelf_choices))
@@ -1076,8 +1176,6 @@ class WarehouseMapperApp:
                 return
         if self.search_after_id:
             self.root.after_cancel(self.search_after_id)
-        if getattr(self, "catalog_search_after_id", None):
-            self.root.after_cancel(self.catalog_search_after_id)
         if getattr(self, "chrome_connect_after_id", None):
             self.root.after_cancel(self.chrome_connect_after_id)
         if getattr(self, "web_upload_after_id", None):

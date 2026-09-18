@@ -108,10 +108,11 @@ class AssignmentView(ttk.Frame):
         *,
         read_only=False,
         on_upload=None,
+        on_modify_location=None,
         on_modify_stock=None,
         on_transfer=None,
         on_preassign_stock=None,
-        on_catalog_search=None,
+        on_catalog_to_queue=None,
     ):
         super().__init__(parent, padding=10)
         self.read_only = read_only
@@ -152,10 +153,15 @@ class AssignmentView(ttk.Frame):
             queue_split.add(queue_section, weight=1)
             queue_split.add(catalog_section, weight=1)
 
-        queue_section.rowconfigure(2, weight=1)
+        queue_body_row = 2 if read_only else 3
+        queue_section.rowconfigure(queue_body_row, weight=1)
         queue_section.columnconfigure(0, weight=1)
         
-        ttk.Label(queue_section, text="Search ID or product name").grid(
+        ttk.Label(
+            queue_section,
+            text="Search ID or product name" if read_only
+            else "Search code, full name, or shortened name",
+        ).grid(
             row=0, column=0, sticky="w"
         )
 
@@ -172,13 +178,24 @@ class AssignmentView(ttk.Frame):
 
         self.search_var.trace_add("write", on_search)
 
+        if not read_only:
+            self.search_location_text = tk.StringVar(
+                value="Enter an exact product ID to show its current location."
+            )
+            ttk.Label(
+                queue_section,
+                textvariable=self.search_location_text,
+                foreground="#555555",
+                wraplength=400,
+            ).grid(row=2, column=0, sticky="w", pady=(0, 6))
+
         self.barcode_scanner = BarcodeScanner(
             self,
             self.on_barcode_scan
         )
 
         queue_body = ttk.Frame(queue_section)
-        queue_body.grid(row=2, column=0, sticky="nsew")
+        queue_body.grid(row=queue_body_row, column=0, sticky="nsew")
         queue_body.rowconfigure(0, weight=1)
         queue_body.columnconfigure(0, weight=1)
 
@@ -209,7 +226,7 @@ class AssignmentView(ttk.Frame):
         queue_scroll.grid(row=0, column=1, sticky="ns")
 
         queue_footer = ttk.Frame(queue_section)
-        queue_footer.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        queue_footer.grid(row=queue_body_row + 1, column=0, sticky="ew", pady=(8, 0))
         self.queue_count_text = tk.StringVar(value="0 products")
         ttk.Label(queue_footer, textvariable=self.queue_count_text).pack(anchor="w")
         if not read_only and on_preassign_stock is not None:
@@ -219,37 +236,40 @@ class AssignmentView(ttk.Frame):
                 command=on_preassign_stock,
             )
             self.preassign_stock_button.pack(fill="x", pady=(5, 0))
-        ttk.Button(
-            queue_footer,
+        queue_actions = ttk.Frame(queue_footer)
+        queue_actions.pack(fill="x", pady=(5, 0))
+        queue_actions.columnconfigure(0, weight=1)
+        queue_actions.columnconfigure(1, weight=1)
+        self.assign_button = ttk.Button(
+            queue_actions,
             text="Find saved location →" if read_only else "Assign selected to clicked slot →",
             command=on_assign,
-        ).pack(fill="x", pady=(5, 0))
+        )
+        self.assign_button.grid(
+            row=0, column=0, columnspan=2 if read_only else 1,
+            sticky="ew", padx=(0, 4) if not read_only else 0,
+        )
+        if not read_only:
+            self.catalog_to_queue_button = ttk.Button(
+                queue_actions,
+                text="Transfer selected to queue",
+                command=on_catalog_to_queue,
+                state="normal" if on_catalog_to_queue is not None else "disabled",
+            )
+            self.catalog_to_queue_button.grid(row=0, column=1, sticky="ew")
 
         if not read_only:
-            catalog_section.rowconfigure(2, weight=1)
+            catalog_section.rowconfigure(0, weight=1)
             catalog_section.columnconfigure(0, weight=1)
-            ttk.Label(catalog_section, text="Search code, full name, or shortened name").grid(
-                row=0, column=0, sticky="w"
-            )
-            self.catalog_search_var = tk.StringVar()
-            self.catalog_search_entry = ttk.Entry(
-                catalog_section,
-                textvariable=self.catalog_search_var,
-            )
-            self.catalog_search_entry.grid(row=1, column=0, sticky="ew", pady=(3, 6))
-            self.catalog_search_entry.bind("<Return>", self.format_catalog_search)
-            if on_catalog_search is not None:
-                self.catalog_search_var.trace_add("write", on_catalog_search)
-
             catalog_body = ttk.Frame(catalog_section)
-            catalog_body.grid(row=2, column=0, sticky="nsew")
+            catalog_body.grid(row=0, column=0, sticky="nsew")
             catalog_body.rowconfigure(0, weight=1)
             catalog_body.columnconfigure(0, weight=1)
             self.catalog_tree = ttk.Treeview(
                 catalog_body,
                 columns=("product_id", "product_name", "shortened_name"),
                 show="headings",
-                selectmode="browse",
+                selectmode="extended",
                 height=8,
             )
             self.catalog_tree.heading("product_id", text="Product ID")
@@ -271,10 +291,12 @@ class AssignmentView(ttk.Frame):
             self.catalog_tree.grid(row=0, column=0, sticky="nsew")
             catalog_scroll.grid(row=0, column=1, sticky="ns")
             catalog_x_scroll.grid(row=1, column=0, sticky="ew")
+            if on_catalog_to_queue is not None:
+                self.catalog_tree.bind("<Double-1>", lambda _event: on_catalog_to_queue())
 
             self.catalog_count_text = tk.StringVar(value="0 products")
             ttk.Label(catalog_section, textvariable=self.catalog_count_text).grid(
-                row=3, column=0, sticky="w", pady=(6, 0)
+                row=1, column=0, sticky="w", pady=(6, 0)
             )
 
         self.shelf_scroll = ScrollableFrame(shelf_panel, horizontal=True, vertical=True)
@@ -343,11 +365,20 @@ class AssignmentView(ttk.Frame):
                 text="Return selected products to queue",
                 command=on_return,
             ).pack(fill="x", pady=(6, 0))
+            web_buttons = ttk.Frame(details_footer)
+            web_buttons.pack(fill="x", pady=(6, 0))
+            web_buttons.columnconfigure(0, weight=1)
+            web_buttons.columnconfigure(1, weight=1)
+            self.modify_location_button = ttk.Button(
+                web_buttons, text="Modify web location", command=on_modify_location,
+                state="normal" if on_modify_location is not None else "disabled",
+            )
+            self.modify_location_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
             self.upload_button = ttk.Button(
-                details_footer, text="Upload to web", command=on_upload,
+                web_buttons, text="Upload to web", command=on_upload,
                 state="normal" if on_upload is not None else "disabled",
             )
-            self.upload_button.pack(fill="x", pady=(6, 0))
+            self.upload_button.grid(row=0, column=1, sticky="ew")
 
             self.upload_status_text = tk.StringVar(value="")
             ttk.Label(
@@ -360,10 +391,6 @@ class AssignmentView(ttk.Frame):
         ).pack(anchor="w", pady=(6, 0))
 
     def on_barcode_scan(self, barcode):
-        catalog_entry = getattr(self, "catalog_search_entry", None)
-        if catalog_entry is not None and self.focus_get() == catalog_entry:
-            self._set_and_select_search(self.catalog_search_var, catalog_entry, barcode)
-            return
         self._set_and_select_search(self.search_var, self.search_entry, barcode)
 
     def format_primary_search(self, _event=None):
@@ -375,14 +402,6 @@ class AssignmentView(ttk.Frame):
         # Tab 3 appends its location lookup handler to this same Enter event.
         # Tab 2 has no second handler, so stop the global scanner callback there.
         return None if self.read_only else "break"
-
-    def format_catalog_search(self, _event=None):
-        self._set_and_select_search(
-            self.catalog_search_var,
-            self.catalog_search_entry,
-            format_product_id(self.catalog_search_var.get()),
-        )
-        return "break"
 
     def _set_and_select_search(self, variable, entry, value):
         variable.set(value)

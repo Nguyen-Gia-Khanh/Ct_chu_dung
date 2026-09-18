@@ -253,6 +253,21 @@ class WarehouseDatabase:
             ).fetchall()
         return [(row["product_id"], row["product_name"]) for row in rows]
 
+    def get_product_records(self) -> list[tuple[str, str, str]]:
+        """Return working-queue products with every searchable name field."""
+        with closing(self.connect()) as connection, connection:
+            rows = connection.execute(
+                """
+                SELECT product_id, product_name, shortened_name
+                FROM products
+                ORDER BY product_id COLLATE NOCASE
+                """
+            ).fetchall()
+        return [
+            (row["product_id"], row["product_name"], row["shortened_name"])
+            for row in rows
+        ]
+
     def import_catalog_products(self, records: dict[str, tuple[str, str]]) -> tuple[int, int]:
         """Upsert the separate reference catalog without changing the warehouse queue."""
         if not records:

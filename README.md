@@ -4,8 +4,10 @@ A small local Windows application for assigning a fixed product catalogue to irr
 
 ## What it does
 
-- Imports product IDs and names from CSV.
-- Searches product IDs and Vietnamese product names in real time, ignoring case and accents.
+- Imports a working product queue and a separate full product catalog from CSV.
+- Uses one real-time search field for both lists, including IDs, full names, and shortened names while ignoring case and accents.
+- Shows the saved or staged location when the search text is an exact product ID.
+- Transfers selected catalog products into the working queue without removing them from the catalog.
 - Creates each shelf from floor, shelf code, and row count.
 - Gives every row separate **left-half** and **right-half** cell counts.
 - Numbers rows from the ground upward in both tabs, with Row 1 at the bottom.
@@ -68,6 +70,12 @@ Export an Excel workbook as **CSV UTF-8** before importing it. Re-importing the 
 8. Press **Assign selected to clicked slot**. They leave the working queue immediately.
 9. Repeat as needed.
 10. Press **Commit shelf + assignments** to save everything in one SQLite transaction.
+
+The same search box filters both the unassigned queue and the full catalog. To
+start working with a catalog-only product, select it in **Full product catalog**
+and press **Transfer selected to queue** beside the assignment button.
+If it already has a location, the action stages its removal from that slot and
+keeps its stock value for reassignment. Its catalog row always remains available.
 
 Yellow slots contain uncommitted assignments. Green slots contain saved assignments. Select products inside a slot and press **Return selected products to queue** to correct a location; commit again to make the correction permanent.
 

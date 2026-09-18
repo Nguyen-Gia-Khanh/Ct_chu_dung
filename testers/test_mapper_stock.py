@@ -210,6 +210,89 @@ class StockPlacementTests(unittest.TestCase):
         self.assertEqual(app.transferred_stock.get("P1"), 22)
         app.refresh_all_views.assert_called()
 
+    def test_catalog_transfer_adds_product_to_queue_and_keeps_catalog_record(self):
+        self.database.import_catalog_products({"C1": ("Catalog bolt", "C bolt")})
+        app = self.make_app()
+        app.catalog_products = {"C1": ("Catalog bolt", "C bolt")}
+        app.assignments.catalog_tree = Mock()
+        app.assignments.catalog_tree.selection.return_value = ("catalog::C1",)
+        app.reload_database_state = Mock()
+
+        app.transfer_catalog_selection_to_queue()
+
+        self.assertIn(("C1", "Catalog bolt"), self.database.get_products())
+        self.assertIn(("C1", "Catalog bolt", "C bolt"), self.database.get_catalog_products())
+        app.reload_database_state.assert_called_once()
+        app.refresh_all_views.assert_called()
+
+    def test_catalog_transfer_moves_saved_product_to_queue_with_stock(self):
+        placement = Placement(CELL_ONE, 27, FIRST_TIME)
+        self.database.import_catalog_products({"P1": ("Bolts", "Bolt")})
+        self.database.commit_shelf("1", "A", [2], {"P1": placement}, set())
+        app = self.make_app()
+        app.catalog_products = {"P1": ("Bolts", "Bolt")}
+        app.committed_placements = {"P1": placement}
+        app.committed_locations = {"P1": CELL_ONE}
+        app.assignments.catalog_tree = Mock()
+        app.assignments.catalog_tree.selection.return_value = ("catalog::P1",)
+        app.reload_database_state = Mock()
+
+        app.transfer_catalog_selection_to_queue()
+
+        self.assertIn("P1", app.pending_unassignments)
+        self.assertEqual(app.transferred_stock["P1"], 27)
+        self.assertIn(("P1", "Bolts", "Bolt"), self.database.get_catalog_products())
+
+    def test_exact_shared_search_reports_saved_or_unassigned_location(self):
+        app = self.make_app()
+        app.catalog_products = {"P1": ("Bolts", "Bolt"), "C1": ("Catalog bolt", "C bolt")}
+        app.assignments.search_var = Mock()
+        app.assignments.search_location_text = Mock()
+        app.committed_placements = {"P1": Placement(CELL_ONE, 8, FIRST_TIME)}
+
+        app.refresh_search_location("P1")
+        app.assignments.search_location_text.set.assert_called_with(
+            f"Location: {CELL_ONE} · saved · stock 8"
+        )
+
+        app.refresh_search_location("C1")
+        app.assignments.search_location_text.set.assert_called_with(
+            "Location: not assigned to a shelf"
+        )
+
+    def test_catalog_refresh_uses_the_queue_search_field(self):
+        app = self.make_app()
+        app.catalog_products = {
+            "C1": ("Catalog bolt", "C bolt"),
+            "C2": ("Catalog washer", "C washer"),
+        }
+        app.catalog_search = {
+            product_id: " ".join((product_id, *names)).casefold()
+            for product_id, names in app.catalog_products.items()
+        }
+        app.assignments.search_var = Mock()
+        app.assignments.search_var.get.return_value = "C bolt"
+        app.assignments.catalog_tree = Mock()
+        app.assignments.catalog_tree.get_children.return_value = ()
+        app.assignments.catalog_count_text = Mock()
+        app.refresh_search_location = Mock()
+
+        app.refresh_catalog()
+
+        app.assignments.catalog_tree.insert.assert_called_once_with(
+            "", "end", iid="catalog::C1", values=("C1", "Catalog bolt", "C bolt")
+        )
+        app.refresh_search_location.assert_called_once_with("C bolt")
+
+    def test_queue_search_index_includes_shortened_name(self):
+        self.database.import_products({"P1": ("Bolts", "Fastener alias")})
+        app = self.make_app()
+        app.refresh_product_lists = Mock()
+
+        app.reload_database_state()
+
+        self.assertIn("fastener alias", app.product_search["P1"])
+
     def test_assign_prefills_transferred_stock_and_cleans_up(self):
         app = self.make_app()
         app.transferred_stock["P1"] = 42
