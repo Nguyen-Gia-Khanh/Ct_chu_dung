@@ -19,7 +19,7 @@ from .csv_import import ColumnMappingDialog, read_csv
 from .database import LayoutConflictError, Placement, WarehouseDatabase, validate_stock_quantity
 from .designer import ShelfDesigner
 from .lookup_view import ProductLookupView
-from .web_upload import UploadProduct, WebsiteUploader
+from .web_upload import LocationUpdate, UploadProduct, WebsiteUploader
 
 from utils.barcode_scanner import format_product_id
 
@@ -49,6 +49,7 @@ class WarehouseMapperApp:
         self.chrome_connect_after_id: str | None = None
         self.chrome_connect_events: Queue = Queue()
         self.web_upload_busy = False
+        self.web_upload_action = "upload"
         self.web_upload_after_id: str | None = None
         self.web_upload_events: Queue = Queue()
 
@@ -111,6 +112,7 @@ class WarehouseMapperApp:
             self.notebook, self.schedule_queue_refresh, self.assign_selected_products,
             self.return_selected_to_queue, self.select_slot,
             on_upload=self.upload_selected_product,
+            on_modify_location=self.modify_selected_location,
             on_modify_stock=self.modify_selected_stock,
             on_transfer=self.transfer_selected_products,
             on_preassign_stock=self.preassign_queue_stock,
@@ -241,7 +243,7 @@ class WarehouseMapperApp:
         )
         if self.current_layout:
             self.assignments.active_shelf_text.set(
-                f"Floor {floor} · Side {side} · Shelf {shelf_code} · {len(self.current_layout)} rows · "
+                f"Floor {floor} Â· Side {side} Â· Shelf {shelf_code} Â· {len(self.current_layout)} rows Â· "
                 f"{sum(self.current_layout)} slots"
             )
         else:
@@ -403,7 +405,7 @@ class WarehouseMapperApp:
         )
         self.refresh_all_views()
         self.status_text.set(
-            f"Staged stock change for {product_id}: {current_text} → {quantity}. Press Commit to save."
+            f"Staged stock change for {product_id}: {current_text} â†’ {quantity}. Press Commit to save."
         )
 
     def transfer_selected_products(self) -> None:
@@ -491,8 +493,8 @@ class WarehouseMapperApp:
             return
 
         self.chrome_connect_busy = True
-        self.connect_chrome_button.configure(text="Connecting…", state="disabled")
-        self.status_text.set("Connecting to the debugging Chrome session on port 9222…")
+        self.connect_chrome_button.configure(text="Connectingâ€¦", state="disabled")
+        self.status_text.set("Connecting to the debugging Chrome session on port 9222â€¦")
         self.chrome_connect_events = Queue()
         Thread(
             target=self._run_chrome_connect,
@@ -539,10 +541,12 @@ class WarehouseMapperApp:
         if self.chrome_connect_busy:
             self.chrome_connect_after_id = self.root.after(100, self._poll_chrome_connect)
 
-    def _selected_upload_product(self) -> UploadProduct:
+    def _selected_web_placement(self, action_name: str) -> tuple[str, Placement]:
         selected = self.assignments.contents_tree.selection()
         if len(selected) != 1:
-            raise ValueError("Select exactly one product in Selected slot contents, then press Upload to web.")
+            raise ValueError(
+                f"Select exactly one product in Selected slot contents, then press {action_name}."
+            )
         state, separator, product_id = selected[0].partition("::")
         if not separator or state not in {"staged", "saved"} or product_id not in self.products:
             raise ValueError("Select a current product from the slot contents list.")
@@ -551,6 +555,10 @@ class WarehouseMapperApp:
         if (placement is None or placement.slot_name != self.selected_slot or
                 (state == "saved" and (product_id in self.pending_unassignments or product_id in self.staged_assignments))):
             raise ValueError("That selection changed. Select the product in its current slot again.")
+        return product_id, placement
+
+    def _selected_upload_product(self) -> UploadProduct:
+        product_id, placement = self._selected_web_placement("Upload to web")
         if placement.stock_qty is None:
             raise ValueError(
                 "This product has no recorded quantity. Return it to the queue and assign it again "
@@ -558,39 +566,81 @@ class WarehouseMapperApp:
             )
         return UploadProduct(product_id, placement.stock_qty, placement.slot_name)
 
-    def upload_selected_product(self) -> None:
+    def _selected_location_update(self) -> LocationUpdate:
+        product_id, placement = self._selected_web_placement("Modify location")
+        return LocationUpdate(product_id, placement.slot_name)
+
+    def _can_start_web_update(self) -> bool:
         if self.web_upload_busy or self.chrome_connect_busy:
-            return
-        if not self.chrome_connected:
-            messagebox.showinfo(
-                "Connect Chrome first",
-                "Press Connect Chrome beside the shelf Load button, then try the upload again.",
-                parent=self.root,
-            )
+            return False
+        if self.chrome_connected:
+            return True
+        messagebox.showinfo(
+            "Connect Chrome first",
+            "Press Connect Chrome beside the shelf Load button, then try again.",
+            parent=self.root,
+        )
+        return False
+
+    def upload_selected_product(self) -> None:
+        if not self._can_start_web_update():
             return
         try:
             product = self._selected_upload_product()
         except ValueError as error:
             messagebox.showinfo("Choose a product to upload", str(error), parent=self.root)
             return
-        # Capture the placement now. Later changes to the selected shelf/product
-        # cannot alter an upload that is already in progress.
+        self._start_web_update(product, location_only=False)
+
+    def modify_selected_location(self) -> None:
+        if not self._can_start_web_update():
+            return
+        try:
+            product = self._selected_location_update()
+        except ValueError as error:
+            messagebox.showinfo("Choose a product", str(error), parent=self.root)
+            return
+        self._start_web_update(product, location_only=True)
+
+    def _start_web_update(
+        self,
+        product: UploadProduct | LocationUpdate,
+        *,
+        location_only: bool,
+    ) -> None:
+        # Capture the placement now. Later UI changes cannot alter this task.
         self.web_upload_busy = True
+        self.web_upload_action = "location" if location_only else "upload"
         self.assignments.upload_button.configure(state="disabled")
-        self.assignments.upload_status_text.set(f"Uploading {product.product_id} → {product.location_id}…")
-        self.status_text.set("Upload in progress. Leave the website tab untouched until it finishes.")
+        self.assignments.modify_location_button.configure(state="disabled")
+        action = "Updating location" if location_only else "Uploading"
+        self.assignments.upload_status_text.set(
+            f"{action} {product.product_id} â†’ {product.location_id}â€¦"
+        )
+        self.status_text.set(
+            f"{action} in progress. Leave the website tab untouched until it finishes."
+        )
         self.web_upload_events = Queue()
         Thread(
-            target=self._run_web_upload, args=(product, self.web_upload_events), daemon=True,
+            target=self._run_web_upload,
+            args=(product, self.web_upload_events, location_only),
+            daemon=True,
         ).start()
         self.web_upload_after_id = self.root.after(100, self._poll_web_upload)
 
-    def _run_web_upload(self, product: UploadProduct, events: Queue) -> None:
+    def _run_web_upload(
+        self,
+        product: UploadProduct | LocationUpdate,
+        events: Queue,
+        location_only: bool,
+    ) -> None:
         # This worker never calls Tkinter and never writes to the local database.
         try:
-            result = self.website_uploader.upload(
-                product, lambda text: events.put(("progress", text))
-            )
+            progress = lambda text: events.put(("progress", text))
+            if location_only:
+                result = self.website_uploader.modify_location(product, progress)
+            else:
+                result = self.website_uploader.upload(product, progress)
         except Exception as error:
             events.put(("error", str(error), self.website_uploader.is_connected()))
         else:
@@ -609,16 +659,23 @@ class WarehouseMapperApp:
                 continue
             self.web_upload_busy = False
             self.assignments.upload_button.configure(state="normal")
+            self.assignments.modify_location_button.configure(state="normal")
+            action_title = "Modify location" if self.web_upload_action == "location" else "Upload to web"
             if event == "error":
                 if metadata and not metadata[0]:
                     self.chrome_connected = False
                     self.connect_chrome_button.configure(text="Connect Chrome")
-                self.assignments.upload_status_text.set("Upload needs attention. See the message and check Chrome.")
-                self.status_text.set("Upload was not verified. Local staged changes are unchanged.")
-                messagebox.showerror("Upload to web", text, parent=self.root)
+                self.assignments.upload_status_text.set(
+                    f"{action_title} needs attention. See the message and check Chrome."
+                )
+                self.status_text.set(
+                    f"{action_title} was not verified. Local staged changes are unchanged."
+                )
+                messagebox.showerror(action_title, text, parent=self.root)
             else:
                 self.assignments.upload_status_text.set(text)
-                self.status_text.set(text + " Use Commit to save any local changes.")
+                suffix = " Use Commit to save any local changes." if self.web_upload_action == "upload" else ""
+                self.status_text.set(text + suffix)
             return
         if self.web_upload_busy:
             self.web_upload_after_id = self.root.after(100, self._poll_web_upload)
@@ -678,8 +735,8 @@ class WarehouseMapperApp:
             )
 
         shown = min(len(available), MAX_VISIBLE_PRODUCTS)
-        suffix = " — narrow the search to see more" if len(available) > MAX_VISIBLE_PRODUCTS else ""
-        self.assignments.queue_count_text.set(f"{len(available):,} matching · showing {shown:,}{suffix}")
+        suffix = " â€” narrow the search to see more" if len(available) > MAX_VISIBLE_PRODUCTS else ""
+        self.assignments.queue_count_text.set(f"{len(available):,} matching Â· showing {shown:,}{suffix}")
 
     def refresh_catalog(self) -> None:
         if getattr(self, "catalog_search_after_id", None):
@@ -719,16 +776,16 @@ class WarehouseMapperApp:
             )
 
         shown = min(len(matches), MAX_VISIBLE_PRODUCTS)
-        suffix = " — narrow the search to see more" if len(matches) > MAX_VISIBLE_PRODUCTS else ""
+        suffix = " â€” narrow the search to see more" if len(matches) > MAX_VISIBLE_PRODUCTS else ""
         self.assignments.catalog_count_text.set(
-            f"{len(matches):,} matching / {len(self.catalog_products):,} total · "
+            f"{len(matches):,} matching / {len(self.catalog_products):,} total Â· "
             f"showing {shown:,}{suffix}"
         )
 
     def refresh_change_summary(self) -> None:
         changed_products = set(self.staged_assignments) | self.pending_unassignments
         self.assignments.change_summary_text.set(
-            f"{len(changed_products):,} staged product change(s) · Commit writes them to SQLite"
+            f"{len(changed_products):,} staged product change(s) Â· Commit writes them to SQLite"
         )
 
     def refresh_all_views(self) -> None:
@@ -782,7 +839,7 @@ class WarehouseMapperApp:
     def refresh_shelf_selector(self) -> None:
         choices = self.database.list_shelves()
         self.shelf_choices = {
-            f"Floor {floor} — Side {side} — Shelf {shelf_code}": shelf_id
+            f"Floor {floor} â€” Side {side} â€” Shelf {shelf_code}": shelf_id
             for shelf_id, floor, side, shelf_code in choices
         }
         self.shelf_selector.configure(values=list(self.shelf_choices))

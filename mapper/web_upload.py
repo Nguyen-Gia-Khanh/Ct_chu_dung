@@ -1,9 +1,10 @@
-"""Upload ONE placement to the product page in an existing Chrome session.
+"""Update ONE placement on the product page in an existing Chrome session.
 
 Selenium is optional and imported only when Upload is clicked. This module never
 opens SQLite, commits a shelf, logs in, or starts a product batch. The selected
 SKU is looked up through the current KiotViet browser session, then the remaining
-form fields are changed one step at a time.
+form fields are changed one step at a time. Location-only updates deliberately
+leave the website quantity untouched.
 """
 
 from __future__ import annotations
@@ -55,6 +56,16 @@ class UploadProduct:
             raise ValueError("A product ID and a location ID are required.")
         if type(self.stock_qty) is not int or not 0 <= self.stock_qty <= 2**53 - 1:
             raise ValueError("Upload needs a known whole-number quantity from 0 to 9,007,199,254,740,991.")
+
+
+@dataclass(frozen=True)
+class LocationUpdate:
+    product_id: str
+    location_id: str
+
+    def __post_init__(self) -> None:
+        if not self.product_id.strip() or not self.location_id.strip():
+            raise ValueError("A product ID and a location ID are required.")
 
 
 # This replaces the old search-box + fixed-result-row XPaths. It runs inside the
@@ -672,7 +683,10 @@ class WebsiteUploader:
         self._connect()
         progress("Checking the KiotViet product tab…")
         self._choose_tab()
-        return "Chrome connected. Select a shelf product and press Upload to web."
+        return (
+            "Chrome connected. Select a shelf product and press Upload to web "
+            "or Modify location."
+        )
 
     def disconnect(self) -> None:
         """Release ChromeDriver without closing the user's debugging Chrome."""
@@ -793,7 +807,7 @@ class WebsiteUploader:
     def _click(self, path: str, description: str) -> None:
         self._wait(description, lambda: self._dom("click", path), check_errors=True)
 
-    def _identity_matches(self, product: UploadProduct) -> bool:
+    def _identity_matches(self, product: UploadProduct | LocationUpdate) -> bool:
         return self._dom("identity", {"form": FORM_XPATH, "id": PRODUCT_ID_XPATH}, product.product_id)
 
     def _stock_matches(self, product: UploadProduct) -> bool:
@@ -802,8 +816,11 @@ class WebsiteUploader:
             return False
         return quantity == product.stock_qty or str(quantity).strip() == str(product.stock_qty)
 
-    def _location_matches(self, product: UploadProduct) -> bool:
+    def _location_matches(self, product: UploadProduct | LocationUpdate) -> bool:
         return bool(self._dom("location_selected", LOCATION_FIELD_XPATH, product.location_id))
+
+    def _location_values_match(self, product: UploadProduct | LocationUpdate) -> bool:
+        return self._identity_matches(product) and self._location_matches(product)
 
     def _all_values_match(self, product: UploadProduct) -> bool:
         return (
@@ -812,7 +829,7 @@ class WebsiteUploader:
             and (not SET_LOCATION_ON_UPLOAD or self._location_matches(product))
         )
 
-    def _open_product(self, product: UploadProduct) -> None:
+    def _open_product(self, product: UploadProduct | LocationUpdate) -> None:
         result = self.driver.execute_async_script(OPEN_PRODUCT_SCRIPT, product.product_id)
         if not isinstance(result, dict) or not result.get("ok"):
             detail = result.get("error") if isinstance(result, dict) else repr(result)
@@ -860,7 +877,7 @@ class WebsiteUploader:
 
         return names, ids_by_name
 
-    def _select_location_id(self, product: UploadProduct, shelf_id: str) -> None:
+    def _select_location_id(self, product: UploadProduct | LocationUpdate, shelf_id: str) -> None:
         selected = self._dom(
             "location_pick_id",
             LOCATION_FIELD_XPATH,
@@ -877,7 +894,11 @@ class WebsiteUploader:
             check_errors=True,
         )
 
-    def _set_location(self, product: UploadProduct, progress: Callable[[str], None]) -> None:
+    def _set_location(
+        self,
+        product: UploadProduct | LocationUpdate,
+        progress: Callable[[str], None],
+    ) -> None:
         target = product.location_id.strip()
         self._wait("finding the location field", lambda: self._dom("present", LOCATION_FIELD_XPATH))
 
@@ -926,9 +947,15 @@ class WebsiteUploader:
         progress(f"Selecting new location {target}…")
         self._select_location_id(product, new_id)
 
-    def _save_product(self, product: UploadProduct, progress: Callable[[str], None]) -> str:
+    def _save_product(
+        self,
+        product: UploadProduct | LocationUpdate,
+        progress: Callable[[str], None],
+        *,
+        location_only: bool = False,
+    ) -> str:
         """PRODUCTION STEP: press Lưu once, then reload and verify the saved values."""
-        progress("Saving the product on the website…")
+        progress("Saving the location on the website…" if location_only else "Saving the product on the website…")
 
         try:
             # From this call onward a timeout has an uncertain outcome. Never retry Save.
@@ -945,12 +972,21 @@ class WebsiteUploader:
                 "Check this product in Chrome before trying again. No automatic retry was made.\n\n" + detail
             ) from error
 
-        progress("Reloading the saved product to verify quantity and location…")
+        progress(
+            "Reloading the saved product to verify its location…"
+            if location_only else
+            "Reloading the saved product to verify quantity and location…"
+        )
         self.driver.refresh()
         self._wait("waiting for the product page after reload", lambda: self._dom("product_page"))
         self._pause()
         self._open_product(product)
-        self._wait("verifying the saved values", lambda: self._all_values_match(product), check_errors=True)
+        self._wait(
+            "verifying the saved location" if location_only else "verifying the saved values",
+            lambda: self._location_values_match(product)
+            if location_only else self._all_values_match(product),
+            check_errors=True,
+        )
 
         note = ""
         try:
@@ -958,10 +994,9 @@ class WebsiteUploader:
         except Exception:
             note = " Close the verification form in Chrome before the next upload."
 
-        return (
-            f"Uploaded and verified: {product.product_id} · qty {product.stock_qty} · "
-            f"{product.location_id}.{note}"
-        )
+        if location_only:
+            return f"Location updated and verified: {product.product_id} · {product.location_id}.{note}"
+        return f"Uploaded and verified: {product.product_id} · qty {product.stock_qty} · {product.location_id}.{note}"
 
     def upload(self, product: UploadProduct, progress: Callable[[str], None] = lambda _message: None) -> str:
         if not self.is_connected():
@@ -1002,4 +1037,45 @@ class WebsiteUploader:
             raise UploadError(
                 "Upload stopped before the final Save step. "
                 "Any new location already created may remain on the website.\n\n" + detail
+            ) from error
+
+    def modify_location(
+        self,
+        product: LocationUpdate,
+        progress: Callable[[str], None] = lambda _message: None,
+    ) -> str:
+        """Change only the website location; never inspect or modify stock."""
+        if not self.is_connected():
+            raise UploadError(
+                "Chrome is not connected. Press Connect Chrome beside the shelf Load button first."
+            )
+        try:
+            progress("Checking the connected Chrome tab…")
+            self._choose_tab()
+
+            self._pause()
+            progress(f"Finding product {product.product_id}…")
+            self._open_product(product)
+
+            progress(f"Selecting location {product.location_id}…")
+            self._set_location(product, progress)
+            self._wait(
+                "checking product and location before Save",
+                lambda: self._location_values_match(product),
+                check_errors=True,
+            )
+
+            if SAVE_ON_UPLOAD:
+                return self._save_product(product, progress, location_only=True)
+
+            return "Location filled. Stock was untouched. Press Lưu manually in Chrome."
+
+        except UploadError:
+            raise
+        except Exception as error:
+            detail = str(error).split("Stacktrace:")[0][:1400]
+            raise UploadError(
+                "Location update stopped before the final Save step. "
+                "Stock was not changed. Any new location already created may remain on the website.\n\n"
+                + detail
             ) from error
