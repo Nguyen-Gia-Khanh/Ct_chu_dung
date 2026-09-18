@@ -179,15 +179,14 @@ class AssignmentView(ttk.Frame):
         self.search_var.trace_add("write", on_search)
 
         if not read_only:
-            self.search_location_text = tk.StringVar(
-                value="Enter an exact product ID to show its current location."
-            )
-            ttk.Label(
+            self.search_location_text = tk.StringVar(value="")
+            self.search_location_label = ttk.Label(
                 queue_section,
                 textvariable=self.search_location_text,
                 foreground="#555555",
                 wraplength=400,
-            ).grid(row=2, column=0, sticky="w", pady=(0, 6))
+            )
+            self.search_location_label.grid(row=2, column=0, sticky="w", pady=(0, 6))
 
         self.barcode_scanner = BarcodeScanner(
             self,

@@ -6,7 +6,7 @@ A small local Windows application for assigning a fixed product catalogue to irr
 
 - Imports a working product queue and a separate full product catalog from CSV.
 - Uses one real-time search field for both lists, including IDs, full names, and shortened names while ignoring case and accents.
-- Shows the saved or staged location when the search text is an exact product ID.
+- Shows a red **Already at [location]** warning for an exact product ID that has a saved or staged location; otherwise it shows **Not in**.
 - Transfers selected catalog products into the working queue without removing them from the catalog.
 - Creates each shelf from floor, shelf code, and row count.
 - Gives every row separate **left-half** and **right-half** cell counts.

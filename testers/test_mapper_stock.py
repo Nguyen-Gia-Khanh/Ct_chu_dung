@@ -248,16 +248,29 @@ class StockPlacementTests(unittest.TestCase):
         app.catalog_products = {"P1": ("Bolts", "Bolt"), "C1": ("Catalog bolt", "C bolt")}
         app.assignments.search_var = Mock()
         app.assignments.search_location_text = Mock()
+        app.assignments.search_location_label = Mock()
         app.committed_placements = {"P1": Placement(CELL_ONE, 8, FIRST_TIME)}
 
         app.refresh_search_location("P1")
         app.assignments.search_location_text.set.assert_called_with(
-            f"Location: {CELL_ONE} · saved · stock 8"
+            f"Already at {CELL_ONE}"
+        )
+        app.assignments.search_location_label.configure.assert_called_with(
+            foreground="#c62828"
+        )
+
+        app.pending_unassignments.add("P1")
+        app.refresh_search_location("P1")
+        app.assignments.search_location_text.set.assert_called_with(
+            f"Already at {CELL_ONE} (queued for transfer)"
         )
 
         app.refresh_search_location("C1")
         app.assignments.search_location_text.set.assert_called_with(
-            "Location: not assigned to a shelf"
+            "Not in"
+        )
+        app.assignments.search_location_label.configure.assert_called_with(
+            foreground="#555555"
         )
 
     def test_catalog_refresh_uses_the_queue_search_field(self):

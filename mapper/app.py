@@ -844,41 +844,44 @@ class WarehouseMapperApp:
         location_text = getattr(self.assignments, "search_location_text", None)
         if location_text is None:
             return
+        location_label = getattr(self.assignments, "search_location_label", None)
 
         raw_query = (
             self.assignments.search_var.get().strip()
             if raw_query is None
             else raw_query.strip()
         )
-        if not raw_query:
-            location_text.set("Enter an exact product ID to show its current location.")
-            return
+        product_id = None
+        if raw_query:
+            product_id = next(
+                (
+                    candidate
+                    for candidate in self.catalog_products.keys() | self.products.keys()
+                    if candidate.casefold() == raw_query.casefold()
+                ),
+                None,
+            )
 
-        product_id = next(
-            (
-                candidate
-                for candidate in self.catalog_products.keys() | self.products.keys()
-                if candidate.casefold() == raw_query.casefold()
-            ),
-            None,
-        )
-        if product_id is None:
-            location_text.set("Location: enter an exact product ID to look it up.")
-            return
+        message = ""
+        location_exists = False
+        if product_id is not None:
+            staged = self.staged_assignments.get(product_id)
+            saved = self.committed_placements.get(product_id)
+            if staged is not None:
+                message = f"Already at {staged.slot_name} (staged)"
+                location_exists = True
+            elif saved is not None:
+                suffix = " (queued for transfer)" if product_id in self.pending_unassignments else ""
+                message = f"Already at {saved.slot_name}{suffix}"
+                location_exists = True
+            else:
+                message = "Not in"
 
-        staged = self.staged_assignments.get(product_id)
-        saved = self.committed_placements.get(product_id)
-        if staged is not None:
-            stock = f" · stock {staged.stock_qty}" if staged.stock_qty is not None else ""
-            location_text.set(f"Location: {staged.slot_name} · staged{stock}")
-        elif product_id in self.pending_unassignments:
-            origin = saved.slot_name if saved is not None else "transfer queue"
-            location_text.set(f"Location: {origin} · queued for transfer (not committed)")
-        elif saved is not None:
-            stock = f" · stock {saved.stock_qty}" if saved.stock_qty is not None else ""
-            location_text.set(f"Location: {saved.slot_name} · saved{stock}")
-        else:
-            location_text.set("Location: not assigned to a shelf")
+        location_text.set(message)
+        if location_label is not None:
+            location_label.configure(
+                foreground="#c62828" if location_exists else "#555555"
+            )
 
     def refresh_change_summary(self) -> None:
         changed_products = set(self.staged_assignments) | self.pending_unassignments
