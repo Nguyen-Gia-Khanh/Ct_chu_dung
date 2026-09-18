@@ -337,7 +337,7 @@ class AssignmentView(ttk.Frame):
                 selected = slot_name == self.selected_slot
                 button = tk.Button(
                     row_frame,
-                    text=f"C{slot_index:02d}\n{total_count} product{'s' if total_count != 1 else ''}",
+                    text=f"R{row_number}-C{slot_index:02d}\n{total_count} product{'s' if total_count != 1 else ''}",
                     command=lambda name=slot_name: self.on_select(name),
                     background=background,
                     activebackground="#cfe8ff",
