@@ -58,6 +58,13 @@ class WarehouseDatabase:
                     imported_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS catalog_products (
+                    product_id     TEXT PRIMARY KEY,
+                    product_name   TEXT NOT NULL,
+                    shortened_name TEXT NOT NULL DEFAULT '',
+                    imported_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS shelves (
                     shelf_id    INTEGER PRIMARY KEY AUTOINCREMENT,
                     floor       TEXT NOT NULL COLLATE NOCASE,
@@ -94,6 +101,8 @@ class WarehouseDatabase:
 
                 CREATE INDEX IF NOT EXISTS idx_products_name
                     ON products(product_name COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS idx_catalog_products_name
+                    ON catalog_products(product_name COLLATE NOCASE);
                 CREATE INDEX IF NOT EXISTS idx_placements_slot
                     ON placements(slot_id);
                 """
@@ -243,6 +252,47 @@ class WarehouseDatabase:
                 "SELECT product_id, product_name FROM products ORDER BY product_id COLLATE NOCASE"
             ).fetchall()
         return [(row["product_id"], row["product_name"]) for row in rows]
+
+    def import_catalog_products(self, records: dict[str, tuple[str, str]]) -> tuple[int, int]:
+        """Upsert the separate reference catalog without changing the warehouse queue."""
+        if not records:
+            return 0, 0
+
+        with closing(self.connect()) as connection, connection:
+            existing = {
+                row["product_id"]
+                for row in connection.execute("SELECT product_id FROM catalog_products")
+                if row["product_id"] in records
+            }
+            connection.executemany(
+                """
+                INSERT INTO catalog_products (product_id, product_name, shortened_name)
+                VALUES (?, ?, ?)
+                ON CONFLICT(product_id) DO UPDATE SET
+                    product_name = excluded.product_name,
+                    shortened_name = excluded.shortened_name,
+                    imported_at = CURRENT_TIMESTAMP
+                """,
+                [
+                    (product_id, product_name, shortened_name)
+                    for product_id, (product_name, shortened_name) in records.items()
+                ],
+            )
+        return len(records) - len(existing), len(existing)
+
+    def get_catalog_products(self) -> list[tuple[str, str, str]]:
+        with closing(self.connect()) as connection, connection:
+            rows = connection.execute(
+                """
+                SELECT product_id, product_name, shortened_name
+                FROM catalog_products
+                ORDER BY product_id COLLATE NOCASE
+                """
+            ).fetchall()
+        return [
+            (row["product_id"], row["product_name"], row["shortened_name"])
+            for row in rows
+        ]
 
     def list_shelves(self) -> list[tuple[int, str, str, str]]:
         with closing(self.connect()) as connection, connection:

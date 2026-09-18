@@ -111,6 +111,7 @@ class AssignmentView(ttk.Frame):
         on_modify_stock=None,
         on_transfer=None,
         on_preassign_stock=None,
+        on_catalog_search=None,
     ):
         super().__init__(parent, padding=10)
         self.read_only = read_only
@@ -128,7 +129,7 @@ class AssignmentView(ttk.Frame):
         pane.pack(fill="both", expand=True)
 
         queue_panel = ttk.LabelFrame(
-            pane, text="All imported products" if read_only else "Unassigned product queue", padding=8,
+            pane, text="All imported products" if read_only else "Products", padding=8,
         )
         shelf_panel = ttk.LabelFrame(
             pane, text="Saved shelf — click a slot to view" if read_only else "2D shelf — click a slot", padding=8,
@@ -141,17 +142,27 @@ class AssignmentView(ttk.Frame):
         pane.add(shelf_panel, weight=6)
         pane.add(details_panel, weight=3)
 
-        queue_panel.rowconfigure(2, weight=1)
-        queue_panel.columnconfigure(0, weight=1)
+        if read_only:
+            queue_section = queue_panel
+        else:
+            queue_split = ttk.Panedwindow(queue_panel, orient="vertical")
+            queue_split.pack(fill="both", expand=True)
+            queue_section = ttk.LabelFrame(queue_split, text="Unassigned product queue", padding=6)
+            catalog_section = ttk.LabelFrame(queue_split, text="Full product catalog", padding=6)
+            queue_split.add(queue_section, weight=1)
+            queue_split.add(catalog_section, weight=1)
+
+        queue_section.rowconfigure(2, weight=1)
+        queue_section.columnconfigure(0, weight=1)
         
-        ttk.Label(queue_panel, text="Search ID or product name").grid(
+        ttk.Label(queue_section, text="Search ID or product name").grid(
             row=0, column=0, sticky="w"
         )
 
         self.search_var = tk.StringVar()
 
         self.search_entry = ttk.Entry(
-            queue_panel,
+            queue_section,
             textvariable=self.search_var
         )
         self.search_entry.grid(
@@ -165,7 +176,7 @@ class AssignmentView(ttk.Frame):
             self.on_barcode_scan
         )
 
-        queue_body = ttk.Frame(queue_panel)
+        queue_body = ttk.Frame(queue_section)
         queue_body.grid(row=2, column=0, sticky="nsew")
         queue_body.rowconfigure(0, weight=1)
         queue_body.columnconfigure(0, weight=1)
@@ -175,7 +186,7 @@ class AssignmentView(ttk.Frame):
             columns=("product_id", "product_name", "stock_qty"),
             show="headings",
             selectmode="browse" if read_only else "extended",
-            height=18,
+            height=18 if read_only else 8,
         )
         self.queue_tree.heading("product_id", text="Product ID")
         self.queue_tree.heading("product_name", text="Product name")
@@ -191,7 +202,7 @@ class AssignmentView(ttk.Frame):
         self.queue_tree.grid(row=0, column=0, sticky="nsew")
         queue_scroll.grid(row=0, column=1, sticky="ns")
 
-        queue_footer = ttk.Frame(queue_panel)
+        queue_footer = ttk.Frame(queue_section)
         queue_footer.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         self.queue_count_text = tk.StringVar(value="0 products")
         ttk.Label(queue_footer, textvariable=self.queue_count_text).pack(anchor="w")
@@ -207,6 +218,57 @@ class AssignmentView(ttk.Frame):
             text="Find saved location →" if read_only else "Assign selected to clicked slot →",
             command=on_assign,
         ).pack(fill="x", pady=(5, 0))
+
+        if not read_only:
+            catalog_section.rowconfigure(2, weight=1)
+            catalog_section.columnconfigure(0, weight=1)
+            ttk.Label(catalog_section, text="Search code, full name, or shortened name").grid(
+                row=0, column=0, sticky="w"
+            )
+            self.catalog_search_var = tk.StringVar()
+            self.catalog_search_entry = ttk.Entry(
+                catalog_section,
+                textvariable=self.catalog_search_var,
+            )
+            self.catalog_search_entry.grid(row=1, column=0, sticky="ew", pady=(3, 6))
+            if on_catalog_search is not None:
+                self.catalog_search_var.trace_add("write", on_catalog_search)
+
+            catalog_body = ttk.Frame(catalog_section)
+            catalog_body.grid(row=2, column=0, sticky="nsew")
+            catalog_body.rowconfigure(0, weight=1)
+            catalog_body.columnconfigure(0, weight=1)
+            self.catalog_tree = ttk.Treeview(
+                catalog_body,
+                columns=("product_id", "product_name", "shortened_name"),
+                show="headings",
+                selectmode="browse",
+                height=8,
+            )
+            self.catalog_tree.heading("product_id", text="Product ID")
+            self.catalog_tree.heading("product_name", text="Product name")
+            self.catalog_tree.heading("shortened_name", text="Shortened name")
+            self.catalog_tree.column("product_id", width=105, minwidth=75, stretch=False)
+            self.catalog_tree.column("product_name", width=180, minwidth=110)
+            self.catalog_tree.column("shortened_name", width=150, minwidth=100)
+            catalog_scroll = ttk.Scrollbar(
+                catalog_body, orient="vertical", command=self.catalog_tree.yview,
+            )
+            catalog_x_scroll = ttk.Scrollbar(
+                catalog_body, orient="horizontal", command=self.catalog_tree.xview,
+            )
+            self.catalog_tree.configure(
+                yscrollcommand=catalog_scroll.set,
+                xscrollcommand=catalog_x_scroll.set,
+            )
+            self.catalog_tree.grid(row=0, column=0, sticky="nsew")
+            catalog_scroll.grid(row=0, column=1, sticky="ns")
+            catalog_x_scroll.grid(row=1, column=0, sticky="ew")
+
+            self.catalog_count_text = tk.StringVar(value="0 products")
+            ttk.Label(catalog_section, textvariable=self.catalog_count_text).grid(
+                row=3, column=0, sticky="w", pady=(6, 0)
+            )
 
         self.shelf_scroll = ScrollableFrame(shelf_panel, horizontal=True, vertical=True)
         self.shelf_scroll.pack(fill="both", expand=True)

@@ -29,6 +29,8 @@ class WarehouseMapperApp:
         self.database = WarehouseDatabase(database_path or application_directory() / "warehouse_locations.db")
         self.products: dict[str, str] = {}
         self.product_search: dict[str, str] = {}
+        self.catalog_products: dict[str, tuple[str, str]] = {}
+        self.catalog_search: dict[str, str] = {}
         self.committed_locations: dict[str, str] = {}
         self.committed_placements: dict[str, Placement] = {}
         self.staged_assignments: dict[str, Placement] = {}
@@ -40,6 +42,12 @@ class WarehouseMapperApp:
         self.selected_slot: str | None = None
         self.shelf_choices: dict[str, int] = {}
         self.search_after_id: str | None = None
+        self.catalog_search_after_id: str | None = None
+        self.website_uploader = WebsiteUploader()
+        self.chrome_connected = False
+        self.chrome_connect_busy = False
+        self.chrome_connect_after_id: str | None = None
+        self.chrome_connect_events: Queue = Queue()
         self.web_upload_busy = False
         self.web_upload_after_id: str | None = None
         self.web_upload_events: Queue = Queue()
@@ -72,12 +80,19 @@ class WarehouseMapperApp:
         ttk.Label(toolbar, text=APP_TITLE, style="Title.TLabel").pack(side="left")
 
         ttk.Button(toolbar, text="Import products CSV", command=self.import_csv).pack(side="left", padx=(20, 6))
+        ttk.Button(
+            toolbar, text="Import full catalog CSV", command=self.import_catalog_csv,
+        ).pack(side="left", padx=6)
         ttk.Button(toolbar, text="New shelf", command=self.new_shelf).pack(side="left", padx=6)
 
         ttk.Label(toolbar, text="Existing shelf:").pack(side="left", padx=(18, 5))
         self.shelf_selector = ttk.Combobox(toolbar, state="readonly", width=28)
         self.shelf_selector.pack(side="left")
         ttk.Button(toolbar, text="Load", command=self.load_selected_shelf).pack(side="left", padx=(5, 6))
+        self.connect_chrome_button = ttk.Button(
+            toolbar, text="Connect Chrome", command=self.connect_chrome,
+        )
+        self.connect_chrome_button.pack(side="left", padx=(0, 6))
 
         ttk.Button(
             toolbar,
@@ -99,6 +114,7 @@ class WarehouseMapperApp:
             on_modify_stock=self.modify_selected_stock,
             on_transfer=self.transfer_selected_products,
             on_preassign_stock=self.preassign_queue_stock,
+            on_catalog_search=self.schedule_catalog_refresh,
         )
         self.notebook.add(self.designer, text="1. Shelf Designer")
         self.notebook.add(self.assignments, text="2. Assign Products")
@@ -463,6 +479,66 @@ class WarehouseMapperApp:
         self.refresh_product_queue()
         self.status_text.set(f"Pre-assigned stock for {len(dialog.result)} product(s) in queue.")
 
+    def connect_chrome(self) -> None:
+        if self.chrome_connect_busy:
+            return
+        if self.web_upload_busy:
+            messagebox.showinfo(
+                "Upload in progress",
+                "Wait for the current upload before reconnecting Chrome.",
+                parent=self.root,
+            )
+            return
+
+        self.chrome_connect_busy = True
+        self.connect_chrome_button.configure(text="Connecting…", state="disabled")
+        self.status_text.set("Connecting to the debugging Chrome session on port 9222…")
+        self.chrome_connect_events = Queue()
+        Thread(
+            target=self._run_chrome_connect,
+            args=(self.chrome_connect_events,),
+            daemon=True,
+        ).start()
+        self.chrome_connect_after_id = self.root.after(100, self._poll_chrome_connect)
+
+    def _run_chrome_connect(self, events: Queue) -> None:
+        # This worker never calls Tkinter.
+        try:
+            result = self.website_uploader.connect(
+                lambda text: events.put(("progress", text))
+            )
+        except Exception as error:
+            events.put(("error", str(error)))
+        else:
+            events.put(("done", result))
+
+    def _poll_chrome_connect(self) -> None:
+        self.chrome_connect_after_id = None
+        while True:
+            try:
+                event, text = self.chrome_connect_events.get_nowait()
+            except Empty:
+                break
+            if event == "progress":
+                self.status_text.set(text)
+                continue
+
+            self.chrome_connect_busy = False
+            self.connect_chrome_button.configure(state="normal")
+            if event == "error":
+                self.chrome_connected = False
+                self.connect_chrome_button.configure(text="Connect Chrome")
+                self.status_text.set("Chrome connection needs attention.")
+                messagebox.showerror("Connect Chrome", text, parent=self.root)
+            else:
+                self.chrome_connected = True
+                self.connect_chrome_button.configure(text="Reconnect Chrome")
+                self.assignments.upload_status_text.set(text)
+                self.status_text.set(text)
+            return
+        if self.chrome_connect_busy:
+            self.chrome_connect_after_id = self.root.after(100, self._poll_chrome_connect)
+
     def _selected_upload_product(self) -> UploadProduct:
         selected = self.assignments.contents_tree.selection()
         if len(selected) != 1:
@@ -483,7 +559,14 @@ class WarehouseMapperApp:
         return UploadProduct(product_id, placement.stock_qty, placement.slot_name)
 
     def upload_selected_product(self) -> None:
-        if self.web_upload_busy:
+        if self.web_upload_busy or self.chrome_connect_busy:
+            return
+        if not self.chrome_connected:
+            messagebox.showinfo(
+                "Connect Chrome first",
+                "Press Connect Chrome beside the shelf Load button, then try the upload again.",
+                parent=self.root,
+            )
             return
         try:
             product = self._selected_upload_product()
@@ -502,13 +585,14 @@ class WarehouseMapperApp:
         ).start()
         self.web_upload_after_id = self.root.after(100, self._poll_web_upload)
 
-    @staticmethod
-    def _run_web_upload(product: UploadProduct, events: Queue) -> None:
+    def _run_web_upload(self, product: UploadProduct, events: Queue) -> None:
         # This worker never calls Tkinter and never writes to the local database.
         try:
-            result = WebsiteUploader().upload(product, lambda text: events.put(("progress", text)))
+            result = self.website_uploader.upload(
+                product, lambda text: events.put(("progress", text))
+            )
         except Exception as error:
-            events.put(("error", str(error)))
+            events.put(("error", str(error), self.website_uploader.is_connected()))
         else:
             events.put(("done", result))
 
@@ -516,15 +600,19 @@ class WarehouseMapperApp:
         self.web_upload_after_id = None
         while True:
             try:
-                event, text = self.web_upload_events.get_nowait()
+                event_data = self.web_upload_events.get_nowait()
             except Empty:
                 break
+            event, text, *metadata = event_data
             if event == "progress":
                 self.assignments.upload_status_text.set(text)
                 continue
             self.web_upload_busy = False
             self.assignments.upload_button.configure(state="normal")
             if event == "error":
+                if metadata and not metadata[0]:
+                    self.chrome_connected = False
+                    self.connect_chrome_button.configure(text="Connect Chrome")
                 self.assignments.upload_status_text.set("Upload needs attention. See the message and check Chrome.")
                 self.status_text.set("Upload was not verified. Local staged changes are unchanged.")
                 messagebox.showerror("Upload to web", text, parent=self.root)
@@ -555,6 +643,11 @@ class WarehouseMapperApp:
         if self.search_after_id:
             self.root.after_cancel(self.search_after_id)
         self.search_after_id = self.root.after(180, self.refresh_product_queue)
+
+    def schedule_catalog_refresh(self, *_args: object) -> None:
+        if getattr(self, "catalog_search_after_id", None):
+            self.root.after_cancel(self.catalog_search_after_id)
+        self.catalog_search_after_id = self.root.after(180, self.refresh_catalog)
 
     def refresh_product_queue(self) -> None:
         if self.search_after_id:
@@ -588,6 +681,44 @@ class WarehouseMapperApp:
         suffix = " — narrow the search to see more" if len(available) > MAX_VISIBLE_PRODUCTS else ""
         self.assignments.queue_count_text.set(f"{len(available):,} matching · showing {shown:,}{suffix}")
 
+    def refresh_catalog(self) -> None:
+        if getattr(self, "catalog_search_after_id", None):
+            self.root.after_cancel(self.catalog_search_after_id)
+            self.catalog_search_after_id = None
+        if not hasattr(self.assignments, "catalog_tree"):
+            return
+
+        raw_query = self.assignments.catalog_search_var.get().strip()
+        query = normalize_search(raw_query)
+        matches = [
+            (product_id, product_name, shortened_name)
+            for product_id, (product_name, shortened_name) in self.catalog_products.items()
+            if not query or query in self.catalog_search[product_id]
+        ]
+        matches.sort(
+            key=lambda product: (
+                product[0].casefold() != raw_query.casefold(),
+                product[0].casefold(),
+            )
+        )
+
+        tree = self.assignments.catalog_tree
+        tree.delete(*tree.get_children())
+        for product_id, product_name, shortened_name in matches[:MAX_VISIBLE_PRODUCTS]:
+            tree.insert(
+                "",
+                "end",
+                iid=f"catalog::{product_id}",
+                values=(product_id, product_name, shortened_name),
+            )
+
+        shown = min(len(matches), MAX_VISIBLE_PRODUCTS)
+        suffix = " — narrow the search to see more" if len(matches) > MAX_VISIBLE_PRODUCTS else ""
+        self.assignments.catalog_count_text.set(
+            f"{len(matches):,} matching / {len(self.catalog_products):,} total · "
+            f"showing {shown:,}{suffix}"
+        )
+
     def refresh_change_summary(self) -> None:
         changed_products = set(self.staged_assignments) | self.pending_unassignments
         self.assignments.change_summary_text.set(
@@ -605,6 +736,17 @@ class WarehouseMapperApp:
         self.product_search = {
             product_id: normalize_search(f"{product_id} {product_name}")
             for product_id, product_name in product_rows
+        }
+        catalog_rows = self.database.get_catalog_products()
+        self.catalog_products = {
+            product_id: (product_name, shortened_name)
+            for product_id, product_name, shortened_name in catalog_rows
+        }
+        self.catalog_search = {
+            product_id: normalize_search(
+                f"{product_id} {product_name} {shortened_name}"
+            )
+            for product_id, product_name, shortened_name in catalog_rows
         }
         self.committed_placements = self.database.get_placement_details()
         if self.current_shelf_id is not None and self.preview_key:
@@ -629,6 +771,7 @@ class WarehouseMapperApp:
         self.refresh_shelf_selector()
         if hasattr(self, "assignments"):
             self.refresh_product_queue()
+            self.refresh_catalog()
 
     def refresh_shelf_selector(self) -> None:
         choices = self.database.list_shelves()
@@ -699,6 +842,65 @@ class WarehouseMapperApp:
             f"Duplicate IDs inside CSV: {duplicates:,}",
         )
         self.status_text.set(f"Imported {len(records):,} product records from {Path(selected).name}.")
+
+    def import_catalog_csv(self) -> None:
+        selected = filedialog.askopenfilename(
+            title="Import full product catalog",
+            filetypes=(("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")),
+        )
+        if not selected:
+            return
+        try:
+            csv_data = read_csv(Path(selected))
+        except Exception as error:
+            messagebox.showerror("CSV could not be read", str(error))
+            return
+
+        mapping_dialog = ColumnMappingDialog(self.root, csv_data.headers)
+        self.root.wait_window(mapping_dialog)
+        if mapping_dialog.result is None:
+            return
+        id_index, name_index, short_name_index = mapping_dialog.result
+
+        records: dict[str, tuple[str, str]] = {}
+        skipped = 0
+        duplicates = 0
+        required_index = max(id_index, name_index, short_name_index)
+        for row in csv_data.rows:
+            if len(row) <= required_index:
+                skipped += 1
+                continue
+            product_id = row[id_index].strip()
+            product_name = row[name_index].strip()
+            shortened_name = row[short_name_index].strip()
+            if not product_id or not product_name:
+                skipped += 1
+                continue
+            if product_id in records:
+                duplicates += 1
+            records[product_id] = (product_name, shortened_name)
+
+        if not records:
+            messagebox.showerror("No products", "No valid product ID/name rows were found.")
+            return
+        try:
+            inserted, updated = self.database.import_catalog_products(records)
+        except Exception as error:
+            messagebox.showerror("Catalog import failed", str(error))
+            return
+
+        self.reload_database_state()
+        messagebox.showinfo(
+            "Catalog import complete",
+            f"New catalog products: {inserted:,}\n"
+            f"Existing catalog products updated: {updated:,}\n"
+            f"Blank/invalid rows skipped: {skipped:,}\n"
+            f"Duplicate IDs inside CSV: {duplicates:,}\n\n"
+            "Warehouse assignments and the unassigned queue were not changed.",
+        )
+        self.status_text.set(
+            f"Imported {len(records):,} full-catalog records from {Path(selected).name}."
+        )
 
     def has_pending_changes(self) -> bool:
         return bool(
@@ -796,9 +998,10 @@ class WarehouseMapperApp:
         return True
 
     def on_close(self) -> None:
-        if getattr(self, "web_upload_busy", False):
+        if getattr(self, "web_upload_busy", False) or getattr(self, "chrome_connect_busy", False):
             messagebox.showinfo(
-                "Upload in progress", "Wait for the current upload to finish before closing the mapper.",
+                "Browser task in progress",
+                "Wait for the current Chrome connection or upload task before closing the mapper.",
                 parent=self.root,
             )
             return
@@ -810,4 +1013,12 @@ class WarehouseMapperApp:
                 return
         if self.search_after_id:
             self.root.after_cancel(self.search_after_id)
+        if getattr(self, "catalog_search_after_id", None):
+            self.root.after_cancel(self.catalog_search_after_id)
+        if getattr(self, "chrome_connect_after_id", None):
+            self.root.after_cancel(self.chrome_connect_after_id)
+        if getattr(self, "web_upload_after_id", None):
+            self.root.after_cancel(self.web_upload_after_id)
+        if hasattr(self, "website_uploader"):
+            self.website_uploader.disconnect()
         self.root.destroy()
