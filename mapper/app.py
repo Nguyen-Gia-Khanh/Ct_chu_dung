@@ -22,6 +22,7 @@ from .lookup_view import ProductLookupView
 from .web_upload import UploadProduct, WebsiteUploader
 
 
+
 class WarehouseMapperApp:
     def __init__(self, root: tk.Tk, database_path: Path | None = None):
         self.root = root

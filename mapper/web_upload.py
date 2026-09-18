@@ -937,16 +937,13 @@ class WebsiteUploader:
             progress(f"Finding product {product.product_id}…")
             self._open_product(product)
 
-            self._pause()
             progress(f"Setting stock to {product.stock_qty}…")
             self._set_stock(product)
 
             if SET_LOCATION_ON_UPLOAD:
-                self._pause()
                 progress(f"Selecting location {product.location_id}…")
                 self._set_location(product, progress)
 
-            self._pause()
             self._wait(
                 "checking product fields before Save",
                 lambda: self._all_values_match(product),

@@ -9,6 +9,7 @@ from .common import make_slot_name
 from .database import validate_stock_quantity
 from .widgets import ScrollableFrame
 
+from utils.barcode_scanner import BarcodeScanner
 
 class StockQuantityDialog(tk.Toplevel):
     """Collect a separate manual quantity for every selected product."""
@@ -142,12 +143,27 @@ class AssignmentView(ttk.Frame):
 
         queue_panel.rowconfigure(2, weight=1)
         queue_panel.columnconfigure(0, weight=1)
-        ttk.Label(queue_panel, text="Search ID or product name").grid(row=0, column=0, sticky="w")
+        
+        ttk.Label(queue_panel, text="Search ID or product name").grid(
+            row=0, column=0, sticky="w"
+        )
+
         self.search_var = tk.StringVar()
-        search_entry = ttk.Entry(queue_panel, textvariable=self.search_var)
-        self.search_entry = search_entry
-        search_entry.grid(row=1, column=0, sticky="ew", pady=(3, 6))
+
+        self.search_entry = ttk.Entry(
+            queue_panel,
+            textvariable=self.search_var
+        )
+        self.search_entry.grid(
+            row=1, column=0, sticky="ew", pady=(3, 6)
+        )
+
         self.search_var.trace_add("write", on_search)
+
+        self.barcode_scanner = BarcodeScanner(
+            self,
+            self.on_barcode_scan
+        )
 
         queue_body = ttk.Frame(queue_panel)
         queue_body.grid(row=2, column=0, sticky="nsew")
@@ -273,6 +289,9 @@ class AssignmentView(ttk.Frame):
             text="Blue = searched product's slot; green = occupied" if read_only else "Yellow = staged; green = already saved",
             foreground="#555555",
         ).pack(anchor="w", pady=(6, 0))
+
+    def on_barcode_scan(self, barcode):
+        self.search_var.set(barcode)
 
     def render_shelf(
         self, floor: str, shelf_code: str, layout: list[int],
