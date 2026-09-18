@@ -9,7 +9,7 @@ from .common import make_slot_name
 from .database import validate_stock_quantity
 from .widgets import ScrollableFrame
 
-from utils.barcode_scanner import BarcodeScanner
+from utils.barcode_scanner import BarcodeScanner, format_product_id
 
 class StockQuantityDialog(tk.Toplevel):
     """Collect a separate manual quantity for every selected product."""
@@ -129,7 +129,7 @@ class AssignmentView(ttk.Frame):
         pane.pack(fill="both", expand=True)
 
         queue_panel = ttk.LabelFrame(
-            pane, text="All imported products" if read_only else "Products", padding=8,
+            pane, text="Full product catalog" if read_only else "Products", padding=8,
         )
         shelf_panel = ttk.LabelFrame(
             pane, text="Saved shelf — click a slot to view" if read_only else "2D shelf — click a slot", padding=8,
@@ -168,6 +168,7 @@ class AssignmentView(ttk.Frame):
         self.search_entry.grid(
             row=1, column=0, sticky="ew", pady=(3, 6)
         )
+        self.search_entry.bind("<Return>", self.format_primary_search)
 
         self.search_var.trace_add("write", on_search)
 
@@ -181,19 +182,24 @@ class AssignmentView(ttk.Frame):
         queue_body.rowconfigure(0, weight=1)
         queue_body.columnconfigure(0, weight=1)
 
+        queue_third_column = "shortened_name" if read_only else "stock_qty"
         self.queue_tree = ttk.Treeview(
             queue_body,
-            columns=("product_id", "product_name", "stock_qty"),
+            columns=("product_id", "product_name", queue_third_column),
             show="headings",
             selectmode="browse" if read_only else "extended",
             height=18 if read_only else 8,
         )
         self.queue_tree.heading("product_id", text="Product ID")
         self.queue_tree.heading("product_name", text="Product name")
-        self.queue_tree.heading("stock_qty", text="Stock")
         self.queue_tree.column("product_id", width=105, minwidth=75, stretch=False)
         self.queue_tree.column("product_name", width=195, minwidth=110)
-        self.queue_tree.column("stock_qty", width=65, minwidth=45, anchor="e", stretch=False)
+        if read_only:
+            self.queue_tree.heading("shortened_name", text="Shortened name")
+            self.queue_tree.column("shortened_name", width=150, minwidth=100)
+        else:
+            self.queue_tree.heading("stock_qty", text="Stock")
+            self.queue_tree.column("stock_qty", width=65, minwidth=45, anchor="e", stretch=False)
         self.queue_tree.tag_configure("transferred", background="#fff2a8")
         if not read_only and on_preassign_stock is not None:
             self.queue_tree.bind("<Double-1>", lambda _e: on_preassign_stock())
@@ -231,6 +237,7 @@ class AssignmentView(ttk.Frame):
                 textvariable=self.catalog_search_var,
             )
             self.catalog_search_entry.grid(row=1, column=0, sticky="ew", pady=(3, 6))
+            self.catalog_search_entry.bind("<Return>", self.format_catalog_search)
             if on_catalog_search is not None:
                 self.catalog_search_var.trace_add("write", on_catalog_search)
 
@@ -353,7 +360,39 @@ class AssignmentView(ttk.Frame):
         ).pack(anchor="w", pady=(6, 0))
 
     def on_barcode_scan(self, barcode):
-        self.search_var.set(barcode)
+        catalog_entry = getattr(self, "catalog_search_entry", None)
+        if catalog_entry is not None and self.focus_get() == catalog_entry:
+            self._set_and_select_search(self.catalog_search_var, catalog_entry, barcode)
+            return
+        self._set_and_select_search(self.search_var, self.search_entry, barcode)
+
+    def format_primary_search(self, _event=None):
+        self._set_and_select_search(
+            self.search_var,
+            self.search_entry,
+            format_product_id(self.search_var.get()),
+        )
+        # Tab 3 appends its location lookup handler to this same Enter event.
+        # Tab 2 has no second handler, so stop the global scanner callback there.
+        return None if self.read_only else "break"
+
+    def format_catalog_search(self, _event=None):
+        self._set_and_select_search(
+            self.catalog_search_var,
+            self.catalog_search_entry,
+            format_product_id(self.catalog_search_var.get()),
+        )
+        return "break"
+
+    def _set_and_select_search(self, variable, entry, value):
+        variable.set(value)
+        self.after_idle(lambda: self._select_search_entry(entry))
+
+    @staticmethod
+    def _select_search_entry(entry):
+        entry.focus_set()
+        entry.selection_range(0, tk.END)
+        entry.icursor(tk.END)
 
     def render_shelf(
         self, floor: str, shelf_code: str, layout: list[int],

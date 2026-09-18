@@ -17,6 +17,7 @@ class ProductLookupView(ttk.Frame):
         super().__init__(parent)
         self.database = database
         self.products: dict[str, str] = {}
+        self.shortened_names: dict[str, str] = {}
         self.search_text: dict[str, str] = {}
         self.selected_product_id: str | None = None
         self.shelf_contents: list[tuple[str, str, Placement]] = []
@@ -28,7 +29,7 @@ class ProductLookupView(ttk.Frame):
         header.pack(fill="x")
         ttk.Label(
             header,
-            text="Search the full imported CSV catalog. Type an ID and press Enter, or select a product below.",
+            text="Search the full product catalog. Type an ID and press Enter, or select a product below.",
         ).pack(anchor="w")
         self.result_text = tk.StringVar(self, "Choose a product to see its committed location.")
         ttk.Label(
@@ -39,17 +40,27 @@ class ProductLookupView(ttk.Frame):
         )
         self.view.pack(fill="both", expand=True)
         self.view.change_summary_text.set("Read-only · committed locations only")
-        self.view.search_entry.bind("<Return>", self.find_product)
+        self.view.search_entry.bind("<Return>", self.find_product, add="+")
         self.view.queue_tree.bind("<<TreeviewSelect>>", self.on_product_selected)
         self.view.queue_tree.bind("<Return>", self.find_product)
 
     def refresh(self) -> None:
         """Called on tab entry; never load a shelf into the editing controller."""
         self._cancel_search()
-        self.products = dict(self.database.get_products())
+        catalog_rows = self.database.get_catalog_products()
+        self.products = {
+            product_id: product_name
+            for product_id, product_name, _shortened_name in catalog_rows
+        }
+        self.shortened_names = {
+            product_id: shortened_name
+            for product_id, _product_name, shortened_name in catalog_rows
+        }
         self.search_text = {
-            product_id: normalize_search(f"{product_id} {name}")
-            for product_id, name in self.products.items()
+            product_id: normalize_search(
+                f"{product_id} {product_name} {self.shortened_names[product_id]}"
+            )
+            for product_id, product_name in self.products.items()
         }
         self.refresh_results()
         if self.selected_product_id is not None:
@@ -75,7 +86,12 @@ class ProductLookupView(ttk.Frame):
         tree = self.view.queue_tree
         tree.delete(*tree.get_children())
         for product_id in self.visible_ids:
-            tree.insert("", "end", iid=f"product::{product_id}", values=(product_id, self.products[product_id]))
+            tree.insert(
+                "",
+                "end",
+                iid=f"product::{product_id}",
+                values=(product_id, self.products[product_id], self.shortened_names[product_id]),
+            )
         self.view.queue_count_text.set(
             f"{len(matches):,} matching / {len(self.products):,} imported"
             + (f" · showing first {MAX_VISIBLE_PRODUCTS:,}; refine search" if len(matches) > MAX_VISIBLE_PRODUCTS else "")
@@ -84,9 +100,9 @@ class ProductLookupView(ttk.Frame):
             tree.selection_set(f"product::{self.selected_product_id}")
         else:
             self.clear_result(
-                "No products imported yet. Import your CSV using the toolbar on tab 1 or 2."
+                "No full-catalog products imported yet. Use Import full catalog CSV on tab 1 or 2."
                 if not self.products else
-                "No matching product in the imported catalog." if not matches else
+                "No matching product in the full catalog." if not matches else
                 "Choose a product to see its committed location."
             )
 
@@ -134,7 +150,7 @@ class ProductLookupView(ttk.Frame):
 
     def show_product(self, product_id: str) -> None:
         if product_id not in self.products:
-            self.clear_result("Product ID not found in the imported catalog.")
+            self.clear_result("Product ID not found in the full catalog.")
             return
         name = self.products[product_id]
         location = self.database.get_product_location(product_id)
