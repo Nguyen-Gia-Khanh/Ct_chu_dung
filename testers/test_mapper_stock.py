@@ -97,7 +97,7 @@ class StockPlacementTests(unittest.TestCase):
         self.assertEqual(app.staged_assignments["P2"], Placement(CELL_ONE, 58, assigned_at))
         self.assertEqual(app.visible_slot_counts(), {CELL_ONE: (0, 2)})
 
-    def test_selected_slot_contents_are_newest_first_with_unknown_time_last(self):
+    def test_selected_slot_contents_put_newest_at_bottom_and_unknown_time_first(self):
         app = self.make_app()
         app.products["P3"] = "Legacy item"
         app.committed_locations = {"P1": CELL_ONE, "P2": CELL_ONE, "P3": CELL_ONE}
@@ -113,7 +113,7 @@ class StockPlacementTests(unittest.TestCase):
             call.kwargs["iid"]
             for call in app.assignments.contents_tree.insert.call_args_list
         ]
-        self.assertEqual(inserted_ids, ["saved::P2", "saved::P1", "saved::P3"])
+        self.assertEqual(inserted_ids, ["saved::P3", "saved::P1", "saved::P2"])
 
     def test_cancel_does_not_dequeue_or_record_time(self):
         app = self.make_app()

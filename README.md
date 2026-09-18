@@ -14,7 +14,7 @@ A small local Windows application for assigning a fixed product catalogue to irr
 - Adds new rows at the top and removes the highest rows first.
 - Renders a clickable 2D front view with a fixed center divider.
 - Allows multiple product IDs in the same slot.
-- Lists selected-slot products by newest added time first; double-click a Product ID cell to copy only that ID.
+- Lists selected-slot products from oldest to newest, with the newest at the bottom; double-click a Product ID cell to copy only that ID.
 - Removes staged products from the unassigned queue.
 - Writes the shelf and all staged assignments to SQLite only when **Commit shelf + assignments** is pressed.
 - Loads previously saved shelves and supports correcting assignments.

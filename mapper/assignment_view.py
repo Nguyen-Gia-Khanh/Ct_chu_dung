@@ -321,7 +321,7 @@ class AssignmentView(ttk.Frame):
         self.contents_tree.heading("product_id", text="Product ID")
         self.contents_tree.heading("product_name", text="Product name")
         self.contents_tree.heading("stock_qty", text="Stock qty")
-        self.contents_tree.heading("assigned_at", text="Added to shelf ↓")
+        self.contents_tree.heading("assigned_at", text="Added to shelf ↑")
         self.contents_tree.heading("state", text="State")
         self.contents_tree.column("product_id", width=95, minwidth=70, stretch=False)
         self.contents_tree.column("product_name", width=160, minwidth=100)

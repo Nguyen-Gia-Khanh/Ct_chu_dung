@@ -329,7 +329,7 @@ class WarehouseMapperApp:
             for product_id in staged_products
         ]
 
-        def newest_first(item):
+        def oldest_first(item):
             assigned_at = item[2].assigned_at
             try:
                 timestamp = (
@@ -338,9 +338,9 @@ class WarehouseMapperApp:
                 )
             except (TypeError, ValueError, OverflowError, OSError):
                 timestamp = float("-inf")
-            return -timestamp, item[1].casefold()
+            return timestamp, item[1].casefold()
 
-        for state, product_id, placement in sorted(visible_products, key=newest_first):
+        for state, product_id, placement in sorted(visible_products, key=oldest_first):
             self.assignments.contents_tree.insert(
                 "", "end", iid=f"{state.lower()}::{product_id}",
                 values=(
