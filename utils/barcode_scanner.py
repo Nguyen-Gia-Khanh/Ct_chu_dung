@@ -1,6 +1,14 @@
 import time
 
 
+def format_product_id(value):
+    """Convert an 11-character scanner value to the stored 5-3-3 ID format."""
+    compact = value.strip().replace("-", "")
+    if len(compact) == 11 and compact.isascii() and compact.isalnum():
+        return f"{compact[:5]}-{compact[5:8]}-{compact[8:]}"
+    return value.strip()
+
+
 class BarcodeScanner:
     def __init__(self, root, callback, max_gap=0.06, min_length=5):
         self.callback = callback
@@ -24,7 +32,7 @@ class BarcodeScanner:
         # Scanner finishes with Enter
         if event.keysym == "Return":
             if len(self.buffer) >= self.min_length:
-                self.callback(self.buffer)
+                self.callback(format_product_id(self.buffer))
 
             self.buffer = ""
             return

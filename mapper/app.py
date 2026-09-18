@@ -21,7 +21,7 @@ from .designer import ShelfDesigner
 from .lookup_view import ProductLookupView
 from .web_upload import UploadProduct, WebsiteUploader
 
-
+from utils.barcode_scanner import format_product_id
 
 class WarehouseMapperApp:
     def __init__(self, root: tk.Tk, database_path: Path | None = None):
@@ -689,6 +689,12 @@ class WarehouseMapperApp:
             return
 
         raw_query = self.assignments.catalog_search_var.get().strip()
+        formatted_query = format_product_id(raw_query)
+
+        if formatted_query != raw_query:
+            self.assignments.catalog_search_var.set(formatted_query)
+            raw_query = formatted_query
+
         query = normalize_search(raw_query)
         matches = [
             (product_id, product_name, shortened_name)

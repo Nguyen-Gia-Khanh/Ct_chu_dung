@@ -9,6 +9,7 @@ from tkinter import ttk
 from .assignment_view import AssignmentView
 from .common import MAX_VISIBLE_PRODUCTS, normalize_search
 from .database import Placement, WarehouseDatabase
+from utils.barcode_scanner import format_product_id
 
 
 class ProductLookupView(ttk.Frame):
@@ -90,8 +91,13 @@ class ProductLookupView(ttk.Frame):
             )
 
     def find_product(self, _event=None) -> str:
-        self.refresh_results()
         raw_query = self.view.search_var.get().strip()
+        formatted_query = format_product_id(raw_query)
+        if formatted_query != raw_query:
+            self.view.search_var.set(formatted_query)
+        raw_query = formatted_query
+
+        self.refresh_results()
         exact = [product_id for product_id in self.products if product_id.casefold() == raw_query.casefold()]
         if raw_query in self.products:
             product_id = raw_query

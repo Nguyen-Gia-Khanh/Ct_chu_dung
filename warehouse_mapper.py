@@ -24,6 +24,7 @@ __all__ = ["WarehouseMapperApp", "WarehouseDatabase", "LayoutConflictError", "ma
 
 def main() -> None:
     root = tk.Tk()
+    root.state("zoomed")
     WarehouseMapperApp(root)
     root.mainloop()
 
