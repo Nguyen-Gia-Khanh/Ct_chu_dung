@@ -11,12 +11,12 @@ from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .assignment_view import AssignmentView, StockQuantityDialog
 from .common import APP_TITLE, MAX_VISIBLE_PRODUCTS, application_directory, make_slot_name, normalize_search
 from .csv_import import ColumnMappingDialog, read_csv
-from .database import LayoutConflictError, Placement, WarehouseDatabase
+from .database import LayoutConflictError, Placement, WarehouseDatabase, validate_stock_quantity
 from .designer import ShelfDesigner
 from .lookup_view import ProductLookupView
 from .web_upload import UploadProduct, WebsiteUploader
@@ -91,6 +91,7 @@ class WarehouseMapperApp:
             self.notebook, self.schedule_queue_refresh, self.assign_selected_products,
             self.return_selected_to_queue, self.select_slot,
             on_upload=self.upload_selected_product,
+            on_modify_stock=self.modify_selected_stock,
         )
         self.notebook.add(self.designer, text="1. Shelf Designer")
         self.notebook.add(self.assignments, text="2. Assign Products")
@@ -306,6 +307,75 @@ class WarehouseMapperApp:
                         state,
                     ),
                 )
+
+    def modify_selected_stock(self) -> None:
+        selected = self.assignments.contents_tree.selection()
+        if len(selected) != 1:
+            messagebox.showinfo(
+                "Choose one product",
+                "Select exactly one product in Selected slot contents, then press Modify selected stock.",
+                parent=self.root,
+            )
+            return
+
+        state, separator, product_id = selected[0].partition("::")
+        if not separator or state not in {"staged", "saved"} or product_id not in self.products:
+            messagebox.showinfo(
+                "Choose one product",
+                "Select a current product from the slot contents list.",
+                parent=self.root,
+            )
+            return
+
+        placements = self.staged_assignments if state == "staged" else self.committed_placements
+        placement = placements.get(product_id)
+        stale_saved = (
+            state == "saved"
+            and (product_id in self.pending_unassignments or product_id in self.staged_assignments)
+        )
+        if placement is None or placement.slot_name != self.selected_slot or stale_saved:
+            messagebox.showinfo(
+                "Selection changed",
+                "That product is no longer in the selected slot. Select it again.",
+                parent=self.root,
+            )
+            self.refresh_slot_contents()
+            return
+        if not placement.assigned_at:
+            messagebox.showinfo(
+                "Added time is unknown",
+                "This older record has no added-to-shelf time. Return it to the queue and assign it again.",
+                parent=self.root,
+            )
+            return
+
+        current_text = placement.stock_qty if placement.stock_qty is not None else "Unknown"
+        quantity = simpledialog.askinteger(
+            "Modify stock quantity",
+            f"Product: {product_id}\nLocation: {placement.slot_name}\n"
+            f"Current stock: {current_text}\n\nEnter the new whole-number quantity:",
+            parent=self.root,
+            initialvalue=placement.stock_qty if placement.stock_qty is not None else 0,
+            minvalue=0,
+            maxvalue=9_223_372_036_854_775_807,
+        )
+        if quantity is None:
+            return
+        validate_stock_quantity(quantity)
+        if quantity == placement.stock_qty:
+            self.status_text.set(f"{product_id} already has stock quantity {quantity}.")
+            return
+
+        self.pending_unassignments.discard(product_id)
+        self.staged_assignments[product_id] = Placement(
+            placement.slot_name,
+            quantity,
+            placement.assigned_at,
+        )
+        self.refresh_all_views()
+        self.status_text.set(
+            f"Staged stock change for {product_id}: {current_text} → {quantity}. Press Commit to save."
+        )
 
     def _selected_upload_product(self) -> UploadProduct:
         selected = self.assignments.contents_tree.selection()

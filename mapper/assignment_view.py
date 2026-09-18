@@ -82,7 +82,18 @@ class StockQuantityDialog(tk.Toplevel):
 
 
 class AssignmentView(ttk.Frame):
-    def __init__(self, parent, on_search, on_assign, on_return, on_select, *, read_only=False, on_upload=None):
+    def __init__(
+        self,
+        parent,
+        on_search,
+        on_assign,
+        on_return,
+        on_select,
+        *,
+        read_only=False,
+        on_upload=None,
+        on_modify_stock=None,
+    ):
         super().__init__(parent, padding=10)
         self.read_only = read_only
         self.on_select = on_select
@@ -192,21 +203,24 @@ class AssignmentView(ttk.Frame):
         details_footer = ttk.Frame(details_panel)
         details_footer.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         if not read_only:
+            self.modify_stock_button = ttk.Button(
+                details_footer,
+                text="Modify selected stock",
+                command=on_modify_stock,
+                state="normal" if on_modify_stock is not None else "disabled",
+            )
+            self.modify_stock_button.pack(fill="x")
             ttk.Button(
                 details_footer,
                 text="Return selected products to queue",
                 command=on_return,
-            ).pack(fill="x")
+            ).pack(fill="x", pady=(6, 0))
             self.upload_button = ttk.Button(
                 details_footer, text="Upload to web", command=on_upload,
                 state="normal" if on_upload is not None else "disabled",
             )
             self.upload_button.pack(fill="x", pady=(6, 0))
-            ttk.Label(
-                details_footer,
-                text="Select one product. Upload updates the website; Commit saves SQLite.",
-                wraplength=300, foreground="#555555",
-            ).pack(anchor="w", pady=(5, 0))
+
             self.upload_status_text = tk.StringVar(value="")
             ttk.Label(
                 details_footer, textvariable=self.upload_status_text, wraplength=300,

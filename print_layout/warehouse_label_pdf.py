@@ -24,8 +24,7 @@ LOCATION_PADDING_MM = 4
 LOCATION_FONT_SIZE = 140
 MIN_LOCATION_FONT_SIZE = 20
 PRODUCT_FONT_SIZE = 28
-MIN_PRODUCT_FONT_SIZE = 16
-PRODUCTS_PER_LABEL = 3
+MIN_PRODUCT_FONT_SIZE = 7
 LABEL_HEIGHTS_MM = {7: 70, 15: 150}
 LABELS_PER_PAGE = {7: 3, 15: 1}
 # Normally discovered automatically. Set BOTH to override the system fonts.
@@ -58,8 +57,8 @@ class PrintResult:
 
 
 def label_count(cells: list[Cell] | tuple[Cell, ...]) -> int:
-    # Extra labels preserve every product if a cell ever exceeds three products.
-    return sum(max(1, math.ceil(len(cell.products) / PRODUCTS_PER_LABEL)) for cell in cells)
+    # One warehouse cell always produces one physical label.
+    return len(cells)
 
 
 def _font_files() -> tuple[Path, Path]:
@@ -92,9 +91,11 @@ def render_labels_pdf(
     sample: bool = False,
     progress=lambda _text: None,
 ) -> PrintResult:
-    """Render full product names. Refuse overflow instead of clipping or truncating.
+    """Render one label per warehouse cell using product IDs and shortened names.
 
-The caller determines shelf/cell order. An empty cell receives a location label.
+The product font and row spacing shrink automatically until every assigned product
+fits on the cell's label. The caller determines shelf/cell order and should pass the
+shortened product name in ``Product.name``. An empty cell receives a location label.
 Output is replaced only after every label has been laid out successfully.
 """
     if not cells:
@@ -109,7 +110,7 @@ Output is replaced only after every label has been laid out successfully.
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.pdfgen.canvas import Canvas
-        from reportlab.platypus import Paragraph
+        from reportlab.platypus import Paragraph, Table, TableStyle
     except ImportError as error:
         raise RuntimeError(
             "Install ReportLab in the same venv used to run this app:\n\n"
@@ -138,46 +139,105 @@ Output is replaced only after every label has been laid out successfully.
     top_margin = (page_h - stack_h) / 2
     right_w = label_w - left_w - 2 * padding
     body_h = label_h - 2 * padding
-    labels = []
-    for cell in cells:
-        chunks = [cell.products[i:i + PRODUCTS_PER_LABEL] for i in range(0, len(cell.products), PRODUCTS_PER_LABEL)] or [()]
-        labels.extend((cell, products, index + 1, len(chunks)) for index, products in enumerate(chunks))
+    # No fixed products-per-label limit: every cell stays on exactly one label.
+    labels = [(cell, cell.products) for cell in cells]
     total_pages = math.ceil(len(labels) / labels_per_page)
     buffer = BytesIO()
     canvas = Canvas(buffer, pagesize=page_size, pageCompression=1)
     canvas.setTitle("Warehouse location labels" + (" - draft sample" if sample else ""))
     canvas.setAuthor("Warehouse Label Printer")
 
-    def product_blocks(products, location):
+    def product_table(products, location):
+        """Build a borderless two-column table that fits on one label.
+
+        The ID column is sized from the widest product ID at each candidate font
+        size. The shortened-name column receives the remaining width. Both
+        columns shrink together until every product stays on one line and the
+        complete table fits vertically.
+        """
         for step in range(round((PRODUCT_FONT_SIZE - MIN_PRODUCT_FONT_SIZE) * 2) + 1):
             size = PRODUCT_FONT_SIZE - step / 2
-            leading = size * 1.15
-            line_style = ParagraphStyle(
-                "ProductLine", fontName=regular, fontSize=size, leading=leading
+            leading = size * 1.10
+            column_gap = max(4, size * 0.65)
+            row_padding = max(0.4, size * 0.06)
+
+            # Measure IDs with the actual bold font used in the table. The first
+            # column therefore adapts to each cell rather than using a fixed width.
+            raw_ids = [
+                unicodedata.normalize("NFC", " ".join(str(product.product_id).split()))
+                for product in products
+            ]
+            id_text_w = max(pdfmetrics.stringWidth(value, bold, size) for value in raw_ids)
+            id_col_w = id_text_w + column_gap
+            name_col_w = right_w - id_col_w
+            if name_col_w <= size:
+                continue
+
+            id_style = ParagraphStyle(
+                "ProductID",
+                fontName=bold,
+                fontSize=size,
+                leading=leading,
+                spaceBefore=0,
+                spaceAfter=0,
             )
-            blocks = []
+            name_style = ParagraphStyle(
+                "ProductName",
+                fontName=regular,
+                fontSize=size,
+                leading=leading,
+                spaceBefore=0,
+                spaceAfter=0,
+            )
+
+            rows = []
+            one_line = True
             for product in products:
-                line = Paragraph(
-                    # f"<b>{clean(product.product_id)}</b> | {clean(product.name)}",
-                    f"<b>{clean(product.product_id)}</b>",
-                    line_style,
+                id_para = Paragraph(clean(product.product_id), id_style)
+                name_para = Paragraph(clean(product.name), name_style)
+                id_h = id_para.wrap(id_col_w - column_gap, 10000)[1]
+                name_h = name_para.wrap(name_col_w, 10000)[1]
+                if id_h > leading + 0.1 or name_h > leading + 0.1:
+                    one_line = False
+                    break
+                rows.append([id_para, name_para])
+
+            if not one_line:
+                continue
+
+            table = Table(
+                rows,
+                colWidths=[id_col_w, name_col_w],
+                hAlign="LEFT",
+            )
+            style_commands = [
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (0, -1), column_gap),
+                ("RIGHTPADDING", (1, 0), (1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), row_padding),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), row_padding),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+            if len(rows) > 1:
+                style_commands.append(
+                    ("LINEBELOW", (0, 0), (-1, -2), 0.4, colors.HexColor("#DDDDDD"))
                 )
-                line_h = line.wrap(right_w, 10000)[1]
-                blocks.append((line, line_h))
-            total_h = sum(height for _, height in blocks) + max(0, len(blocks) - 1) * 12
-            if all(height <= leading + 0.1 for _, height in blocks) and total_h <= body_h:
-                return blocks, total_h
+            table.setStyle(TableStyle(style_commands))
+            table_w, table_h = table.wrap(right_w, body_h)
+            if table_w <= right_w + 0.1 and table_h <= body_h:
+                return table, table_h
+
         next_step = (
-            "Choose the 15 cm size."
+            "Choose the 15 cm size or shorten the product names further."
             if label_height_cm == 7
-            else "Reduce the number of products or shorten the product names."
+            else "Shorten the product names further."
         )
         raise ValueError(
-            f"The full text in {location} does not fit the {label_height_cm} cm label. "
-            f"{next_step} Nothing was truncated or saved."
+            f"The product list in {location} does not fit the {label_height_cm} cm label "
+            f"even at {MIN_PRODUCT_FONT_SIZE} pt. {next_step} Nothing was truncated or saved."
         )
 
-    for index, (cell, products, part, parts) in enumerate(labels):
+    for index, (cell, products) in enumerate(labels):
         row = index % labels_per_page
         page = index // labels_per_page + 1
         if row == 0:
@@ -218,10 +278,6 @@ Output is replaced only after every label has been laid out successfully.
                 first_baseline - line_number * loc_size,
                 line,
             )
-        if parts > 1:
-            canvas.setFont(regular, 7)
-            canvas.drawCentredString(x + left_w / 2, y + padding, f"Part {part} of {parts}")
-
         if not products:
             canvas.setFillColor(colors.HexColor("#777777"))
             canvas.setFont(regular, 24)
@@ -231,17 +287,12 @@ Output is replaced only after every label has been laid out successfully.
                 "No products assigned",
             )
         else:
-            blocks, products_h = product_blocks(products, cell.location_id)
-            cursor_y = y + (label_h + products_h) / 2
-            for item, (line, line_h) in enumerate(blocks):
-                line.drawOn(canvas, x + left_w + padding, cursor_y - line_h)
-                cursor_y -= line_h
-                if item >= len(blocks) - 1:
-                    continue
-                canvas.setStrokeColor(colors.HexColor("#DDDDDD"))
-                canvas.setLineWidth(0.4)
-                canvas.line(x + left_w + padding, cursor_y - 6, x + label_w - padding, cursor_y - 6)
-                cursor_y -= 12
+            table, products_h = product_table(products, cell.location_id)
+            table.drawOn(
+                canvas,
+                x + left_w + padding,
+                y + (label_h - products_h) / 2,
+            )
 
     canvas.save()
     output_path = Path(output_path).expanduser().resolve()
