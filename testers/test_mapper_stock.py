@@ -284,18 +284,25 @@ class StockPlacementTests(unittest.TestCase):
         app.transfer_catalog_selection_to_queue.assert_not_called()
         self.assertEqual(app.pending_unassignments, set())
 
-    def test_double_click_unlocated_catalog_product_transfers_clicked_row(self):
+    def test_double_click_unlocated_catalog_product_searches_without_transferring(self):
         app = self.make_app()
         app.catalog_products = {"C1": ("Catalog bolt", "C bolt")}
         app.assignments.catalog_tree = Mock()
         app.assignments.catalog_tree.identify_row.return_value = "catalog::C1"
+        app.assignments.search_var = Mock()
+        app.assignments.search_entry = Mock()
+        app.assignments._set_and_select_search = Mock()
+        app.refresh_product_lists = Mock()
         app.transfer_catalog_selection_to_queue = Mock()
 
         result = app.activate_catalog_product(SimpleNamespace(y=20))
 
         self.assertEqual(result, "break")
         app.assignments.catalog_tree.selection_set.assert_called_once_with("catalog::C1")
-        app.transfer_catalog_selection_to_queue.assert_called_once_with()
+        app.assignments._set_and_select_search.assert_called_once_with(
+            app.assignments.search_var, app.assignments.search_entry, "C1"
+        )
+        app.transfer_catalog_selection_to_queue.assert_not_called()
 
     def test_exact_shared_search_reports_saved_or_unassigned_location(self):
         app = self.make_app()

@@ -477,19 +477,20 @@ class WarehouseMapperApp:
             self.staged_assignments.get(product_id)
             or self.committed_placements.get(product_id)
         )
-        if placement is None:
-            self.transfer_catalog_selection_to_queue()
-            return "break"
-
         self.assignments._set_and_select_search(
             self.assignments.search_var,
             self.assignments.search_entry,
             product_id,
         )
         self.refresh_product_lists()
-        self.status_text.set(
-            f"{product_id} is already at {placement.slot_name}. No queue transfer was staged."
-        )
+        if placement is not None:
+            self.status_text.set(
+                f"{product_id} is already at {placement.slot_name}. No queue transfer was staged."
+            )
+        else:
+            self.status_text.set(
+                f"Searched for {product_id}. It has no assigned location; no queue transfer was staged."
+            )
         return "break"
 
     def transfer_catalog_selection_to_queue(self) -> None:
