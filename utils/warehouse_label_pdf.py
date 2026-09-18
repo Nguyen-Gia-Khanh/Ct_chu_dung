@@ -1,4 +1,4 @@
-"""Landscape A4 labels: a large location and one short line per product.
+"""Landscape or Portrait A4 labels: a large location and one short line per product.
 
 Used by warehouse_label_printer.py. ReportLab is imported only when creating a
 PDF. Change the constants below to revise the printed design.
@@ -26,7 +26,7 @@ MIN_LOCATION_FONT_SIZE = 20
 PRODUCT_FONT_SIZE = 28
 MIN_PRODUCT_FONT_SIZE = 7
 LABEL_HEIGHTS_MM = {7: 70, 15: 150}
-LABELS_PER_PAGE = {7: 3, 15: 1}
+
 # Normally discovered automatically. Set BOTH to override the system fonts.
 FONT_REGULAR_PATH = ""
 FONT_BOLD_PATH = ""
@@ -88,6 +88,7 @@ def render_labels_pdf(
     cells: list[Cell] | tuple[Cell, ...],
     output_path: Path,
     *, label_height_cm: int = 7,
+    orientation: str = "landscape",
     sample: bool = False,
     progress=lambda _text: None,
 ) -> PrintResult:
@@ -104,7 +105,7 @@ Output is replaced only after every label has been laid out successfully.
         raise ValueError("Choose a 7 cm or 15 cm label height.")
     try:
         from reportlab.lib import colors
-        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.pagesizes import A4, landscape, portrait
         from reportlab.lib.styles import ParagraphStyle
         from reportlab.lib.units import mm
         from reportlab.pdfbase import pdfmetrics
@@ -128,13 +129,17 @@ Output is replaced only after every label has been laid out successfully.
         # Canonical combining marks and XML escaping preserve Vietnamese and &/<.
         return escape(unicodedata.normalize("NFC", " ".join(str(value).split())))
 
-    page_size = landscape(A4)
+    is_portrait = orientation.lower() == "portrait"
+    page_size = portrait(A4) if is_portrait else landscape(A4)
     page_w, page_h = page_size
     margin, gap, padding = MARGIN_MM * mm, GAP_MM * mm, PADDING_MM * mm
     location_padding = LOCATION_PADDING_MM * mm
     label_w, left_w = page_w - 2 * margin, LEFT_WIDTH_MM * mm
     label_h = LABEL_HEIGHTS_MM[label_height_cm] * mm
-    labels_per_page = LABELS_PER_PAGE[label_height_cm]
+    
+    # Calculate labels per page dynamically based on orientation and height
+    labels_per_page = int(page_h // label_h)
+    
     stack_h = labels_per_page * label_h + (labels_per_page - 1) * gap
     top_margin = (page_h - stack_h) / 2
     right_w = label_w - left_w - 2 * padding

@@ -48,7 +48,7 @@ class PrintedPdfHit:
 
 
 _PRINT_FILE_TIME = re.compile(
-    r"warehouse_labels_\d+cm_(\d{8})_(\d{6})_(\d{6})\.pdf$",
+    r"warehouse_labels_\d+cm_(?:portrait_|landscape_)?(\d{8})_(\d{6})_(\d{6})\.pdf$",
     re.IGNORECASE,
 )
 
@@ -236,6 +236,7 @@ class LabelPrinterApp:
         self.print_reference_paths: tuple[Path, ...] = ()
         self.printed_locations: dict[str, tuple[PrintedPdfHit, ...]] = {}
         self.skip_printed = tk.BooleanVar(value=False)
+        self.is_portrait = tk.BooleanVar(value=False)
         self.print_reference_text = tk.StringVar(value="No previous PDFs loaded.")
         self.db_text = tk.StringVar(value=str(self.database.path))
         self.search_text = tk.StringVar()
@@ -256,7 +257,7 @@ class LabelPrinterApp:
         header = ttk.Frame(self.root, padding=(12, 10))
         header.pack(fill="x")
         ttk.Label(header, text="Warehouse Label Printer", font=("Segoe UI", 17, "bold")).pack(side="left")
-        ttk.Label(header, text="Landscape A4 labels from saved shelf contents").pack(side="left", padx=20)
+        ttk.Label(header, text="A4 labels from saved shelf contents").pack(side="left", padx=20)
         database_bar = ttk.Frame(self.root, padding=(12, 0, 12, 10))
         database_bar.pack(fill="x")
         ttk.Label(database_bar, text="Database:").pack(side="left")
@@ -338,8 +339,14 @@ class LabelPrinterApp:
         buttons = ttk.Frame(footer)
         buttons.pack(fill="x")
         ttk.Label(buttons, text="Label height:").pack(side="left")
-        ttk.Radiobutton(buttons, text="7 cm (3 per landscape A4)", variable=self.label_height, value=7).pack(side="left", padx=(6, 8))
-        ttk.Radiobutton(buttons, text="15 cm (1 per landscape A4)", variable=self.label_height, value=15).pack(side="left", padx=(0, 15))
+        ttk.Radiobutton(buttons, text="7 cm", variable=self.label_height, value=7).pack(side="left", padx=(6, 8))
+        ttk.Radiobutton(buttons, text="15 cm", variable=self.label_height, value=15).pack(side="left", padx=(0, 12))
+        self.portrait_check = ttk.Checkbutton(
+            buttons,
+            text="Portrait orientation",
+            variable=self.is_portrait,
+        )
+        self.portrait_check.pack(side="left", padx=(0, 15))
         self.print_all_button = ttk.Button(buttons, text="Print all cells (PDF)...", command=lambda: self.start_print(False))
         self.print_all_button.pack(side="left", padx=(0, 8))
         self.print_selected_button = ttk.Button(buttons, text="Print selected cells (PDF)...", command=lambda: self.start_print(True))
@@ -591,22 +598,29 @@ class LabelPrinterApp:
                     )
                     return
             height_cm = int(self.label_height.get())
+            orientation = "portrait" if self.is_portrait.get() else "landscape"
         except (OSError, sqlite3.Error, ValueError) as error:
             messagebox.showerror("Cannot print labels", str(error), parent=self.root)
             return
-        output = Path(__file__).resolve().parent / "label_printouts" / f"warehouse_labels_{height_cm}cm_{datetime.now():%Y%m%d_%H%M%S_%f}.pdf"
+        output = Path(__file__).resolve().parent / "label_printouts" / f"warehouse_labels_{height_cm}cm_{orientation}_{datetime.now():%Y%m%d_%H%M%S_%f}.pdf"
         self.busy = True
         self.update_summary()
         skip_note = f" Skipped {skipped_count} cell(s) found in previous PDFs." if skipped_count else ""
         self.status_text.set(
-            f"Preparing {label_count(cells)} labels at {height_cm} cm from the latest committed placements...{skip_note}"
+            f"Preparing {label_count(cells)} labels ({height_cm} cm, {orientation}) from latest placements...{skip_note}"
         )
-        Thread(target=self._generate_pdf, args=(cells, output, height_cm), daemon=True).start()
+        Thread(target=self._generate_pdf, args=(cells, output, height_cm, orientation), daemon=True).start()
         self.poll_id = self.root.after(100, self._poll)
 
-    def _generate_pdf(self, cells, output, height_cm):
+    def _generate_pdf(self, cells, output, height_cm, orientation="landscape"):
         try:
-            result = render_labels_pdf(cells, output, label_height_cm=height_cm, progress=lambda text: self.events.put(("progress", text)))
+            result = render_labels_pdf(
+                cells,
+                output,
+                label_height_cm=height_cm,
+                orientation=orientation,
+                progress=lambda text: self.events.put(("progress", text)),
+            )
             self.events.put(("done", result))
         except Exception as error:
             self.events.put(("error", str(error)))
