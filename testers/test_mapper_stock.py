@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from mapper.app import WarehouseMapperApp
-from mapper.assignment_view import StockQuantityDialog
+from mapper.assignment_view import AssignmentView, StockQuantityDialog
 from mapper.common import make_slot_name
 from mapper.database import Placement, WarehouseDatabase
 
@@ -96,6 +96,24 @@ class StockPlacementTests(unittest.TestCase):
         self.assertEqual(app.staged_assignments["P1"], Placement(CELL_ONE, 0, assigned_at))
         self.assertEqual(app.staged_assignments["P2"], Placement(CELL_ONE, 58, assigned_at))
         self.assertEqual(app.visible_slot_counts(), {CELL_ONE: (0, 2)})
+
+    def test_selected_slot_contents_are_newest_first_with_unknown_time_last(self):
+        app = self.make_app()
+        app.products["P3"] = "Legacy item"
+        app.committed_locations = {"P1": CELL_ONE, "P2": CELL_ONE, "P3": CELL_ONE}
+        app.committed_placements = {
+            "P1": Placement(CELL_ONE, 1, FIRST_TIME),
+            "P2": Placement(CELL_ONE, 2, SECOND_TIME),
+            "P3": Placement(CELL_ONE, None, None),
+        }
+
+        app.refresh_slot_contents()
+
+        inserted_ids = [
+            call.kwargs["iid"]
+            for call in app.assignments.contents_tree.insert.call_args_list
+        ]
+        self.assertEqual(inserted_ids, ["saved::P2", "saved::P1", "saved::P3"])
 
     def test_cancel_does_not_dequeue_or_record_time(self):
         app = self.make_app()
@@ -365,6 +383,37 @@ class QuantityDialogTests(unittest.TestCase):
         dialog.confirm()
         self.assertEqual(dialog.result, {"P1": 12, "P2": 0})
         dialog.destroy.assert_called_once()
+
+
+class AssignmentViewInteractionTests(unittest.TestCase):
+    def test_double_click_product_id_copies_only_the_id_and_highlights_row(self):
+        view = AssignmentView.__new__(AssignmentView)
+        view.contents_tree = Mock()
+        view.contents_tree.identify_row.return_value = "saved::P1"
+        view.contents_tree.identify_column.return_value = "#1"
+        view.contents_tree.item.return_value = ("P1", "Bolts", 7, FIRST_TIME, "Saved")
+        view.clipboard_clear = Mock()
+        view.clipboard_append = Mock()
+        view.update_idletasks = Mock()
+        view.copy_status_text = Mock()
+
+        result = view.copy_product_id(SimpleNamespace(x=10, y=20))
+
+        self.assertEqual(result, "break")
+        view.contents_tree.selection_set.assert_called_once_with("saved::P1")
+        view.contents_tree.focus.assert_called_once_with("saved::P1")
+        view.clipboard_append.assert_called_once_with("P1")
+        view.copy_status_text.set.assert_called_once_with("Copied P1")
+
+    def test_double_click_non_id_cell_does_not_copy(self):
+        view = AssignmentView.__new__(AssignmentView)
+        view.contents_tree = Mock()
+        view.contents_tree.identify_row.return_value = "saved::P1"
+        view.contents_tree.identify_column.return_value = "#2"
+        view.clipboard_append = Mock()
+
+        self.assertIsNone(view.copy_product_id(SimpleNamespace(x=120, y=20)))
+        view.clipboard_append.assert_not_called()
 
 
 if __name__ == "__main__":

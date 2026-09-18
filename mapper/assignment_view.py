@@ -321,7 +321,7 @@ class AssignmentView(ttk.Frame):
         self.contents_tree.heading("product_id", text="Product ID")
         self.contents_tree.heading("product_name", text="Product name")
         self.contents_tree.heading("stock_qty", text="Stock qty")
-        self.contents_tree.heading("assigned_at", text="Added to shelf")
+        self.contents_tree.heading("assigned_at", text="Added to shelf ↓")
         self.contents_tree.heading("state", text="State")
         self.contents_tree.column("product_id", width=95, minwidth=70, stretch=False)
         self.contents_tree.column("product_name", width=160, minwidth=100)
@@ -334,6 +334,7 @@ class AssignmentView(ttk.Frame):
         self.contents_tree.grid(row=0, column=0, sticky="nsew")
         contents_scroll.grid(row=0, column=1, sticky="ns")
         contents_x_scroll.grid(row=1, column=0, sticky="ew")
+        self.contents_tree.bind("<Double-1>", self.copy_product_id)
 
         details_footer = ttk.Frame(details_panel)
         details_footer.grid(row=2, column=0, sticky="ew", pady=(8, 0))
@@ -383,6 +384,10 @@ class AssignmentView(ttk.Frame):
             ttk.Label(
                 details_footer, textvariable=self.upload_status_text, wraplength=300,
             ).pack(anchor="w", pady=(5, 0))
+        self.copy_status_text = tk.StringVar(value="Double-click a Product ID to copy it.")
+        ttk.Label(
+            details_footer, textvariable=self.copy_status_text, foreground="#555555",
+        ).pack(anchor="w", pady=(6, 0))
         ttk.Label(
             details_footer,
             text="Blue = searched product's slot; green = occupied" if read_only else "Yellow = staged; green = already saved",
@@ -391,6 +396,26 @@ class AssignmentView(ttk.Frame):
 
     def on_barcode_scan(self, barcode):
         self._set_and_select_search(self.search_var, self.search_entry, barcode)
+
+    def copy_product_id(self, event):
+        row_id = self.contents_tree.identify_row(event.y)
+        if not row_id or self.contents_tree.identify_column(event.x) != "#1":
+            return None
+
+        values = self.contents_tree.item(row_id, "values")
+        if not values:
+            return None
+        product_id = str(values[0]).strip()
+        if not product_id:
+            return None
+
+        self.contents_tree.selection_set(row_id)
+        self.contents_tree.focus(row_id)
+        self.clipboard_clear()
+        self.clipboard_append(product_id)
+        self.update_idletasks()
+        self.copy_status_text.set(f"Copied {product_id}")
+        return "break"
 
     def format_primary_search(self, _event=None):
         self._set_and_select_search(

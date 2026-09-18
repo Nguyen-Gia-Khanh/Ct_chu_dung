@@ -321,21 +321,35 @@ class WarehouseMapperApp:
             for product_id, placement in self.staged_assignments.items()
             if placement.slot_name == self.selected_slot
         ]
-        for state, product_ids, placements in (
-            ("Saved", saved_products, self.committed_placements),
-            ("Staged", staged_products, self.staged_assignments),
-        ):
-            for product_id in sorted(product_ids, key=str.casefold):
-                placement = placements[product_id]
-                self.assignments.contents_tree.insert(
-                    "", "end", iid=f"{state.lower()}::{product_id}",
-                    values=(
-                        product_id, self.products.get(product_id, ""),
-                        placement.stock_qty if placement.stock_qty is not None else "Unknown",
-                        placement.assigned_at.replace("T", " ") if placement.assigned_at else "Unknown",
-                        state,
-                    ),
+        visible_products = [
+            ("Saved", product_id, self.committed_placements[product_id])
+            for product_id in saved_products
+        ] + [
+            ("Staged", product_id, self.staged_assignments[product_id])
+            for product_id in staged_products
+        ]
+
+        def newest_first(item):
+            assigned_at = item[2].assigned_at
+            try:
+                timestamp = (
+                    datetime.fromisoformat(assigned_at).timestamp()
+                    if assigned_at else float("-inf")
                 )
+            except (TypeError, ValueError, OverflowError, OSError):
+                timestamp = float("-inf")
+            return -timestamp, item[1].casefold()
+
+        for state, product_id, placement in sorted(visible_products, key=newest_first):
+            self.assignments.contents_tree.insert(
+                "", "end", iid=f"{state.lower()}::{product_id}",
+                values=(
+                    product_id, self.products.get(product_id, ""),
+                    placement.stock_qty if placement.stock_qty is not None else "Unknown",
+                    placement.assigned_at.replace("T", " ") if placement.assigned_at else "Unknown",
+                    state,
+                ),
+            )
 
     def modify_selected_stock(self) -> None:
         selected = self.assignments.contents_tree.selection()
