@@ -12,11 +12,12 @@ from unittest.mock import Mock, patch
 
 from mapper.app import WarehouseMapperApp
 from mapper.assignment_view import StockQuantityDialog
+from mapper.common import make_slot_name
 from mapper.database import Placement, WarehouseDatabase
 
 
-CELL_ONE = "1-A-R01-C01"
-CELL_TWO = "1-A-R01-C02"
+CELL_ONE = make_slot_name("1", "A", 1, 1, side="1")
+CELL_TWO = make_slot_name("1", "A", 1, 2, side="1")
 FIRST_TIME = "2000-01-01T09:00:00+00:00"
 SECOND_TIME = "2000-01-01T10:15:00+00:00"
 
@@ -42,9 +43,11 @@ class StockPlacementTests(unittest.TestCase):
         app.committed_placements = {}
         app.staged_assignments = {}
         app.pending_unassignments = set()
+        app.transferred_stock = {}
         app.selected_slot = CELL_ONE
         app.current_layout = [2]
-        app.preview_key = ("1", "A")
+        app.preview_key = ("1", "1", "A")
+        app.current_shelf_id = None
         app.status_text = Mock()
         app.refresh_all_views = Mock()
         app.refresh_product_queue = Mock()
@@ -185,6 +188,57 @@ class StockPlacementTests(unittest.TestCase):
         app.refresh_slot_contents()
         values = {call.kwargs["iid"]: call.kwargs["values"] for call in app.assignments.contents_tree.insert.call_args_list}
         self.assertEqual(values["saved::P1"], ("P1", "Bolts", "Unknown", "Unknown", "Saved"))
+
+    def test_transfer_staged_product_preserves_stock_and_unassigns(self):
+        app = self.make_app()
+        instant = self.stage(app, {"P1": 15}, FIRST_TIME)
+        self.assertEqual(app.staged_assignments["P1"], Placement(CELL_ONE, 15, instant))
+        app.assignments.contents_tree.selection.return_value = ("staged::P1",)
+        app.transfer_selected_products()
+        self.assertNotIn("P1", app.staged_assignments)
+        self.assertEqual(app.transferred_stock.get("P1"), 15)
+        app.refresh_all_views.assert_called()
+
+    def test_transfer_saved_product_preserves_stock_and_marks_unassignment(self):
+        app = self.make_app()
+        self.stage(app, {"P1": 22}, FIRST_TIME)
+        with patch("mapper.app.messagebox.showinfo"):
+            app.commit_changes()
+        app.assignments.contents_tree.selection.return_value = ("saved::P1",)
+        app.transfer_selected_products()
+        self.assertIn("P1", app.pending_unassignments)
+        self.assertEqual(app.transferred_stock.get("P1"), 22)
+        app.refresh_all_views.assert_called()
+
+    def test_assign_prefills_transferred_stock_and_cleans_up(self):
+        app = self.make_app()
+        app.transferred_stock["P1"] = 42
+        app.assignments.queue_tree.selection.return_value = ("product::P1",)
+        with patch("mapper.app.StockQuantityDialog") as mock_dialog, patch("mapper.app.datetime") as clock:
+            mock_dialog.return_value = SimpleNamespace(result={"P1": 42})
+            clock.now.return_value = datetime.fromisoformat(SECOND_TIME)
+            app.assign_selected_products()
+            mock_dialog.assert_called_once()
+            _, kwargs = mock_dialog.call_args
+            self.assertEqual(kwargs.get("initial_quantities"), {"P1": 42})
+        self.assertNotIn("P1", app.transferred_stock)
+        self.assertEqual(app.staged_assignments["P1"].stock_qty, 42)
+
+    def test_preassign_queue_stock_stores_quantity(self):
+        app = self.make_app()
+        app.assignments.queue_tree.selection.return_value = ("product::P1", "product::P2")
+        with patch("mapper.app.StockQuantityDialog") as mock_dialog:
+            mock_dialog.return_value = SimpleNamespace(result={"P1": 10, "P2": 20})
+            app.preassign_queue_stock()
+        self.assertEqual(app.transferred_stock, {"P1": 10, "P2": 20})
+        app.refresh_product_queue.assert_called()
+
+    def test_return_selected_to_queue_clears_transferred_stock(self):
+        app = self.make_app()
+        app.transferred_stock["P1"] = 99
+        app.assignments.contents_tree.selection.return_value = ("staged::P1",)
+        app.return_selected_to_queue()
+        self.assertNotIn("P1", app.transferred_stock)
 
 
 class QuantityDialogTests(unittest.TestCase):

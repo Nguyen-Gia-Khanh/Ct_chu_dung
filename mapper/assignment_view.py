@@ -13,20 +13,30 @@ from .widgets import ScrollableFrame
 class StockQuantityDialog(tk.Toplevel):
     """Collect a separate manual quantity for every selected product."""
 
-    def __init__(self, parent: tk.Misc, slot_name: str, products: list[tuple[str, str]]):
+    def __init__(
+        self,
+        parent: tk.Misc,
+        slot_name: str,
+        products: list[tuple[str, str]],
+        initial_quantities: dict[str, int | None] | None = None,
+        *,
+        title_text: str | None = None,
+        destination_label: str | None = None,
+        button_text: str = "Assign products",
+    ):
         super().__init__(parent)
         self.result: dict[str, int] | None = None
         self.quantity_inputs: dict[str, tuple[tk.StringVar, ttk.Entry]] = {}
-        self.title(f"Assign products to {slot_name}")
+        self.title(title_text or f"Assign products to {slot_name}")
         self.transient(parent)
         self.geometry(f"660x{min(540, 200 + 36 * len(products))}")
         self.minsize(520, 230)
 
         body = ttk.Frame(self, padding=12)
         body.pack(fill="both", expand=True)
-        ttk.Label(body, text=f"Destination: {slot_name}").pack(anchor="w")
+        ttk.Label(body, text=destination_label or f"Destination: {slot_name}").pack(anchor="w")
         ttk.Label(
-            body, text="Enter each product's stock quantity in this slot (whole units, 0 or more).",
+            body, text="Enter each product's stock quantity (whole units, 0 or more).",
             wraplength=590,
         ).pack(anchor="w", pady=(4, 10))
         rows = ScrollableFrame(body)
@@ -41,18 +51,23 @@ class StockQuantityDialog(tk.Toplevel):
             ttk.Label(rows.inner, text=product_name, wraplength=300).grid(
                 row=row_number, column=1, sticky="w", padx=5, pady=5,
             )
-            quantity = tk.StringVar(self, value="")
+            init_val = ""
+            if initial_quantities and product_id in initial_quantities:
+                qty = initial_quantities[product_id]
+                if qty is not None:
+                    init_val = str(qty)
+            quantity = tk.StringVar(self, value=init_val)
             entry = ttk.Entry(rows.inner, textvariable=quantity, width=12)
             entry.grid(row=row_number, column=2, sticky="e", padx=5, pady=5)
             self.quantity_inputs[product_id] = (quantity, entry)
 
         ttk.Label(
-            body, text="Assign records the added time. Press Commit on the main window to save.",
+            body, text="Press Commit on the main window to save staged changes.",
             wraplength=590,
         ).pack(anchor="w", pady=(10, 8))
         buttons = ttk.Frame(body)
         buttons.pack(fill="x")
-        ttk.Button(buttons, text="Assign products", command=self.confirm).pack(side="right")
+        ttk.Button(buttons, text=button_text, command=self.confirm).pack(side="right")
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right", padx=(0, 8))
         self.bind("<Return>", self.confirm)
         self.bind("<Escape>", lambda _event: self.destroy())
@@ -93,6 +108,8 @@ class AssignmentView(ttk.Frame):
         read_only=False,
         on_upload=None,
         on_modify_stock=None,
+        on_transfer=None,
+        on_preassign_stock=None,
     ):
         super().__init__(parent, padding=10)
         self.read_only = read_only
@@ -139,15 +156,20 @@ class AssignmentView(ttk.Frame):
 
         self.queue_tree = ttk.Treeview(
             queue_body,
-            columns=("product_id", "product_name"),
+            columns=("product_id", "product_name", "stock_qty"),
             show="headings",
             selectmode="browse" if read_only else "extended",
             height=18,
         )
         self.queue_tree.heading("product_id", text="Product ID")
         self.queue_tree.heading("product_name", text="Product name")
-        self.queue_tree.column("product_id", width=115, minwidth=80, stretch=False)
-        self.queue_tree.column("product_name", width=240, minwidth=140)
+        self.queue_tree.heading("stock_qty", text="Stock")
+        self.queue_tree.column("product_id", width=105, minwidth=75, stretch=False)
+        self.queue_tree.column("product_name", width=195, minwidth=110)
+        self.queue_tree.column("stock_qty", width=65, minwidth=45, anchor="e", stretch=False)
+        self.queue_tree.tag_configure("transferred", background="#fff2a8")
+        if not read_only and on_preassign_stock is not None:
+            self.queue_tree.bind("<Double-1>", lambda _e: on_preassign_stock())
         queue_scroll = ttk.Scrollbar(queue_body, orient="vertical", command=self.queue_tree.yview)
         self.queue_tree.configure(yscrollcommand=queue_scroll.set)
         self.queue_tree.grid(row=0, column=0, sticky="nsew")
@@ -157,6 +179,13 @@ class AssignmentView(ttk.Frame):
         queue_footer.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         self.queue_count_text = tk.StringVar(value="0 products")
         ttk.Label(queue_footer, textvariable=self.queue_count_text).pack(anchor="w")
+        if not read_only and on_preassign_stock is not None:
+            self.preassign_stock_button = ttk.Button(
+                queue_footer,
+                text="Pre-assign selected stock",
+                command=on_preassign_stock,
+            )
+            self.preassign_stock_button.pack(fill="x", pady=(5, 0))
         ttk.Button(
             queue_footer,
             text="Find saved location →" if read_only else "Assign selected to clicked slot →",
@@ -203,13 +232,27 @@ class AssignmentView(ttk.Frame):
         details_footer = ttk.Frame(details_panel)
         details_footer.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         if not read_only:
+            stock_buttons = ttk.Frame(details_footer)
+            stock_buttons.pack(fill="x")
+            stock_buttons.columnconfigure(0, weight=1)
+            stock_buttons.columnconfigure(1, weight=1)
+
             self.modify_stock_button = ttk.Button(
-                details_footer,
+                stock_buttons,
                 text="Modify selected stock",
                 command=on_modify_stock,
                 state="normal" if on_modify_stock is not None else "disabled",
             )
-            self.modify_stock_button.pack(fill="x")
+            self.modify_stock_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+
+            self.transfer_button = ttk.Button(
+                stock_buttons,
+                text="Transfer product",
+                command=on_transfer,
+                state="normal" if on_transfer is not None else "disabled",
+            )
+            self.transfer_button.grid(row=0, column=1, sticky="ew")
+
             ttk.Button(
                 details_footer,
                 text="Return selected products to queue",

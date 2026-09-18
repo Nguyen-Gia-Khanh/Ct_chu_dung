@@ -32,6 +32,7 @@ class WarehouseMapperApp:
         self.committed_placements: dict[str, Placement] = {}
         self.staged_assignments: dict[str, Placement] = {}
         self.pending_unassignments: set[str] = set()
+        self.transferred_stock: dict[str, int] = {}
         self.current_layout: list[int] = []
         self.preview_key: tuple[str, str, str] | None = None
         self.current_shelf_id: int | None = None
@@ -56,6 +57,9 @@ class WarehouseMapperApp:
         style = ttk.Style(self.root)
         if "vista" in style.theme_names():
             style.theme_use("vista")
+            def fixed_map(option: str) -> list:
+                return [elm for elm in style.map("Treeview", query_opt=option) if elm[:2] != ("!disabled", "!selected")]
+            style.map("Treeview", foreground=fixed_map("foreground"), background=fixed_map("background"))
         style.configure("Title.TLabel", font=("Segoe UI", 16, "bold"))
         style.configure("Heading.TLabel", font=("Segoe UI", 10, "bold"))
         style.configure("Commit.TButton", font=("Segoe UI", 10, "bold"), padding=(14, 7))
@@ -92,6 +96,8 @@ class WarehouseMapperApp:
             self.return_selected_to_queue, self.select_slot,
             on_upload=self.upload_selected_product,
             on_modify_stock=self.modify_selected_stock,
+            on_transfer=self.transfer_selected_products,
+            on_preassign_stock=self.preassign_queue_stock,
         )
         self.notebook.add(self.designer, text="1. Shelf Designer")
         self.notebook.add(self.assignments, text="2. Assign Products")
@@ -255,9 +261,14 @@ class WarehouseMapperApp:
 
         slot_name = self.selected_slot
         product_ids = [item_id.removeprefix("product::") for item_id in selected_items]
+        initial_quantities = {
+            product_id: self.transferred_stock.get(product_id)
+            for product_id in product_ids
+        }
         dialog = StockQuantityDialog(
             self.root, slot_name,
             [(product_id, self.products.get(product_id, "")) for product_id in product_ids],
+            initial_quantities=initial_quantities,
         )
         self.root.wait_window(dialog)
         if dialog.result is None:
@@ -268,6 +279,7 @@ class WarehouseMapperApp:
         assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
         for product_id, quantity in dialog.result.items():
             self.staged_assignments[product_id] = Placement(slot_name, quantity, assigned_at)
+            self.transferred_stock.pop(product_id, None)
 
         self.refresh_all_views()
         self.status_text.set(
@@ -377,6 +389,79 @@ class WarehouseMapperApp:
             f"Staged stock change for {product_id}: {current_text} → {quantity}. Press Commit to save."
         )
 
+    def transfer_selected_products(self) -> None:
+        selected_items = self.assignments.contents_tree.selection()
+        if not selected_items:
+            messagebox.showinfo(
+                "Choose products",
+                "Select one or more products in Selected slot contents, then press Transfer product.",
+                parent=self.root,
+            )
+            return
+
+        transferred_count = 0
+        for item_id in selected_items:
+            state, separator, product_id = item_id.partition("::")
+            if not separator or state not in {"staged", "saved"} or product_id not in self.products:
+                continue
+
+            placements = self.staged_assignments if state == "staged" else self.committed_placements
+            placement = placements.get(product_id)
+            if placement is not None and placement.stock_qty is not None:
+                self.transferred_stock[product_id] = placement.stock_qty
+
+            if state == "staged":
+                self.staged_assignments.pop(product_id, None)
+            else:
+                self.pending_unassignments.add(product_id)
+            transferred_count += 1
+
+        if not transferred_count:
+            messagebox.showinfo(
+                "Choose products",
+                "Select valid products from the slot contents list.",
+                parent=self.root,
+            )
+            return
+
+        self.refresh_all_views()
+        self.status_text.set(
+            f"Transferred {transferred_count} product(s) to queue with stock retained. Select a new slot to assign."
+        )
+
+    def preassign_queue_stock(self) -> None:
+        selected_items = self.assignments.queue_tree.selection()
+        if not selected_items:
+            messagebox.showinfo(
+                "Choose products",
+                "Select one or more products from the queue to pre-assign their stock.",
+                parent=self.root,
+            )
+            return
+
+        product_ids = [item_id.removeprefix("product::") for item_id in selected_items]
+        initial_quantities = {
+            product_id: self.transferred_stock.get(product_id)
+            for product_id in product_ids
+        }
+        dialog = StockQuantityDialog(
+            self.root, "Queue",
+            [(product_id, self.products.get(product_id, "")) for product_id in product_ids],
+            initial_quantities=initial_quantities,
+            title_text="Pre-assign stock quantity",
+            destination_label="Pre-assign stock for products before choosing location",
+            button_text="Save quantities",
+        )
+        self.root.wait_window(dialog)
+        if dialog.result is None:
+            return
+
+        for product_id, quantity in dialog.result.items():
+            self.transferred_stock[product_id] = quantity
+
+        self.refresh_product_queue()
+        self.status_text.set(f"Pre-assigned stock for {len(dialog.result)} product(s) in queue.")
+
     def _selected_upload_product(self) -> UploadProduct:
         selected = self.assignments.contents_tree.selection()
         if len(selected) != 1:
@@ -461,6 +546,7 @@ class WarehouseMapperApp:
                 self.staged_assignments.pop(product_id, None)
             else:
                 self.pending_unassignments.add(product_id)
+            self.transferred_stock.pop(product_id, None)
         self.refresh_all_views()
         self.status_text.set("Products returned to the working queue. Press Commit to save the change.")
 
@@ -488,7 +574,14 @@ class WarehouseMapperApp:
 
         self.assignments.queue_tree.delete(*self.assignments.queue_tree.get_children())
         for product_id, product_name in available[:MAX_VISIBLE_PRODUCTS]:
-            self.assignments.queue_tree.insert("", "end", iid=f"product::{product_id}", values=(product_id, product_name))
+            stored_qty = self.transferred_stock.get(product_id)
+            tags = ("transferred",) if stored_qty is not None else ()
+            qty_text = str(stored_qty) if stored_qty is not None else ""
+            self.assignments.queue_tree.insert(
+                "", "end", iid=f"product::{product_id}",
+                values=(product_id, product_name, qty_text),
+                tags=tags,
+            )
 
         shown = min(len(available), MAX_VISIBLE_PRODUCTS)
         suffix = " — narrow the search to see more" if len(available) > MAX_VISIBLE_PRODUCTS else ""
@@ -530,6 +623,8 @@ class WarehouseMapperApp:
         self.committed_locations = {
             product_id: placement.slot_name for product_id, placement in self.committed_placements.items()
         }
+        if hasattr(self, "transferred_stock"):
+            self.transferred_stock = {pid: qty for pid, qty in self.transferred_stock.items() if pid in self.products}
         self.refresh_shelf_selector()
         if hasattr(self, "assignments"):
             self.refresh_product_queue()
