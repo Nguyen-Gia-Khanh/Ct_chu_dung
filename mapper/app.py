@@ -115,6 +115,7 @@ class WarehouseMapperApp:
             on_transfer=self.transfer_selected_products,
             on_preassign_stock=self.preassign_queue_stock,
             on_catalog_to_queue=self.transfer_catalog_selection_to_queue,
+            on_catalog_activate=self.activate_catalog_product,
         )
         self.notebook.add(self.designer, text="1. Shelf Designer")
         self.notebook.add(self.assignments, text="2. Assign Products")
@@ -459,6 +460,37 @@ class WarehouseMapperApp:
         self.status_text.set(
             f"Transferred {transferred_count} product(s) to queue with stock retained. Select a new slot to assign."
         )
+
+    def activate_catalog_product(self, event) -> str | None:
+        tree = self.assignments.catalog_tree
+        item_id = tree.identify_row(event.y)
+        if not item_id.startswith("catalog::"):
+            return None
+
+        product_id = item_id.removeprefix("catalog::")
+        if product_id not in self.catalog_products:
+            return None
+
+        tree.selection_set(item_id)
+        tree.focus(item_id)
+        placement = (
+            self.staged_assignments.get(product_id)
+            or self.committed_placements.get(product_id)
+        )
+        if placement is None:
+            self.transfer_catalog_selection_to_queue()
+            return "break"
+
+        self.assignments._set_and_select_search(
+            self.assignments.search_var,
+            self.assignments.search_entry,
+            product_id,
+        )
+        self.refresh_product_lists()
+        self.status_text.set(
+            f"{product_id} is already at {placement.slot_name}. No queue transfer was staged."
+        )
+        return "break"
 
     def transfer_catalog_selection_to_queue(self) -> None:
         selected_items = self.assignments.catalog_tree.selection()

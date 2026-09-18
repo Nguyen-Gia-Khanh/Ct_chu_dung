@@ -113,6 +113,7 @@ class AssignmentView(ttk.Frame):
         on_transfer=None,
         on_preassign_stock=None,
         on_catalog_to_queue=None,
+        on_catalog_activate=None,
     ):
         super().__init__(parent, padding=10)
         self.read_only = read_only
@@ -290,8 +291,8 @@ class AssignmentView(ttk.Frame):
             self.catalog_tree.grid(row=0, column=0, sticky="nsew")
             catalog_scroll.grid(row=0, column=1, sticky="ns")
             catalog_x_scroll.grid(row=1, column=0, sticky="ew")
-            if on_catalog_to_queue is not None:
-                self.catalog_tree.bind("<Double-1>", lambda _event: on_catalog_to_queue())
+            if on_catalog_activate is not None:
+                self.catalog_tree.bind("<Double-1>", on_catalog_activate)
 
             self.catalog_count_text = tk.StringVar(value="0 products")
             ttk.Label(catalog_section, textvariable=self.catalog_count_text).grid(

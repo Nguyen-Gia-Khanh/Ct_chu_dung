@@ -77,6 +77,9 @@ start working with a catalog-only product, select it in **Full product catalog**
 and press **Transfer selected to queue** beside the assignment button.
 If it already has a location, the action stages its removal from that slot and
 keeps its stock value for reassignment. Its catalog row always remains available.
+Double-clicking a catalog row is safer: an unlocated product is transferred to
+the queue, while a located product only fills the shared search box with its ID
+and shows the red location warning without changing its assignment.
 
 Yellow slots contain uncommitted assignments. Green slots contain saved assignments. Select products inside a slot and press **Return selected products to queue** to correct a location; commit again to make the correction permanent.
 
