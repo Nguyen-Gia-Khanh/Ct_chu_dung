@@ -5,7 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from .common import make_slot_name
+from .common import clean_location_segment, make_slot_name
 from .database import validate_stock_quantity
 from .widgets import ScrollableFrame
 
@@ -459,6 +459,7 @@ class AssignmentView(ttk.Frame):
             return
 
         row_width = max(400, max(layout) * 88)
+        shelf_label = clean_location_segment(shelf_code)
 
         title = ttk.Label(
             self.shelf_scroll.inner,
@@ -502,7 +503,7 @@ class AssignmentView(ttk.Frame):
                 selected = slot_name == self.selected_slot
                 button = tk.Button(
                     row_frame,
-                    text=f"R{row_number}-C{slot_index:02d}\n{total_count} product{'s' if total_count != 1 else ''}",
+                    text=f"{shelf_label}{row_number}-{slot_index}\n{total_count} product{'s' if total_count != 1 else ''}",
                     command=lambda name=slot_name: self.on_select(name),
                     background=background,
                     activebackground="#cfe8ff",

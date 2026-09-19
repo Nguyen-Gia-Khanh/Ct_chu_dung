@@ -92,7 +92,9 @@ class RowOrderTests(unittest.TestCase):
 
     def test_assignment_view_uses_same_ground_up_order_and_slot_names(self):
         view = SimpleNamespace(
-            shelf_scroll=SimpleNamespace(inner=Mock(), canvas=Mock()),
+            shelf_scroll=SimpleNamespace(
+                inner=Mock(), canvas=Mock(), bind_wheel_events=Mock(),
+            ),
             slot_buttons={}, selected_slot_text=tk.StringVar(self.tcl), on_select=Mock(),
         )
         view.shelf_scroll.inner.winfo_children.return_value = []
@@ -103,23 +105,23 @@ class RowOrderTests(unittest.TestCase):
             ["Row 3", "Row 2", "Row 1 — ground"],
         )
         self.assertEqual(len(view.slot_buttons), 22)
-        self.assertIn("1-A-R01-C02", view.slot_buttons)
-        self.assertIn("1-A-R03-C10", view.slot_buttons)
+        self.assertIn("L1-1A1-2", view.slot_buttons)
+        self.assertIn("L1-1A3-10", view.slot_buttons)
         row_frames = [widget for parent, options, widget in self.created_widgets
                       if parent is view.shelf_scroll.inner and options.get("height") == 72]
         self.assertEqual(len(row_frames), 3)
-        for frame, count in zip(row_frames, (6, 6, 10)):
+        for row_number, (frame, count) in enumerate(zip(row_frames, (6, 6, 10)), start=1):
             buttons = [(options, widget) for parent, options, widget in self.created_widgets
                        if parent is frame and "command" in options]
             self.assertEqual([options["text"].split("\n")[0] for options, widget in buttons],
-                             [f"C{number:02d}" for number in range(1, count + 1)])
+                             [f"A{row_number}-{number}" for number in range(1, count + 1)])
             self.assertEqual([widget.grid.call_args.kwargs["column"] for options, widget in buttons],
                              list(range(count)))
         for parent, options, _ in self.created_widgets:
-            if options.get("text", "").startswith("C02\n") and "command" in options:
+            if options.get("text", "").startswith("A1-2\n") and "command" in options:
                 options["command"]()
                 break
-        view.on_select.assert_called_once_with("1-A-R01-C02")
+        view.on_select.assert_called_once_with("L1-1A1-2")
 
     def test_database_default_stays_beside_entry_point(self):
         self.assertEqual(application_directory(), Path(__file__).resolve().parent)
