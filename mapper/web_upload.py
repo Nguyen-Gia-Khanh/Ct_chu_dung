@@ -466,7 +466,6 @@ const exactText = (root, text) => !!root && [root, ...root.querySelectorAll('*')
 const editable = e => e && !e.disabled && !e.readOnly && e.getAttribute('aria-disabled') !== 'true';
 const setValue = (e, text) => {
     if (!editable(e)) throw Error('The target input is disabled or read-only.');
-    e.focus();
     const numeric = window.jQuery && window.jQuery(e).data('kendoNumericTextBox');
     if (numeric) {
         numeric.value(Number(text)); numeric.trigger('change');
@@ -1010,7 +1009,6 @@ class WebsiteUploader:
             progress("Checking the connected Chrome tab…")
             self._choose_tab()
 
-            self._pause()
             progress(f"Finding product {product.product_id}…")
             self._open_product(product)
 

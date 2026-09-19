@@ -5,9 +5,11 @@ from unittest.mock import Mock, call
 
 from mapper.web_upload import (
     CREATE_LOCATION_XPATH,
+    DOM_SCRIPT,
     NEW_LOCATION_XPATH,
     SAVE_LOCATION_XPATH,
     LocationUpdate,
+    UploadProduct,
     WebsiteUploader,
 )
 
@@ -50,6 +52,40 @@ class LocationCreationTests(unittest.TestCase):
         uploader._click.assert_not_called()
         uploader._fill_input.assert_not_called()
         uploader._select_location_id.assert_called_once_with(product, "42")
+
+
+class UploadInteractionTests(unittest.TestCase):
+    def test_normal_upload_has_no_fixed_pause(self):
+        uploader = WebsiteUploader(driver=Mock(), step_delay=2)
+        product = UploadProduct("P1", 7, "L1-1A1-1")
+        uploader.is_connected = Mock(return_value=True)
+        uploader._choose_tab = Mock()
+        uploader._pause = Mock()
+        uploader._open_product = Mock()
+        uploader._set_stock = Mock()
+        uploader._set_location = Mock()
+        uploader._wait = Mock()
+
+        uploader.upload(product)
+
+        uploader._pause.assert_not_called()
+        uploader._open_product.assert_called_once_with(product)
+
+    def test_final_save_keeps_verification_pause(self):
+        uploader = WebsiteUploader(driver=Mock(), step_delay=2)
+        product = UploadProduct("P1", 7, "L1-1A1-1")
+        uploader._click = Mock()
+        uploader._wait = Mock()
+        uploader._pause = Mock()
+        uploader._open_product = Mock()
+
+        uploader._save_product(product, Mock())
+
+        uploader._pause.assert_called_once_with()
+
+    def test_dom_automation_does_not_force_focus_or_scroll(self):
+        self.assertNotIn(".focus()", DOM_SCRIPT)
+        self.assertNotIn("scrollIntoView", DOM_SCRIPT)
 
 
 if __name__ == "__main__":
