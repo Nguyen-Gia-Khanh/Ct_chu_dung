@@ -40,10 +40,9 @@ class ScrollableFrame(ttk.Frame):
         self.canvas.itemconfigure(self.window_id, width=event.width)
 
     def _shift_scroll_horizontal(self, event: tk.Event):
-        widget = event.widget
-        while widget is not None and widget is not self:
-            widget = getattr(widget, "master", None)
-        if widget is not self:
+        # Each product tab owns a shelf scroller, but only the visible tab
+        # should react. The pointer can be anywhere in that active tab/window.
+        if not self.winfo_ismapped():
             return None
 
         if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0:

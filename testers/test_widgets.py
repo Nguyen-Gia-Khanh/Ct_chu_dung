@@ -8,24 +8,25 @@ from mapper.widgets import ScrollableFrame
 
 
 class ScrollableFrameTests(unittest.TestCase):
-    def make_frame_and_child(self):
+    def make_frame(self, *, visible=True):
         frame = ScrollableFrame.__new__(ScrollableFrame)
         frame.canvas = Mock()
-        child = SimpleNamespace(master=SimpleNamespace(master=frame))
-        return frame, child
+        frame.winfo_ismapped = Mock(return_value=visible)
+        return frame
 
-    def test_shift_wheel_scrolls_horizontally_under_the_pointer(self):
-        frame, child = self.make_frame_and_child()
+    def test_shift_wheel_anywhere_scrolls_the_visible_shelf(self):
+        frame = self.make_frame()
+        outside = SimpleNamespace(master=None)
 
         result = frame._shift_scroll_horizontal(
-            SimpleNamespace(widget=child, delta=-120, num=None)
+            SimpleNamespace(widget=outside, delta=-120, num=None)
         )
 
         self.assertEqual(result, "break")
         frame.canvas.xview_scroll.assert_called_once_with(1, "units")
 
-    def test_shift_wheel_outside_this_frame_is_ignored(self):
-        frame, _child = self.make_frame_and_child()
+    def test_hidden_shelf_ignores_shift_wheel(self):
+        frame = self.make_frame(visible=False)
         outside = SimpleNamespace(master=None)
 
         self.assertIsNone(frame._shift_scroll_horizontal(
