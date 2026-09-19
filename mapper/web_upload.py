@@ -22,6 +22,7 @@ STEP_DELAY_SECONDS = 2.0
 # Controls only the final product Save. A newly created location must always
 # save its own dialog before it can be assigned to the product.
 SAVE_ON_UPLOAD = False  # Keep False while testing; set True only for production.
+VERIFY_AFTER_SAVE = False  # Set True to reopen the product and verify saved values.
 SET_LOCATION_ON_UPLOAD = True  # Set False to skip all location lookup/create/select work.
 
 # The popup's div[47]/div[68] number changes between openings. Anchor to its form.
@@ -978,7 +979,7 @@ class WebsiteUploader:
         *,
         location_only: bool = False,
     ) -> str:
-        """PRODUCTION STEP: press Lưu once, then reload and verify the saved values."""
+        """PRODUCTION STEP: press Lưu once and wait for the edit form to close."""
         progress("Saving the location on the website…" if location_only else "Saving the product on the website…")
 
         try:
@@ -996,31 +997,40 @@ class WebsiteUploader:
                 "Check this product in Chrome before trying again. No automatic retry was made.\n\n" + detail
             ) from error
 
-        progress(
-            "Reloading the saved product to verify its location…"
-            if location_only else
-            "Reloading the saved product to verify quantity and location…"
-        )
-        self.driver.refresh()
-        self._wait("waiting for the product page after reload", lambda: self._dom("product_page"))
+        # Keep the requested final-save pause. Read-back verification stays
+        # available behind a separate switch because it visibly refreshes,
+        # reopens the product, then refreshes once more to close the form.
         self._pause()
-        self._open_product(product)
-        self._wait(
-            "verifying the saved location" if location_only else "verifying the saved values",
-            lambda: self._location_values_match(product)
-            if location_only else self._all_values_match(product),
-            check_errors=True,
-        )
 
-        note = ""
-        try:
-            self.driver.refresh()  # Close the verification edit, ready for next product.
-        except Exception:
-            note = " Close the verification form in Chrome before the next upload."
+        if VERIFY_AFTER_SAVE:
+            progress(
+                "Reloading the saved product to verify its location…"
+                if location_only else
+                "Reloading the saved product to verify quantity and location…"
+            )
+            self.driver.refresh()
+            self._wait("waiting for the product page after reload", lambda: self._dom("product_page"))
+            self._open_product(product)
+            self._wait(
+                "verifying the saved location" if location_only else "verifying the saved values",
+                lambda: self._location_values_match(product)
+                if location_only else self._all_values_match(product),
+                check_errors=True,
+            )
+
+            note = ""
+            try:
+                self.driver.refresh()  # Close the verification edit, ready for next product.
+            except Exception:
+                note = " Close the verification form in Chrome before the next upload."
+
+            if location_only:
+                return f"Location updated and verified: {product.product_id} · {product.location_id}.{note}"
+            return f"Uploaded and verified: {product.product_id} · qty {product.stock_qty} · {product.location_id}.{note}"
 
         if location_only:
-            return f"Location updated and verified: {product.product_id} · {product.location_id}.{note}"
-        return f"Uploaded and verified: {product.product_id} · qty {product.stock_qty} · {product.location_id}.{note}"
+            return f"Location saved: {product.product_id} · {product.location_id}."
+        return f"Uploaded: {product.product_id} · qty {product.stock_qty} · {product.location_id}."
 
     def upload(self, product: UploadProduct, progress: Callable[[str], None] = lambda _message: None) -> str:
         if not self.is_connected():
