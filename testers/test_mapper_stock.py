@@ -448,15 +448,19 @@ class AssignmentViewInteractionTests(unittest.TestCase):
         view.clipboard_append.assert_called_once_with("P1")
         view.copy_status_text.set.assert_called_once_with("Copied P1")
 
-    def test_double_click_non_id_cell_does_not_copy(self):
+    def test_double_click_any_product_cell_copies_the_row_id(self):
         view = AssignmentView.__new__(AssignmentView)
         view.contents_tree = Mock()
         view.contents_tree.identify_row.return_value = "saved::P1"
         view.contents_tree.identify_column.return_value = "#2"
+        view.contents_tree.item.return_value = ("P1", "Bolts", 7, FIRST_TIME, "Saved")
+        view.clipboard_clear = Mock()
         view.clipboard_append = Mock()
+        view.update_idletasks = Mock()
+        view.copy_status_text = Mock()
 
-        self.assertIsNone(view.copy_product_id(SimpleNamespace(x=120, y=20)))
-        view.clipboard_append.assert_not_called()
+        self.assertEqual(view.copy_product_id(SimpleNamespace(x=120, y=20)), "break")
+        view.clipboard_append.assert_called_once_with("P1")
 
 
 if __name__ == "__main__":

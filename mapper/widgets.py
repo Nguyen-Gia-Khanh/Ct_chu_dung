@@ -25,6 +25,9 @@ class ScrollableFrame(ttk.Frame):
             x_scroll = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
             x_scroll.grid(row=1, column=0, sticky="ew")
             self.canvas.configure(xscrollcommand=x_scroll.set)
+            self.bind_all("<Shift-MouseWheel>", self._shift_scroll_horizontal, add="+")
+            self.bind_all("<Shift-Button-4>", self._shift_scroll_horizontal, add="+")
+            self.bind_all("<Shift-Button-5>", self._shift_scroll_horizontal, add="+")
 
         self.inner.bind("<Configure>", self._update_scroll_region)
         if not horizontal:
@@ -35,3 +38,19 @@ class ScrollableFrame(ttk.Frame):
 
     def _fit_inner_width(self, event: tk.Event) -> None:
         self.canvas.itemconfigure(self.window_id, width=event.width)
+
+    def _shift_scroll_horizontal(self, event: tk.Event):
+        widget = event.widget
+        while widget is not None and widget is not self:
+            widget = getattr(widget, "master", None)
+        if widget is not self:
+            return None
+
+        if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0:
+            units = -1
+        elif getattr(event, "num", None) == 5 or getattr(event, "delta", 0) < 0:
+            units = 1
+        else:
+            return None
+        self.canvas.xview_scroll(units, "units")
+        return "break"

@@ -385,7 +385,7 @@ class AssignmentView(ttk.Frame):
             ttk.Label(
                 details_footer, textvariable=self.upload_status_text, wraplength=300,
             ).pack(anchor="w", pady=(5, 0))
-        self.copy_status_text = tk.StringVar(value="Double-click a Product ID to copy it.")
+        self.copy_status_text = tk.StringVar(value="Double-click a product row to copy its Product ID.")
         ttk.Label(
             details_footer, textvariable=self.copy_status_text, foreground="#555555",
         ).pack(anchor="w", pady=(6, 0))
@@ -400,7 +400,7 @@ class AssignmentView(ttk.Frame):
 
     def copy_product_id(self, event):
         row_id = self.contents_tree.identify_row(event.y)
-        if not row_id or self.contents_tree.identify_column(event.x) != "#1":
+        if not row_id:
             return None
 
         values = self.contents_tree.item(row_id, "values")
