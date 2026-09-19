@@ -71,7 +71,7 @@ class UploadInteractionTests(unittest.TestCase):
         uploader._pause.assert_not_called()
         uploader._open_product.assert_called_once_with(product)
 
-    def test_final_save_keeps_verification_pause(self):
+    def test_final_save_skips_verification_but_keeps_pause(self):
         uploader = WebsiteUploader(driver=Mock(), step_delay=2)
         product = UploadProduct("P1", 7, "L1-1A1-1")
         uploader._click = Mock()
@@ -82,6 +82,8 @@ class UploadInteractionTests(unittest.TestCase):
         uploader._save_product(product, Mock())
 
         uploader._pause.assert_called_once_with()
+        uploader.driver.refresh.assert_not_called()
+        uploader._open_product.assert_not_called()
 
     def test_dom_automation_does_not_force_focus_or_scroll(self):
         self.assertNotIn(".focus()", DOM_SCRIPT)
