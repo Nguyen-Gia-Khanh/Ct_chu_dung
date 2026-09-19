@@ -380,6 +380,9 @@ class AssignmentView(ttk.Frame):
                 state="normal" if on_upload is not None else "disabled",
             )
             self.upload_button.grid(row=0, column=1, sticky="ew")
+            TODO: #This is a temporary workaround for the upload button not using
+            self.upload_button.grid_remove()
+            self.modify_location_button.grid_configure(columnspan=2, padx=0)
 
             self.upload_status_text = tk.StringVar(value="")
             ttk.Label(
