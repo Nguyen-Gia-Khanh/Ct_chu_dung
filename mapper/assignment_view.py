@@ -455,6 +455,7 @@ class AssignmentView(ttk.Frame):
                 text="Choose a product with a saved location." if getattr(self, "read_only", False)
                 else "Build or load a shelf from the Shelf Designer tab.",
             ).pack(padx=30, pady=30)
+            self.shelf_scroll.bind_wheel_events()
             return
 
         row_width = max(400, max(layout) * 88)
@@ -521,6 +522,7 @@ class AssignmentView(ttk.Frame):
         )
         self.shelf_scroll.inner.update_idletasks()
         self.shelf_scroll.canvas.configure(scrollregion=self.shelf_scroll.canvas.bbox("all"))
+        self.shelf_scroll.bind_wheel_events()
 
     def mark_selected(self, slot_name: str) -> None:
         old_slot = self.selected_slot
