@@ -34,6 +34,25 @@ class ScrollableFrameTests(unittest.TestCase):
         ))
         frame.canvas.xview_scroll.assert_not_called()
 
+    def test_normal_wheel_anywhere_scrolls_visible_shelf_vertically(self):
+        frame = self.make_frame()
+        outside = SimpleNamespace(master=None)
+
+        result = frame._scroll_vertical(
+            SimpleNamespace(widget=outside, delta=-120, num=None, state=0)
+        )
+
+        self.assertEqual(result, "break")
+        frame.canvas.yview_scroll.assert_called_once_with(1, "units")
+
+    def test_shift_wheel_does_not_also_scroll_vertically(self):
+        frame = self.make_frame()
+
+        self.assertIsNone(frame._scroll_vertical(
+            SimpleNamespace(widget=frame, delta=-120, num=None, state=0x0001)
+        ))
+        frame.canvas.yview_scroll.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

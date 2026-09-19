@@ -28,6 +28,10 @@ class ScrollableFrame(ttk.Frame):
             self.bind_all("<Shift-MouseWheel>", self._shift_scroll_horizontal, add="+")
             self.bind_all("<Shift-Button-4>", self._shift_scroll_horizontal, add="+")
             self.bind_all("<Shift-Button-5>", self._shift_scroll_horizontal, add="+")
+            if vertical:
+                self.bind_all("<MouseWheel>", self._scroll_vertical, add="+")
+                self.bind_all("<Button-4>", self._scroll_vertical, add="+")
+                self.bind_all("<Button-5>", self._scroll_vertical, add="+")
 
         self.inner.bind("<Configure>", self._update_scroll_region)
         if not horizontal:
@@ -52,4 +56,17 @@ class ScrollableFrame(ttk.Frame):
         else:
             return None
         self.canvas.xview_scroll(units, "units")
+        return "break"
+
+    def _scroll_vertical(self, event: tk.Event):
+        if not self.winfo_ismapped() or getattr(event, "state", 0) & 0x0001:
+            return None
+
+        if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0:
+            units = -1
+        elif getattr(event, "num", None) == 5 or getattr(event, "delta", 0) < 0:
+            units = 1
+        else:
+            return None
+        self.canvas.yview_scroll(units, "units")
         return "break"
