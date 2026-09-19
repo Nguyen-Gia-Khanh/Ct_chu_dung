@@ -19,6 +19,8 @@ DEBUGGER_ADDRESS = "127.0.0.1:9222"
 TAB_URL_CONTAINS = ""  # Optional URL fragment when several product tabs are open.
 TIMEOUT_SECONDS = 20
 STEP_DELAY_SECONDS = 2.0
+# Controls only the final product Save. A newly created location must always
+# save its own dialog before it can be assigned to the product.
 SAVE_ON_UPLOAD = False  # Keep False while testing; set True only for production.
 SET_LOCATION_ON_UPLOAD = True  # Set False to skip all location lookup/create/select work.
 
@@ -30,6 +32,7 @@ LOCATION_FIELD_XPATH = PANE_XPATH + "/div[4]/div[2]/div/div[1]"
 CREATE_LOCATION_XPATH = LOCATION_FIELD_XPATH + "/div/div[1]/a"
 LOCATION_FORM_XPATH = "//kv-shelves-add-or-edit"
 NEW_LOCATION_XPATH = LOCATION_FORM_XPATH + "/div[1]/div/div/input"
+SAVE_LOCATION_XPATH = LOCATION_FORM_XPATH + '//a[normalize-space()="Lưu"]'
 SAVE_XPATH = FORM_XPATH + "/div/div[2]/a[4]"
 
 # Usually detected from a Code/SKU/product-ID input in the edit form. If your
@@ -573,7 +576,7 @@ if (action === 'set') { const e = one(paths); if (!e) return false; setValue(e, 
 if (action === 'click') {
     const e = one(paths);
     if (!e || e.disabled || e.getAttribute('aria-disabled') === 'true' || e.classList.contains('disabled')) return false;
-    e.scrollIntoView({block: 'center'}); e.click(); return true;
+    e.click(); return true;
 }
 if (action === 'identity') {
     if (paths.id) { const e = one(paths.id); return !!e && clean(e.value || e.textContent) === value; }
@@ -798,11 +801,10 @@ class WebsiteUploader:
                 "Open that page and wait for it to finish loading, then try again."
             ) from error
 
-    def _fill_and_enter(self, path: str, value: str) -> None:
-        element = self._wait("finding an input", lambda: self._dom("element", path))
+    def _fill_input(self, path: str, value: str) -> None:
+        self._wait("finding an input", lambda: self._dom("element", path))
         if not self._dom("set", path, value):
             raise UploadError("The input disappeared before it could be filled.")
-        element.send_keys("\ue007")  # Selenium Keys.ENTER; no JS keyboard-event shortcut.
 
     def _click(self, path: str, description: str) -> None:
         self._wait(description, lambda: self._dom("click", path), check_errors=True)
@@ -914,11 +916,12 @@ class WebsiteUploader:
         # the site's existing UI. Most warehouse slots are expected to take this path.
         progress(f"Creating location {target}…")
         self._click(CREATE_LOCATION_XPATH, "opening Add location")
-        self._fill_and_enter(NEW_LOCATION_XPATH, target)
 
         try:
+            self._fill_input(NEW_LOCATION_XPATH, target)
+            self._click(SAVE_LOCATION_XPATH, "saving the new location")
             self._wait(
-                "saving the location",
+                "waiting for the new location dialog to close",
                 lambda: not self._dom("present", LOCATION_FORM_XPATH),
                 check_errors=True,
             )
@@ -1053,7 +1056,6 @@ class WebsiteUploader:
             progress("Checking the connected Chrome tab…")
             self._choose_tab()
 
-            self._pause()
             progress(f"Finding product {product.product_id}…")
             self._open_product(product)
 
