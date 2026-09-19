@@ -506,6 +506,26 @@ const selectedLocation = (root, target) => {
         '.ui-select-match, .select2-selection__rendered, .select2-chosen, .k-chip-content, .k-tag-text'
     )).some(e => exactText(e, target));
 };
+const onlySelectedLocation = (root, target) => {
+    if (!root) return false;
+    const found = widget(root);
+    if (found) {
+        const w = found.w;
+        const items = found.kind === 'kendoMultiSelect' ?
+            Array.from(w.dataItems() || []) : [w.dataItem()].filter(Boolean);
+        return items.length === 1 &&
+            clean(field(items[0], w.options.dataTextField)) === target;
+    }
+    const selected = Array.from(root.querySelectorAll('select'))
+        .flatMap(select => Array.from(select.selectedOptions))
+        .map(option => clean(option.textContent))
+        .filter(Boolean);
+    if (selected.length) return selected.length === 1 && selected[0] === target;
+    const labels = Array.from(root.querySelectorAll(
+        '.ui-select-match, .select2-selection__rendered, .select2-chosen, .k-chip-content, .k-tag-text'
+    )).filter(visible).filter(e => exactText(e, target));
+    return labels.length === 1;
+};
 const chooseLocation = (root, target) => {
     if (!root) return false;
     if (selectedLocation(root, target)) return true;
@@ -594,7 +614,7 @@ if (action === 'quantity') {
     const w = window.jQuery && window.jQuery(e).data('kendoNumericTextBox');
     return w ? w.value() : e.value;
 }
-if (action === 'location_selected') return selectedLocation(one(paths), value);
+if (action === 'location_selected') return onlySelectedLocation(one(paths), value);
 if (action === 'location_pick') return chooseLocation(one(paths), value);
 if (action === 'location_pick_id') {
     const root = one(paths);
@@ -609,13 +629,15 @@ if (action === 'location_pick_id') {
     if (!w) return false;
 
     const current = Array.from(w.value() || []).map(String);
-    if (!current.includes(targetId)) {
-        w.value([...new Set([...current, targetId])]);
+    if (current.length !== 1 || current[0] !== targetId) {
+        // A product has one location: replace the whole selection instead of
+        // clicking each old tag's close button or appending another location.
+        w.value([targetId]);
         w.trigger('change');
     }
     if (w.close) w.close();
 
-    return selectedLocation(root, targetName);
+    return onlySelectedLocation(root, targetName);
 }
 if (action === 'location_search') {
     const root = one(paths);
