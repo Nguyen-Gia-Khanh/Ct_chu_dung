@@ -299,7 +299,9 @@ class AssignmentView(ttk.Frame):
                 row=1, column=0, sticky="w", pady=(6, 0)
             )
 
-        self.shelf_scroll = ScrollableFrame(shelf_panel, horizontal=True, vertical=True)
+        self.shelf_scroll = ScrollableFrame(
+            shelf_panel, horizontal=True, vertical=True, smooth=True,
+        )
         self.shelf_scroll.pack(fill="both", expand=True)
 
         self.selected_slot_text = tk.StringVar(value="No slot selected")
