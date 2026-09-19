@@ -381,6 +381,10 @@ class AssignmentView(ttk.Frame):
             )
             self.upload_button.grid(row=0, column=1, sticky="ew")
 
+            # Temporary workaround for web upload TODO
+            self.upload_button.grid_remove()
+            self.modify_location_button.grid_configure(columnspan=2, padx=0)
+
             self.upload_status_text = tk.StringVar(value="")
             ttk.Label(
                 details_footer, textvariable=self.upload_status_text, wraplength=300,
