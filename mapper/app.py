@@ -34,7 +34,9 @@ class WarehouseMapperApp:
         self.committed_placements: dict[str, Placement] = {}
         self.staged_assignments: dict[str, Placement] = {}
         self.pending_unassignments: set[str] = set()
-        self.transferred_stock: dict[str, int] = {}
+        # Presence means the product is intentionally back in the working
+        # queue. None preserves that intent for legacy products with unknown stock.
+        self.transferred_stock: dict[str, int | None] = {}
         self.current_layout: list[int] = []
         self.preview_key: tuple[str, str, str] | None = None
         self.current_shelf_id: int | None = None
@@ -439,12 +441,12 @@ class WarehouseMapperApp:
 
             placements = self.staged_assignments if state == "staged" else self.committed_placements
             placement = placements.get(product_id)
-            if placement is not None and placement.stock_qty is not None:
+            if placement is not None:
                 self.transferred_stock[product_id] = placement.stock_qty
 
             if state == "staged":
                 self.staged_assignments.pop(product_id, None)
-            else:
+            if product_id in self.committed_placements:
                 self.pending_unassignments.add(product_id)
             transferred_count += 1
 
@@ -529,9 +531,9 @@ class WarehouseMapperApp:
             staged = self.staged_assignments.pop(product_id, None)
             saved = self.committed_placements.get(product_id)
             was_pending = product_id in self.pending_unassignments
-            if staged is not None and staged.stock_qty is not None:
+            if staged is not None:
                 self.transferred_stock[product_id] = staged.stock_qty
-            elif saved is not None and saved.stock_qty is not None:
+            elif saved is not None:
                 self.transferred_stock[product_id] = saved.stock_qty
 
             if saved is not None:
@@ -793,14 +795,22 @@ class WarehouseMapperApp:
             return
 
         for item_id in selected_items:
-            state, product_id = item_id.split("::", 1)
+            state, separator, product_id = item_id.partition("::")
+            if not separator or state not in {"staged", "saved"}:
+                continue
+            placements = self.staged_assignments if state == "staged" else self.committed_placements
+            placement = placements.get(product_id)
+            if placement is not None:
+                self.transferred_stock[product_id] = placement.stock_qty
             if state == "staged":
                 self.staged_assignments.pop(product_id, None)
-            else:
+            if product_id in self.committed_placements:
                 self.pending_unassignments.add(product_id)
-            self.transferred_stock.pop(product_id, None)
         self.refresh_all_views()
-        self.status_text.set("Products returned to the working queue. Press Commit to save the change.")
+        self.status_text.set(
+            "Products returned to the working queue with stock retained. "
+            "Load another shelf and assign them when ready."
+        )
 
     def schedule_queue_refresh(self, *_args: object) -> None:
         if self.search_after_id:
@@ -823,7 +833,11 @@ class WarehouseMapperApp:
 
         available = []
         for product_id, product_name in self.products.items():
-            is_available = (product_id not in committed or product_id in self.pending_unassignments) and product_id not in staged
+            is_available = (
+                product_id not in committed
+                or product_id in self.pending_unassignments
+                or product_id in self.transferred_stock
+            ) and product_id not in staged
             if not is_available:
                 continue
             if query and query not in self.product_search[product_id]:
@@ -839,7 +853,7 @@ class WarehouseMapperApp:
         self.assignments.queue_tree.delete(*self.assignments.queue_tree.get_children())
         for product_id, product_name in available[:MAX_VISIBLE_PRODUCTS]:
             stored_qty = self.transferred_stock.get(product_id)
-            tags = ("transferred",) if stored_qty is not None else ()
+            tags = ("transferred",) if product_id in self.transferred_stock else ()
             qty_text = str(stored_qty) if stored_qty is not None else ""
             self.assignments.queue_tree.insert(
                 "", "end", iid=f"product::{product_id}",
@@ -918,7 +932,11 @@ class WarehouseMapperApp:
                 message = f"Already at {staged.slot_name} (staged)"
                 location_exists = True
             elif saved is not None:
-                suffix = " (queued for transfer)" if product_id in self.pending_unassignments else ""
+                suffix = (
+                    " (queued for transfer)"
+                    if product_id in self.pending_unassignments or product_id in self.transferred_stock
+                    else ""
+                )
                 message = f"Already at {saved.slot_name}{suffix}"
                 location_exists = True
             else:
@@ -1115,27 +1133,32 @@ class WarehouseMapperApp:
             f"Imported {len(records):,} full-catalog records from {Path(selected).name}."
         )
 
-    def has_pending_changes(self) -> bool:
+    def has_pending_changes(self, *, excluding_queue_transfers: bool = False) -> bool:
+        pending_unassignments = self.pending_unassignments
+        if excluding_queue_transfers:
+            pending_unassignments = pending_unassignments - self.transferred_stock.keys()
         return bool(
-            self.staged_assignments or self.pending_unassignments
+            self.staged_assignments or pending_unassignments
             or (self.current_layout and self.current_shelf_id is None)
             or self._editor_state() != self.saved_editor_state
         )
 
-    def confirm_discard_pending(self) -> bool:
-        return not self.has_pending_changes() or messagebox.askyesno(
+    def confirm_discard_pending(self, *, preserve_queue_transfers: bool = False) -> bool:
+        return not self.has_pending_changes(
+            excluding_queue_transfers=preserve_queue_transfers,
+        ) or messagebox.askyesno(
             "Discard changes?", "Discard the shelf or product changes that have not been committed?"
         )
 
     def new_shelf(self) -> None:
-        if not self.confirm_discard_pending():
+        if not self.confirm_discard_pending(preserve_queue_transfers=True):
             return
         self.current_shelf_id = None
         self.current_layout = []
         self.preview_key = None
         self.selected_slot = None
         self.staged_assignments.clear()
-        self.pending_unassignments.clear()
+        self.pending_unassignments.intersection_update(self.transferred_stock)
         self.designer.floor_var.set("1")
         self.designer.side_var.set("1")
         self.designer.shelf_code_var.set("")
@@ -1153,7 +1176,7 @@ class WarehouseMapperApp:
         if shelf_id is None:
             messagebox.showinfo("Choose a shelf", "Select an existing shelf first.")
             return
-        if not self.confirm_discard_pending():
+        if not self.confirm_discard_pending(preserve_queue_transfers=True):
             return
         try:
             floor, side, shelf_code, layout = self.database.get_shelf(shelf_id)
@@ -1170,7 +1193,7 @@ class WarehouseMapperApp:
         self.preview_key = (floor, side, shelf_code)
         self.selected_slot = None
         self.staged_assignments.clear()
-        self.pending_unassignments.clear()
+        self.pending_unassignments.intersection_update(self.transferred_stock)
         self.saved_editor_state = self._editor_state()
         self.reload_database_state()
         self.refresh_all_views()
