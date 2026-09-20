@@ -31,12 +31,22 @@ class ProductLookupView(ttk.Frame):
             header,
             text="Search the full product catalog. Type an ID and press Enter, or select a product below.",
         ).pack(anchor="w")
-        self.result_text = tk.StringVar(self, "Choose a product to see its committed location.")
+        self.result_text = tk.StringVar(
+            self, "Choose a product to see its committed location."
+        )
         ttk.Label(
-            header, textvariable=self.result_text, style="Heading.TLabel", wraplength=1150,
+            header,
+            textvariable=self.result_text,
+            style="Heading.TLabel",
+            wraplength=1150,
         ).pack(anchor="w", pady=(6, 0))
         self.view = AssignmentView(
-            self, self.schedule_search, self.find_product, None, self.select_slot, read_only=True,
+            self,
+            self.schedule_search,
+            self.find_product,
+            None,
+            self.select_slot,
+            read_only=True,
         )
         self.view.pack(fill="both", expand=True)
         self.view.change_summary_text.set("Read-only · committed locations only")
@@ -79,9 +89,18 @@ class ProductLookupView(ttk.Frame):
         self._cancel_search()
         raw_query = self.view.search_var.get().strip()
         query = normalize_search(raw_query)
-        matches = [product_id for product_id in self.products if query in self.search_text[product_id]]
+        matches = [
+            product_id
+            for product_id in self.products
+            if query in self.search_text[product_id]
+        ]
         # An exact ID must stay visible even when many names/IDs also contain it.
-        matches.sort(key=lambda product_id: (product_id != raw_query, product_id.casefold() != raw_query.casefold()))
+        matches.sort(
+            key=lambda product_id: (
+                product_id != raw_query,
+                product_id.casefold() != raw_query.casefold(),
+            )
+        )
         self.visible_ids = matches[:MAX_VISIBLE_PRODUCTS]
         tree = self.view.queue_tree
         tree.delete(*tree.get_children())
@@ -90,20 +109,29 @@ class ProductLookupView(ttk.Frame):
                 "",
                 "end",
                 iid=f"product::{product_id}",
-                values=(product_id, self.products[product_id], self.shortened_names[product_id]),
+                values=(
+                    product_id,
+                    self.products[product_id],
+                    self.shortened_names[product_id],
+                ),
             )
         self.view.queue_count_text.set(
             f"{len(matches):,} matching / {len(self.products):,} imported"
-            + (f" · showing first {MAX_VISIBLE_PRODUCTS:,}; refine search" if len(matches) > MAX_VISIBLE_PRODUCTS else "")
+            + (
+                f" · showing first {MAX_VISIBLE_PRODUCTS:,}; refine search"
+                if len(matches) > MAX_VISIBLE_PRODUCTS
+                else ""
+            )
         )
         if self.selected_product_id in self.visible_ids:
             tree.selection_set(f"product::{self.selected_product_id}")
         else:
             self.clear_result(
-                "No full-catalog products imported yet. Use Import full catalog CSV on tab 1 or 2."
-                if not self.products else
-                "No matching product in the full catalog." if not matches else
-                "Choose a product to see its committed location."
+                "No full-catalog products imported yet. Use Import full catalog CSV on tab 1."
+                if not self.products
+                else "No matching product in the full catalog."
+                if not matches
+                else "Choose a product to see its committed location."
             )
 
     def find_product(self, _event=None) -> str:
@@ -114,7 +142,11 @@ class ProductLookupView(ttk.Frame):
         raw_query = formatted_query
 
         self.refresh_results()
-        exact = [product_id for product_id in self.products if product_id.casefold() == raw_query.casefold()]
+        exact = [
+            product_id
+            for product_id in self.products
+            if product_id.casefold() == raw_query.casefold()
+        ]
         if raw_query in self.products:
             product_id = raw_query
         elif len(exact) == 1:
@@ -125,7 +157,9 @@ class ProductLookupView(ttk.Frame):
             product_id = self.selected_product_id
         else:
             if self.visible_ids:
-                self.clear_result("Several products match. Select one, or enter its complete product ID.")
+                self.clear_result(
+                    "Several products match. Select one, or enter its complete product ID."
+                )
             return "break"
         self.view.queue_tree.selection_set(f"product::{product_id}")
         self.view.queue_tree.see(f"product::{product_id}")
@@ -155,7 +189,9 @@ class ProductLookupView(ttk.Frame):
         name = self.products[product_id]
         location = self.database.get_product_location(product_id)
         if location is None:
-            self.clear_result(f"{product_id} — {name}\nNo committed location. Assign it on tab 2 and Commit first.")
+            self.clear_result(
+                f"{product_id} — {name}\nNo committed location. Assign it on tab 2 and Commit first."
+            )
             self.selected_product_id = product_id
             return
 
@@ -173,7 +209,12 @@ class ProductLookupView(ttk.Frame):
         )
         counts = Counter(placement.slot_name for _, _, placement in self.shelf_contents)
         self.view.render_shelf(
-            floor, code, layout, {slot: (count, 0) for slot, count in counts.items()}, self.target_slot, side=side,
+            floor,
+            code,
+            layout,
+            {slot: (count, 0) for slot, count in counts.items()},
+            self.target_slot,
+            side=side,
         )
         self.select_slot(self.target_slot)
         button = self.view.slot_buttons.get(self.target_slot)
@@ -190,9 +231,20 @@ class ProductLookupView(ttk.Frame):
                 continue
             item_id = f"saved::{product_id}"
             tree.insert(
-                "", "end", iid=item_id,
-                values=(product_id, name, placement.stock_qty if placement.stock_qty is not None else "Unknown",
-                        placement.assigned_at.replace("T", " ") if placement.assigned_at else "Unknown", "Saved"),
+                "",
+                "end",
+                iid=item_id,
+                values=(
+                    product_id,
+                    name,
+                    placement.stock_qty
+                    if placement.stock_qty is not None
+                    else "Unknown",
+                    placement.assigned_at.replace("T", " ")
+                    if placement.assigned_at
+                    else "Unknown",
+                    "Saved",
+                ),
             )
             if product_id == self.selected_product_id:
                 tree.selection_set(item_id)
@@ -205,8 +257,20 @@ class ProductLookupView(ttk.Frame):
         inner.update_idletasks()
         x = button.winfo_rootx() - inner.winfo_rootx()
         y = button.winfo_rooty() - inner.winfo_rooty()
-        canvas.xview_moveto(max(0, (x + button.winfo_width() / 2 - canvas.winfo_width() / 2) / max(1, inner.winfo_width())))
-        canvas.yview_moveto(max(0, (y + button.winfo_height() / 2 - canvas.winfo_height() / 2) / max(1, inner.winfo_height())))
+        canvas.xview_moveto(
+            max(
+                0,
+                (x + button.winfo_width() / 2 - canvas.winfo_width() / 2)
+                / max(1, inner.winfo_width()),
+            )
+        )
+        canvas.yview_moveto(
+            max(
+                0,
+                (y + button.winfo_height() / 2 - canvas.winfo_height() / 2)
+                / max(1, inner.winfo_height()),
+            )
+        )
 
     def destroy(self) -> None:
         self._cancel_search()

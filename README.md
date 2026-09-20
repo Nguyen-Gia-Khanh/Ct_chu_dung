@@ -1,132 +1,126 @@
 # Warehouse Shelf Mapper
 
-A small local Windows application for assigning a fixed product catalogue to irregular warehouse shelf locations. It tracks **locations only**; your cloud inventory system remains the source of truth for stock quantities.
+A local Windows/Tkinter application for mapping products to irregular warehouse
+shelves. SQLite lives beside the Python entry point, so no Docker or database
+server is required.
 
-## What it does
+## Four focused tabs
 
-- Imports a working product queue and a separate full product catalog from CSV.
-- Uses one real-time search field for both lists, including IDs, full names, and shortened names while ignoring case and accents.
-- Shows a red **Already at [location]** warning for an exact product ID that has a saved or staged location; otherwise it shows **Not in**.
-- Transfers selected catalog products into the working queue without removing them from the catalog.
-- Creates each shelf from floor, shelf code, and row count.
-- Gives every row separate **left-half** and **right-half** cell counts.
-- Numbers rows from the ground upward in both tabs, with Row 1 at the bottom.
-- Adds new rows at the top and removes the highest rows first.
-- Renders a clickable 2D front view with a fixed center divider.
-- Allows multiple product IDs in the same slot.
-- Lists selected-slot products from oldest to newest, with the newest at the bottom; double-click a Product ID cell to copy only that ID.
-- Removes staged products from the unassigned queue.
-- Writes the shelf and all staged assignments to SQLite only when **Commit shelf + assignments** is pressed.
-- Loads previously saved shelves and supports correcting assignments.
+1. **Shelf Designer** — import CSV files, create or edit a shelf, and commit its
+   structure. Rows count upward from the ground and may contain different cell
+   counts.
+2. **Assign Locations** — search the total queue and full catalog, prepare a
+   persistent on-hand batch, enter an exact floor/side/shelf/row/cell address,
+   and move the batch into that address.
+3. **Find Product** — search the full catalog by product ID or name and display
+   the product's committed shelf location.
+4. **Browse Shelves** — choose a committed shelf, view its 2D front layout, and
+   click cells to inspect their products.
+
+The total queue, on-hand queue, and assigned shelf locations are separate
+states. A working product is in exactly one of them at a time.
 
 ## Run on Windows 11
 
-Extract the files together, keeping the `mapper` folder beside `warehouse_mapper.py`.
-Open the script in VS Code, select your existing venv, and run it. From an activated
-venv in the project folder, the equivalent command is:
+Keep `warehouse_mapper.py`, the `mapper` folder, and the `utils` folder together.
+From the activated virtual environment in the project folder:
 
 ```powershell
 python warehouse_mapper.py
 ```
 
-No Docker, JavaScript, database server, or third-party Python package is required.
-The previous BAT launcher is optional; it is not needed to edit or run the Python source.
+Selenium is only needed for the optional Chrome/KiotViet integration. The local
+warehouse mapper itself uses Python's standard library.
 
-## Editing the source
+## Main workflow
 
-| File | What to change here |
-| --- | --- |
-| `warehouse_mapper.py` | Entry point: starts the application. |
-| `mapper/app.py` | Shelf loading, search, staging assignments, and commit actions. |
-| `mapper/designer.py` | Metadata form and left/right cell inputs for each row. |
-| `mapper/assignment_view.py` | Queue table, clickable shelf, and slot contents display. |
-| `mapper/database.py` | SQLite schema and database operations. |
-| `mapper/csv_import.py` | CSV reading and column selection. |
-| `mapper/common.py` | Slot names, search normalization, and default database path. |
-| `mapper/widgets.py` | Shared scrollable container. |
+### Create the shelf structure
 
-The entry point is intentionally small; the editable application code is in these modules.
+1. On tab 1, import the working product CSV and full catalog CSV as needed.
+2. Enter floor, side, shelf code, and row count.
+3. Enter the number of cells in every row. Row 1 is at ground level; adding or
+   removing rows always changes the top of the shelf first.
+4. Press **Build / refresh 2D shelf** to inspect the preview on tab 4.
+5. Return to tab 1 and press **Commit shelf design**.
 
-## CSV format
+### Assign products by address
 
-Use `products_template.csv` as an example. The app asks which columns contain the product ID and product name, so additional columns are allowed and ignored.
+1. On tab 2, search the total unassigned queue.
+2. Select one or more products and press **Move selected → on-hand**.
+3. Enter each product's stock quantity. The on-hand batch is written to SQLite
+   immediately and survives closing or restarting the app.
+4. Enter Floor, Side, Shelf, Row, and Cell, then press **Load address →**.
+5. Check the current address contents in the right pane.
+6. Press **Assign all on-hand → loaded address**. This move is saved immediately
+   in one SQLite transaction; the shelf-design Commit button is not involved.
 
-```csv
-product_id,product_name
-P00001,Example Product One
-P00002,Example Product Two
-```
+Use **Dequeue all → total queue** to clear the on-hand batch without assigning
+it. Use **Shelf → on-hand (all)** to remove every product from the loaded address
+while preserving its recorded stock quantity for reassignment.
 
-Export an Excel workbook as **CSV UTF-8** before importing it. Re-importing the same product ID updates its name without deleting its location.
+## Search and catalog behavior
 
-## Workflow
+One search box filters both the total queue and the full catalog. It searches
+product ID, full name, and shortened name without case or Vietnamese accents.
+An exact product ID also reports whether the product is on-hand or already at a
+shelf address.
 
-1. Press **Import products CSV**.
-2. Enter the floor, shelf code, and number of rows.
-3. Press **Apply row count**, or use **Add row at top** / **Remove top row**.
-4. For each row, enter the number of left-side and right-side cells.
-5. Press **Build / refresh 2D shelf**.
-6. Click a slot in the shelf view.
-7. Search and select one or several products.
-8. Press **Assign selected to clicked slot**. They leave the working queue immediately.
-9. Repeat as needed.
-10. Press **Commit shelf + assignments** to save everything in one SQLite transaction.
+The full catalog is a permanent reference list. **Transfer selected to total
+queue** copies catalog-only products into the working product list without
+removing their catalog rows. Products already assigned or on-hand stay in their
+current state.
 
-The same search box filters both the unassigned queue and the full catalog. To
-start working with a catalog-only product, select it in **Full product catalog**
-and press **Transfer selected to queue** beside the assignment button.
-If it already has a location, the action stages its removal from that slot and
-keeps its stock value for reassignment. Its catalog row always remains available.
-Double-clicking any catalog row only fills the shared search box with its ID; it
-never changes the queue or an assignment. Use **Transfer selected to queue**
-explicitly when a transfer is intended.
-
-Yellow slots contain uncommitted assignments. Green slots contain saved assignments. Select products inside a slot and press **Return selected products to queue** to correct a location; commit again to make the correction permanent.
-
-## Ground-up row numbering
-
-In both tabs, a shelf with four rows displays Row 4 at the top, then Row 3, Row 2,
-and Row 1 at ground level. Row lists and SQLite row numbers still use ascending
-order internally: Row 1, Row 2, Row 3, Row 4.
-
-**Add row at top** appends a new highest row (initially two cells on each side).
-**Remove top row** removes only the highest row. Typing a smaller row count
-removes the highest rows until the requested count is reached. Lower rows keep
-their left/right values, slot IDs, and product assignments. Once a preview is
-built, row-count changes also refresh the assignment tab.
-
-Removing a row or cell that still has assigned products is blocked. Return or
-move those products first; the removal and product changes can then be saved
-together with **Commit shelf + assignments**. Changing the layout still requires
-a commit, even when no products were changed.
+An 11-character barcode such as `06410KFL850` is normalized to
+`06410-KFL-850` in the search field.
 
 ## Location names
 
-For Floor `1`, Shelf `A`, Row `3`, left-side cell `2`, the generated location is:
+The location rule is centralized in `mapper/common.py`. For Floor `1`, Side
+`1`, Shelf `A`, Row `8`, Cell `10`, the generated ID is:
 
 ```text
-1-A-R03-L02
+L1-1A8-10
 ```
 
-The equivalent right-side cell ends in `R02`.
+## CSV behavior
+
+The import dialog asks which columns contain product ID, full name, and
+shortened name. Extra CSV columns are allowed. Re-importing an existing product
+ID updates its names; it does not delete its shelf placement or historical
+assignment time.
+
+## Files
+
+| File | Responsibility |
+| --- | --- |
+| `warehouse_mapper.py` | Small application entry point. |
+| `mapper/app.py` | Coordinates tabs, searches, assignment actions, and optional web upload. |
+| `mapper/designer.py` | Shelf metadata and irregular row editor. |
+| `mapper/location_assignment_view.py` | Tab 2 total queue, on-hand batch, address form, and address contents. |
+| `mapper/lookup_view.py` | Tab 3 product-to-location lookup. |
+| `mapper/shelf_browser.py` | Tab 4 read-only shelf selector and front view. |
+| `mapper/assignment_view.py` | Shared shelf renderer plus stock quantity dialog. |
+| `mapper/database.py` | SQLite schema and atomic queue/location operations. |
+| `mapper/csv_import.py` | CSV parsing and column mapping. |
+| `mapper/common.py` | Location IDs, search normalization, and database path. |
+| `mapper/web_upload.py` | Optional Selenium/KiotViet integration. |
 
 ## Data and backup
 
-The application creates `warehouse_locations.db` beside the script. This is a normal SQLite database and can be queried with SQLite tools or Python. Close the application and copy this file somewhere safe to make a complete backup.
+The app creates `warehouse_locations.db` beside `warehouse_mapper.py`. Close the
+app and copy this one file to make a complete backup. Existing current-schema
+databases are upgraded automatically with the new `on_hand_queue` table; shelves,
+placements, quantities, and timestamps are not rewritten.
 
-The data model enforces one designated slot per product while allowing any number of different products in a slot.
-
-The application expects `warehouse_locations.db` to use the current schema,
-including shelf sides. If the database is from an older schema, delete it and
-let the application create a fresh database. The download does not contain a
-database that would replace your data.
+Deleting the database intentionally starts from an empty schema the next time
+the app runs.
 
 ## Checks
 
 ```powershell
-python -m unittest -v test_warehouse_mapper test_mapper_rows
+python -m unittest testers.test_on_hand_queue -v
+python -m unittest testers.test_mapper_stock testers.test_web_upload testers.test_widgets -v
 ```
 
-These checks cover database transactions, preserving placements and slot IDs,
-adding/removing top rows, and both tabs' grid ordering. The UI checks use real Tcl
-variables with recorded widget commands; they do not verify native Windows rendering.
+The on-hand tests cover persistence, exact-address assignment, shelf-to-on-hand
+returns, stock preservation, and transaction safety.
