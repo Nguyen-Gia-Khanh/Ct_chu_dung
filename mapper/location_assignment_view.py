@@ -376,26 +376,42 @@ class LocationAssignmentView(ttk.Frame):
             text="Shelf → on-hand (all)",
             command=on_slot_to_hand,
         ).grid(row=1, column=1, sticky="ew", padx=(3, 0), pady=(6, 0))
+
+        self.web_batch_mode_var = tk.BooleanVar(self, value=False)
+        self.web_batch_mode_check = ttk.Checkbutton(
+            footer,
+            text="Process and save all products in loaded address",
+            variable=self.web_batch_mode_var,
+            command=self._refresh_web_action_labels,
+        )
+        self.web_batch_mode_check.grid(
+            row=2,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            pady=(7, 0),
+        )
         web_buttons = ttk.Frame(footer)
-        web_buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        web_buttons.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         web_buttons.columnconfigure(0, weight=1)
         web_buttons.columnconfigure(1, weight=1)
         self.modify_location_button = ttk.Button(
             web_buttons,
-            text="Modify web location",
             command=on_modify_location,
         )
         self.modify_location_button.grid(row=0, column=0, sticky="ew", padx=(0, 3))
         self.upload_button = ttk.Button(
-            web_buttons, text="Upload to web", command=on_upload
+            web_buttons,
+            command=on_upload,
         )
         self.upload_button.grid(row=0, column=1, sticky="ew", padx=(3, 0))
+        self._refresh_web_action_labels()
         # Preserve the current temporary behavior: location-only web updates are enabled.
         self.upload_button.grid_remove()
         self.modify_location_button.grid_configure(columnspan=2, padx=0)
         self.upload_status_text = tk.StringVar(self, value="")
         ttk.Label(footer, textvariable=self.upload_status_text, wraplength=390).grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=(5, 0)
+            row=4, column=0, columnspan=2, sticky="w", pady=(5, 0)
         )
         self.copy_status_text = tk.StringVar(
             self, value="Double-click a row to copy its Product ID."
@@ -404,7 +420,20 @@ class LocationAssignmentView(ttk.Frame):
             footer,
             textvariable=self.copy_status_text,
             foreground="#555555",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(5, 0))
+
+    def _refresh_web_action_labels(self) -> None:
+        """Make the active single/all-products scope visible on both web buttons."""
+        if self.web_batch_mode_var.get():
+            self.modify_location_button.configure(
+                text="Modify all products' web location"
+            )
+            self.upload_button.configure(text="Upload all products to web")
+        else:
+            self.modify_location_button.configure(
+                text="Modify selected product's web location"
+            )
+            self.upload_button.configure(text="Upload selected product to web")
 
     def on_barcode_scan(self, barcode: str) -> None:
         self._set_and_select_search(self.search_var, self.search_entry, barcode)

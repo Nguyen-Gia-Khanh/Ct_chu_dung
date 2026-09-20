@@ -1,10 +1,11 @@
-"""Update ONE placement on the product page in an existing Chrome session.
+"""Update one placement at a time in an existing Chrome session.
 
 Selenium is optional and imported only when Upload is clicked. This module never
 opens SQLite, commits a shelf, logs in, or starts a product batch. The selected
 SKU is looked up through the current KiotViet browser session, then the remaining
-form fields are changed one step at a time. Location-only updates deliberately
-leave the website quantity untouched.
+form fields are changed one step at a time. The app controller can safely call
+these single-product operations sequentially for a batch. Location-only updates
+deliberately leave the website quantity untouched.
 """
 
 from __future__ import annotations
@@ -709,8 +710,8 @@ class WebsiteUploader:
         progress("Checking the KiotViet product tab…")
         self._choose_tab()
         return (
-            "Chrome connected. Select a shelf product and press Upload to web "
-            "or Modify location."
+            "Chrome connected. Select one loaded product or enable all-products "
+            "mode, then start a web action."
         )
 
     def disconnect(self) -> None:
@@ -1032,11 +1033,19 @@ class WebsiteUploader:
             return f"Location saved: {product.product_id} · {product.location_id}."
         return f"Uploaded: {product.product_id} · qty {product.stock_qty} · {product.location_id}."
 
-    def upload(self, product: UploadProduct, progress: Callable[[str], None] = lambda _message: None) -> str:
+    def upload(
+        self,
+        product: UploadProduct,
+        progress: Callable[[str], None] = lambda _message: None,
+        *,
+        save: bool | None = None,
+    ) -> str:
+        """Fill stock/location for one product and optionally save the edit."""
         if not self.is_connected():
             raise UploadError(
                 "Chrome is not connected. Press Connect Chrome beside the shelf Load button first."
             )
+        should_save = SAVE_ON_UPLOAD if save is None else save
         try:
             progress("Checking the connected Chrome tab…")
             self._choose_tab()
@@ -1057,8 +1066,9 @@ class WebsiteUploader:
                 check_errors=True,
             )
 
-            # PRODUCTION ONLY. Keep SAVE_ON_UPLOAD = False while testing.
-            if SAVE_ON_UPLOAD:
+            # A batch explicitly opts into Save so Chrome can advance to its
+            # next product. Single-product calls keep the global safety switch.
+            if should_save:
                 return self._save_product(product, progress)
 
             return "Fields filled. Press Lưu manually in Chrome."
@@ -1076,12 +1086,15 @@ class WebsiteUploader:
         self,
         product: LocationUpdate,
         progress: Callable[[str], None] = lambda _message: None,
+        *,
+        save: bool | None = None,
     ) -> str:
         """Change only the website location; never inspect or modify stock."""
         if not self.is_connected():
             raise UploadError(
                 "Chrome is not connected. Press Connect Chrome beside the shelf Load button first."
             )
+        should_save = SAVE_ON_UPLOAD if save is None else save
         try:
             progress("Checking the connected Chrome tab…")
             self._choose_tab()
@@ -1097,7 +1110,7 @@ class WebsiteUploader:
                 check_errors=True,
             )
 
-            if SAVE_ON_UPLOAD:
+            if should_save:
                 return self._save_product(product, progress, location_only=True)
 
             return "Location filled. Stock was untouched. Press Lưu manually in Chrome."

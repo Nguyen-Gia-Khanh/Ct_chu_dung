@@ -1,7 +1,7 @@
 """Focused checks for the KiotViet location-creation workflow."""
 
 import unittest
-from unittest.mock import Mock, call
+from unittest.mock import ANY, Mock, call
 
 from mapper.web_upload import (
     CREATE_LOCATION_XPATH,
@@ -70,6 +70,25 @@ class UploadInteractionTests(unittest.TestCase):
 
         uploader._pause.assert_not_called()
         uploader._open_product.assert_called_once_with(product)
+
+    def test_explicit_save_override_allows_a_batch_to_advance(self):
+        uploader = WebsiteUploader(driver=Mock(), step_delay=0)
+        product = LocationUpdate("P1", "L1-1A1-1")
+        uploader.is_connected = Mock(return_value=True)
+        uploader._choose_tab = Mock()
+        uploader._open_product = Mock()
+        uploader._set_location = Mock()
+        uploader._wait = Mock()
+        uploader._save_product = Mock(return_value="saved")
+
+        result = uploader.modify_location(product, save=True)
+
+        self.assertEqual(result, "saved")
+        uploader._save_product.assert_called_once_with(
+            product,
+            ANY,
+            location_only=True,
+        )
 
     def test_final_save_skips_verification_but_keeps_pause(self):
         uploader = WebsiteUploader(driver=Mock(), step_delay=2)

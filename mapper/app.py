@@ -1297,18 +1297,54 @@ class WarehouseMapperApp:
             )
         return product_id, placement
 
-    def _selected_upload_product(self) -> UploadProduct:
-        product_id, placement = self._selected_web_placement("Upload to web")
-        if placement.stock_qty is None:
-            raise ValueError(
-                "This product has no recorded quantity. Return it to the queue and assign it again "
-                "with a quantity before uploading."
-            )
-        return UploadProduct(product_id, placement.stock_qty, placement.slot_name)
+    def _web_batch_mode_enabled(self) -> bool:
+        mode = getattr(self.assignments, "web_batch_mode_var", None)
+        return bool(mode is not None and mode.get())
 
-    def _selected_location_update(self) -> LocationUpdate:
-        product_id, placement = self._selected_web_placement("Modify location")
-        return LocationUpdate(product_id, placement.slot_name)
+    def _web_placements(self, action_name: str) -> list[tuple[str, Placement]]:
+        """Capture either the selected row or every row in the loaded address."""
+        if not self._web_batch_mode_enabled():
+            return [self._selected_web_placement(action_name)]
+
+        address = self.selected_address
+        if address is None:
+            raise ValueError(
+                "Load a shelf address first. All-products mode uses every product "
+                "currently saved in that loaded address."
+            )
+        contents = self.database.get_slot_contents(address.slot_id)
+        if not contents:
+            raise ValueError(f"{address.slot_name} does not contain any products.")
+        return [(product_id, placement) for product_id, _name, placement in contents]
+
+    def _upload_products(self) -> list[UploadProduct]:
+        placements = self._web_placements("Upload to web")
+        missing_quantities = [
+            product_id
+            for product_id, placement in placements
+            if placement.stock_qty is None
+        ]
+        if missing_quantities:
+            preview = ", ".join(missing_quantities[:3])
+            more = (
+                f" and {len(missing_quantities) - 3} more"
+                if len(missing_quantities) > 3
+                else ""
+            )
+            raise ValueError(
+                f"Cannot upload because {preview}{more} has no recorded quantity. "
+                "Return the product to on-hand and assign it again with a quantity."
+            )
+        return [
+            UploadProduct(product_id, placement.stock_qty, placement.slot_name)
+            for product_id, placement in placements
+        ]
+
+    def _location_updates(self) -> list[LocationUpdate]:
+        return [
+            LocationUpdate(product_id, placement.slot_name)
+            for product_id, placement in self._web_placements("Modify location")
+        ]
 
     def _can_start_web_update(self) -> bool:
         if self.web_upload_busy or self.chrome_connect_busy:
@@ -1326,70 +1362,134 @@ class WarehouseMapperApp:
         if not self._can_start_web_update():
             return
         try:
-            product = self._selected_upload_product()
+            products = self._upload_products()
         except ValueError as error:
             messagebox.showinfo(
-                "Choose a product to upload", str(error), parent=self.root
+                "Choose products to upload", str(error), parent=self.root
             )
             return
-        self._start_web_update(product, location_only=False)
+        self._start_web_update(products, location_only=False)
 
     def modify_selected_location(self) -> None:
         if not self._can_start_web_update():
             return
         try:
-            product = self._selected_location_update()
+            products = self._location_updates()
         except ValueError as error:
-            messagebox.showinfo("Choose a product", str(error), parent=self.root)
+            messagebox.showinfo("Choose products", str(error), parent=self.root)
             return
-        self._start_web_update(product, location_only=True)
+        self._start_web_update(products, location_only=True)
 
     def _start_web_update(
         self,
-        product: UploadProduct | LocationUpdate,
+        products: list[UploadProduct] | list[LocationUpdate],
         *,
         location_only: bool,
     ) -> None:
-        # Capture the placement now. Later UI changes cannot alter this task.
+        # The complete product list was captured before starting this worker.
+        # Later row selections and address changes cannot alter the running task.
+        products = list(products)
+        if not products:
+            return
+        save_each_product = self._web_batch_mode_enabled()
         self.web_upload_busy = True
         self.web_upload_action = "location" if location_only else "upload"
         self.assignments.upload_button.configure(state="disabled")
         self.assignments.modify_location_button.configure(state="disabled")
-        action = "Updating location" if location_only else "Uploading"
-        self.assignments.upload_status_text.set(
-            f"{action} {product.product_id} → {product.location_id}…"
-        )
+        self.assignments.web_batch_mode_check.configure(state="disabled")
+        if len(products) == 1:
+            product = products[0]
+            action = "Updating location" if location_only else "Uploading"
+            status = f"{action} {product.product_id} → {product.location_id}…"
+        else:
+            action = "Updating locations for" if location_only else "Uploading"
+            status = (
+                f"{action} {len(products)} products → {products[0].location_id}…"
+            )
+        self.assignments.upload_status_text.set(status)
         self.status_text.set(
-            f"{action} in progress. Leave the website tab untouched until it finishes."
+            f"{status} Leave the website tab untouched until it finishes."
         )
         self.web_upload_events = Queue()
         Thread(
             target=self._run_web_upload,
-            args=(product, self.web_upload_events, location_only),
+            args=(
+                products,
+                self.web_upload_events,
+                location_only,
+                save_each_product,
+            ),
             daemon=True,
         ).start()
         self.web_upload_after_id = self.root.after(100, self._poll_web_upload)
 
     def _run_web_upload(
         self,
-        product: UploadProduct | LocationUpdate,
+        products: list[UploadProduct] | list[LocationUpdate],
         events: Queue,
         location_only: bool,
+        save_each_product: bool = False,
     ) -> None:
         # This worker never calls Tkinter and never writes to the local database.
+        total = len(products)
+        completed = 0
+        product = None
         try:
+            for index, product in enumerate(products, start=1):
 
-            def progress(text: str) -> None:
-                events.put(("progress", text))
+                def progress(text: str, *, _index=index, _product=product) -> None:
+                    events.put(
+                        (
+                            "progress",
+                            f"[{_index}/{total}] {_product.product_id}: {text}",
+                        )
+                    )
 
-            if location_only:
-                result = self.website_uploader.modify_location(product, progress)
-            else:
-                result = self.website_uploader.upload(product, progress)
+                if location_only:
+                    result = self.website_uploader.modify_location(
+                        product,
+                        progress,
+                        save=True if save_each_product else None,
+                    )
+                else:
+                    result = self.website_uploader.upload(
+                        product,
+                        progress,
+                        save=True if save_each_product else None,
+                    )
+                completed = index
+                if total > 1:
+                    events.put(
+                        (
+                            "progress",
+                            f"[{index}/{total}] Finished {product.product_id}.",
+                        )
+                    )
         except Exception as error:
-            events.put(("error", str(error), self.website_uploader.is_connected()))
+            product_id = product.product_id if product is not None else "unknown product"
+            detail = (
+                f"Batch stopped after {completed}/{total} product(s). "
+                f"Failed at {product_id}.\n\n{error}"
+                if total > 1
+                else str(error)
+            )
+            events.put(
+                ("error", detail, self.website_uploader.is_connected())
+            )
         else:
-            events.put(("done", result))
+            if total == 1:
+                summary = result
+            elif location_only:
+                summary = (
+                    f"Updated web locations for {total} products at "
+                    f"{products[0].location_id}."
+                )
+            else:
+                summary = (
+                    f"Uploaded stock and web locations for {total} products at "
+                    f"{products[0].location_id}."
+                )
+            events.put(("done", summary))
 
     def _poll_web_upload(self) -> None:
         self.web_upload_after_id = None
@@ -1405,6 +1505,7 @@ class WarehouseMapperApp:
             self.web_upload_busy = False
             self.assignments.upload_button.configure(state="normal")
             self.assignments.modify_location_button.configure(state="normal")
+            self.assignments.web_batch_mode_check.configure(state="normal")
             action_title = (
                 "Modify location"
                 if self.web_upload_action == "location"

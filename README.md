@@ -61,6 +61,14 @@ product(s) → on-hand** for a partial transfer. **Shelf → on-hand (all)** rem
 available when the complete address must be emptied. Both actions preserve each
 product's recorded stock quantity for reassignment.
 
+Web actions default to one product: click exactly one row in the loaded address,
+then press **Modify selected product's web location**. Turn on **Process and save
+all products in loaded address** to ignore row selection and update the complete
+address sequentially. The batch saves each product before opening the next one,
+reports its current position, and stops at the first failed SKU so the browser is
+not advanced from an uncertain state. The temporarily hidden stock-upload action
+uses the same single/all-products switch.
+
 ## Search and catalog behavior
 
 One search box filters both the total queue and the full catalog. It searches
