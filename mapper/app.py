@@ -175,6 +175,7 @@ class WarehouseMapperApp:
             on_load_address=self.load_assignment_address,
             on_assign_address=self.assign_on_hand_to_address,
             on_clear_hand=self.clear_on_hand_queue,
+            on_selected_to_hand=self.move_selected_address_to_on_hand,
             on_slot_to_hand=self.move_address_to_on_hand,
             on_modify_hand_stock=self.modify_on_hand_stock,
             on_modify_stock=self.modify_selected_stock,
@@ -207,9 +208,7 @@ class WarehouseMapperApp:
             if self.shelf_browser.current_shelf_id is None:
                 self.shelf_browser.refresh()
             else:
-                self.shelf_browser.show_saved_shelf(
-                    self.shelf_browser.current_shelf_id
-                )
+                self.shelf_browser.show_saved_shelf(self.shelf_browser.current_shelf_id)
 
     def _editor_state(self) -> tuple:
         return (
@@ -608,17 +607,28 @@ class WarehouseMapperApp:
                 parent=self.root,
             )
             return
-        if not self.on_hand_products:
+        selected_items = self.assignments.on_hand_tree.selection()
+        product_ids = [
+            item_id.removeprefix("hand::")
+            for item_id in selected_items
+            if item_id.startswith("hand::")
+            and item_id.removeprefix("hand::") in self.on_hand_products
+        ]
+        if not product_ids:
             messagebox.showinfo(
-                "On-hand is empty",
-                "Move products from the total queue to on-hand first.",
+                "Choose on-hand products",
+                "Select one or more on-hand products with Ctrl-click first.",
                 parent=self.root,
             )
             return
         address = self.selected_address
         assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
         try:
-            moved = self.database.assign_on_hand_to_slot(address.slot_id, assigned_at)
+            moved = self.database.assign_on_hand_to_slot(
+                address.slot_id,
+                assigned_at,
+                product_ids,
+            )
         except Exception as error:
             messagebox.showerror("Assignment failed", str(error), parent=self.root)
             return
@@ -682,6 +692,47 @@ class WarehouseMapperApp:
             self.shelf_browser.refresh()
         self.status_text.set(
             f"Moved {moved} product(s) from {address.slot_name} to on-hand."
+        )
+
+    def move_selected_address_to_on_hand(self) -> None:
+        if self.selected_address is None:
+            messagebox.showinfo(
+                "Load an address",
+                "Enter the shelf address and press Load address first.",
+                parent=self.root,
+            )
+            return
+        selected_items = self.assignments.contents_tree.selection()
+        product_ids = [
+            item_id.removeprefix("saved::")
+            for item_id in selected_items
+            if item_id.startswith("saved::")
+        ]
+        if not product_ids:
+            messagebox.showinfo(
+                "Choose shelf products",
+                "Select one or more products in the loaded address with Ctrl-click first.",
+                parent=self.root,
+            )
+            return
+
+        address = self.selected_address
+        queued_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        try:
+            moved = self.database.move_slot_to_on_hand(
+                address.slot_id,
+                queued_at,
+                product_ids,
+            )
+        except Exception as error:
+            messagebox.showerror("Transfer failed", str(error), parent=self.root)
+            return
+        self.reload_database_state()
+        self.refresh_all_views()
+        if hasattr(self, "shelf_browser"):
+            self.shelf_browser.refresh()
+        self.status_text.set(
+            f"Moved {moved} selected product(s) from {address.slot_name} to on-hand."
         )
 
     def assign_selected_products(self) -> None:

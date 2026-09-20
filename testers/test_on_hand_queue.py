@@ -52,6 +52,35 @@ class OnHandQueueTests(unittest.TestCase):
             },
         )
 
+    def test_assign_selected_on_hand_products_leaves_the_rest_on_hand(self) -> None:
+        self.database.add_to_on_hand({"P1": 12, "P2": 4}, FIRST_TIME)
+
+        count = self.database.assign_on_hand_to_slot(
+            self.address.slot_id,
+            SECOND_TIME,
+            ["P1"],
+        )
+
+        self.assertEqual(count, 1)
+        self.assertEqual(set(self.database.get_on_hand_products()), {"P2"})
+        self.assertEqual(
+            self.database.get_placement_details(),
+            {"P1": Placement(self.address.slot_name, 12, SECOND_TIME)},
+        )
+
+    def test_stale_on_hand_selection_rolls_back_the_complete_move(self) -> None:
+        self.database.add_to_on_hand({"P1": 12}, FIRST_TIME)
+
+        with self.assertRaises(KeyError):
+            self.database.assign_on_hand_to_slot(
+                self.address.slot_id,
+                SECOND_TIME,
+                ["P1", "MISSING"],
+            )
+
+        self.assertEqual(set(self.database.get_on_hand_products()), {"P1"})
+        self.assertEqual(self.database.get_placement_details(), {})
+
     def test_move_complete_address_back_to_on_hand_preserves_stock(self) -> None:
         self.database.add_to_on_hand({"P1": 12, "P2": 4}, FIRST_TIME)
         self.database.assign_on_hand_to_slot(self.address.slot_id, SECOND_TIME)
@@ -66,6 +95,29 @@ class OnHandQueueTests(unittest.TestCase):
                 for key, item in self.database.get_on_hand_products().items()
             },
             {"P1": 12, "P2": 4},
+        )
+
+    def test_move_selected_shelf_products_leaves_the_rest_in_place(self) -> None:
+        self.database.add_to_on_hand({"P1": 12, "P2": 4}, FIRST_TIME)
+        self.database.assign_on_hand_to_slot(self.address.slot_id, SECOND_TIME)
+
+        count = self.database.move_slot_to_on_hand(
+            self.address.slot_id,
+            FIRST_TIME,
+            ["P2"],
+        )
+
+        self.assertEqual(count, 1)
+        self.assertEqual(
+            {
+                key: item.stock_qty
+                for key, item in self.database.get_on_hand_products().items()
+            },
+            {"P2": 4},
+        )
+        self.assertEqual(
+            self.database.get_placement_details(),
+            {"P1": Placement(self.address.slot_name, 12, SECOND_TIME)},
         )
 
     def test_dequeue_all_returns_products_to_unassigned_state(self) -> None:

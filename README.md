@@ -51,12 +51,15 @@ warehouse mapper itself uses Python's standard library.
    immediately and survives closing or restarting the app.
 4. Enter Floor, Side, Shelf, Row, and Cell, then press **Load address →**.
 5. Check the current address contents in the right pane.
-6. Press **Assign all on-hand → loaded address**. This move is saved immediately
-   in one SQLite transaction; the shelf-design Commit button is not involved.
+6. Ctrl-click one or more on-hand rows, then press **Assign selected on-hand →
+   loaded address**. Only that selected subset moves; the rest stays on-hand.
+   The move is saved immediately in one SQLite transaction.
 
 Use **Dequeue all → total queue** to clear the on-hand batch without assigning
-it. Use **Shelf → on-hand (all)** to remove every product from the loaded address
-while preserving its recorded stock quantity for reassignment.
+it. In the loaded address, Ctrl-click one or more rows and use **Selected
+product(s) → on-hand** for a partial transfer. **Shelf → on-hand (all)** remains
+available when the complete address must be emptied. Both actions preserve each
+product's recorded stock quantity for reassignment.
 
 ## Search and catalog behavior
 

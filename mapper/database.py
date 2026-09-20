@@ -630,10 +630,20 @@ class WarehouseDatabase:
             for row in rows
         ]
 
-    def assign_on_hand_to_slot(self, slot_id: int, assigned_at: str) -> int:
-        """Move the complete persistent working batch into one saved slot."""
+    def assign_on_hand_to_slot(
+        self,
+        slot_id: int,
+        assigned_at: str,
+        product_ids: list[str] | tuple[str, ...] | None = None,
+    ) -> int:
+        """Move selected on-hand products, or the complete batch, into one slot."""
         if not assigned_at or datetime.fromisoformat(assigned_at).utcoffset() is None:
             raise ValueError("The assignment time must include a timezone.")
+        selected_ids = (
+            None if product_ids is None else tuple(dict.fromkeys(product_ids))
+        )
+        if selected_ids == ():
+            return 0
         with closing(self.connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             if (
@@ -643,9 +653,23 @@ class WarehouseDatabase:
                 is None
             ):
                 raise KeyError("That shelf address no longer exists.")
-            rows = connection.execute(
+            all_rows = connection.execute(
                 "SELECT product_id, stock_qty FROM on_hand_queue ORDER BY queued_at, product_id"
             ).fetchall()
+            if selected_ids is None:
+                rows = all_rows
+            else:
+                rows_by_id = {row["product_id"]: row for row in all_rows}
+                missing = [
+                    product_id
+                    for product_id in selected_ids
+                    if product_id not in rows_by_id
+                ]
+                if missing:
+                    raise KeyError(
+                        f"Product {missing[0]} is no longer in the on-hand queue."
+                    )
+                rows = [rows_by_id[product_id] for product_id in selected_ids]
             if not rows:
                 return 0
             conflicts = connection.execute(
@@ -670,13 +694,29 @@ class WarehouseDatabase:
                     for row in rows
                 ),
             )
-            connection.execute("DELETE FROM on_hand_queue")
+            if selected_ids is None:
+                connection.execute("DELETE FROM on_hand_queue")
+            else:
+                connection.executemany(
+                    "DELETE FROM on_hand_queue WHERE product_id = ?",
+                    ((product_id,) for product_id in selected_ids),
+                )
         return len(rows)
 
-    def move_slot_to_on_hand(self, slot_id: int, queued_at: str) -> int:
-        """Move every product in one slot back into the persistent working batch."""
+    def move_slot_to_on_hand(
+        self,
+        slot_id: int,
+        queued_at: str,
+        product_ids: list[str] | tuple[str, ...] | None = None,
+    ) -> int:
+        """Move selected slot products, or the complete slot, back to on-hand."""
         if not queued_at or datetime.fromisoformat(queued_at).utcoffset() is None:
             raise ValueError("The on-hand time must include a timezone.")
+        selected_ids = (
+            None if product_ids is None else tuple(dict.fromkeys(product_ids))
+        )
+        if selected_ids == ():
+            return 0
         with closing(self.connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             if (
@@ -686,10 +726,24 @@ class WarehouseDatabase:
                 is None
             ):
                 raise KeyError("That shelf address no longer exists.")
-            rows = connection.execute(
+            all_rows = connection.execute(
                 "SELECT product_id, stock_qty FROM placements WHERE slot_id = ?",
                 (slot_id,),
             ).fetchall()
+            if selected_ids is None:
+                rows = all_rows
+            else:
+                rows_by_id = {row["product_id"]: row for row in all_rows}
+                missing = [
+                    product_id
+                    for product_id in selected_ids
+                    if product_id not in rows_by_id
+                ]
+                if missing:
+                    raise KeyError(
+                        f"Product {missing[0]} is no longer in that shelf address."
+                    )
+                rows = [rows_by_id[product_id] for product_id in selected_ids]
             if not rows:
                 return 0
             connection.executemany(
@@ -702,7 +756,15 @@ class WarehouseDatabase:
                 """,
                 ((row["product_id"], row["stock_qty"], queued_at) for row in rows),
             )
-            connection.execute("DELETE FROM placements WHERE slot_id = ?", (slot_id,))
+            if selected_ids is None:
+                connection.execute(
+                    "DELETE FROM placements WHERE slot_id = ?", (slot_id,)
+                )
+            else:
+                connection.executemany(
+                    "DELETE FROM placements WHERE slot_id = ? AND product_id = ?",
+                    ((slot_id, product_id) for product_id in selected_ids),
+                )
         return len(rows)
 
     def update_placement_stock(

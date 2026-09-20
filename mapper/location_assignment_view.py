@@ -23,6 +23,7 @@ class LocationAssignmentView(ttk.Frame):
         on_load_address: Callable[[], object],
         on_assign_address: Callable[[], object],
         on_clear_hand: Callable[[], object],
+        on_selected_to_hand: Callable[[], object],
         on_slot_to_hand: Callable[[], object],
         on_modify_hand_stock: Callable[[], object],
         on_modify_stock: Callable[[], object],
@@ -74,6 +75,7 @@ class LocationAssignmentView(ttk.Frame):
         )
         self._build_contents_panel(
             contents_panel,
+            on_selected_to_hand,
             on_slot_to_hand,
             on_modify_stock,
             on_upload,
@@ -215,7 +217,7 @@ class LocationAssignmentView(ttk.Frame):
             body,
             columns=("product_id", "product_name", "stock_qty"),
             show="headings",
-            selectmode="browse",
+            selectmode="extended",
             height=13,
         )
         self.on_hand_tree.heading("product_id", text="Product ID")
@@ -287,7 +289,7 @@ class LocationAssignmentView(ttk.Frame):
         )
         ttk.Button(
             address,
-            text="Assign all on-hand → loaded address",
+            text="Assign selected on-hand → loaded address",
             command=on_assign_address,
             style="Commit.TButton",
         ).grid(row=3, column=0, columnspan=5, sticky="ew", padx=2, pady=(6, 0))
@@ -304,6 +306,7 @@ class LocationAssignmentView(ttk.Frame):
     def _build_contents_panel(
         self,
         parent: ttk.LabelFrame,
+        on_selected_to_hand: Callable[[], object],
         on_slot_to_hand: Callable[[], object],
         on_modify_stock: Callable[[], object],
         on_upload: Callable[[], object],
@@ -326,7 +329,7 @@ class LocationAssignmentView(ttk.Frame):
             body,
             columns=("product_id", "product_name", "stock_qty", "assigned_at"),
             show="headings",
-            selectmode="browse",
+            selectmode="extended",
             height=18,
         )
         self.contents_tree.heading("product_id", text="Product ID")
@@ -362,14 +365,19 @@ class LocationAssignmentView(ttk.Frame):
             footer,
             text="Modify selected stock",
             command=on_modify_stock,
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+        ).grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Button(
+            footer,
+            text="Selected product(s) → on-hand",
+            command=on_selected_to_hand,
+        ).grid(row=1, column=0, sticky="ew", padx=(0, 3), pady=(6, 0))
         ttk.Button(
             footer,
             text="Shelf → on-hand (all)",
             command=on_slot_to_hand,
-        ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+        ).grid(row=1, column=1, sticky="ew", padx=(3, 0), pady=(6, 0))
         web_buttons = ttk.Frame(footer)
-        web_buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        web_buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         web_buttons.columnconfigure(0, weight=1)
         web_buttons.columnconfigure(1, weight=1)
         self.modify_location_button = ttk.Button(
@@ -387,7 +395,7 @@ class LocationAssignmentView(ttk.Frame):
         self.modify_location_button.grid_configure(columnspan=2, padx=0)
         self.upload_status_text = tk.StringVar(self, value="")
         ttk.Label(footer, textvariable=self.upload_status_text, wraplength=390).grid(
-            row=2, column=0, columnspan=2, sticky="w", pady=(5, 0)
+            row=3, column=0, columnspan=2, sticky="w", pady=(5, 0)
         )
         self.copy_status_text = tk.StringVar(
             self, value="Double-click a row to copy its Product ID."
@@ -396,7 +404,7 @@ class LocationAssignmentView(ttk.Frame):
             footer,
             textvariable=self.copy_status_text,
             foreground="#555555",
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
     def on_barcode_scan(self, barcode: str) -> None:
         self._set_and_select_search(self.search_var, self.search_entry, barcode)
