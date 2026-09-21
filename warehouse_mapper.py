@@ -38,9 +38,8 @@ __all__ = [
 # UI CONFIGURATION CONSTANT:
 # Set to "ts" (or "vscode") to run the modern VS Code Light+ desktop app (smooth, fast, reliable).
 # Set to "tkinter" to run the classic Tkinter desktop UI.
-# Set to "qt" to run the PyQt6 desktop UI.
 # ==============================================================================
-UI_MODE = "ts"
+UI_MODE = "tkinter"
 
 
 def main() -> None:
@@ -54,9 +53,6 @@ def main() -> None:
         root.state("zoomed")
         WarehouseMapperApp(root)
         root.mainloop()
-    elif mode in ("qt", "pyqt", "desktop", "native"):
-        from mapper.qt_ui import run_qt_app
-        run_qt_app()
     else:
         print(f"Error: Unknown UI_MODE {UI_MODE!r}. Please set UI_MODE to 'ts' or 'tkinter'.", file=sys.stderr)
         sys.exit(1)
