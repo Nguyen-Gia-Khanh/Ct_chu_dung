@@ -701,6 +701,61 @@ class WarehouseDatabase:
             row["slot_name"],
         )
 
+    def get_slot_by_name(self, slot_name: str) -> SlotAddress | None:
+        """Resolve an exact location ID without relying on its display format."""
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT slots.slot_id, shelves.shelf_id, shelves.floor, shelves.side,
+                       shelves.shelf_code, shelf_rows.row_number,
+                       slots.slot_number, slots.slot_name
+                FROM slots
+                JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
+                JOIN shelves ON shelves.shelf_id = shelf_rows.shelf_id
+                WHERE slots.slot_name = ? COLLATE NOCASE
+                """,
+                (slot_name.strip(),),
+            ).fetchone()
+        if row is None:
+            return None
+        return SlotAddress(
+            row["slot_id"],
+            row["shelf_id"],
+            row["floor"],
+            row["side"],
+            row["shelf_code"],
+            row["row_number"],
+            row["slot_number"],
+            row["slot_name"],
+        )
+
+    def get_slot_by_id(self, slot_id: int) -> SlotAddress | None:
+        with closing(self.connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT slots.slot_id, shelves.shelf_id, shelves.floor, shelves.side,
+                       shelves.shelf_code, shelf_rows.row_number,
+                       slots.slot_number, slots.slot_name
+                FROM slots
+                JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
+                JOIN shelves ON shelves.shelf_id = shelf_rows.shelf_id
+                WHERE slots.slot_id = ?
+                """,
+                (slot_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return SlotAddress(
+            row["slot_id"],
+            row["shelf_id"],
+            row["floor"],
+            row["side"],
+            row["shelf_code"],
+            row["row_number"],
+            row["slot_number"],
+            row["slot_name"],
+        )
+
     def get_slot_contents(self, slot_id: int) -> list[tuple[str, str, Placement]]:
         with closing(self.connect()) as connection:
             rows = connection.execute(
@@ -723,6 +778,77 @@ class WarehouseDatabase:
             )
             for row in rows
         ]
+
+    def swap_slot_contents(
+        self,
+        first_slot_id: int,
+        second_slot_id: int,
+    ) -> tuple[int, int]:
+        """Atomically exchange every product in two cells."""
+        if first_slot_id == second_slot_id:
+            raise ValueError("Choose two different cells to switch.")
+        with closing(self.connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            slots = connection.execute(
+                "SELECT slot_id FROM slots WHERE slot_id IN (?, ?)",
+                (first_slot_id, second_slot_id),
+            ).fetchall()
+            if len(slots) != 2:
+                raise KeyError("One of the selected shelf cells no longer exists.")
+            counts = {
+                row["slot_id"]: row["product_count"]
+                for row in connection.execute(
+                    """
+                    SELECT slots.slot_id, COUNT(placements.product_id) AS product_count
+                    FROM slots
+                    LEFT JOIN placements ON placements.slot_id = slots.slot_id
+                    WHERE slots.slot_id IN (?, ?)
+                    GROUP BY slots.slot_id
+                    """,
+                    (first_slot_id, second_slot_id),
+                )
+            }
+            connection.execute(
+                """
+                UPDATE placements
+                SET slot_id = CASE slot_id
+                    WHEN ? THEN ?
+                    WHEN ? THEN ?
+                END
+                WHERE slot_id IN (?, ?)
+                """,
+                (
+                    first_slot_id,
+                    second_slot_id,
+                    second_slot_id,
+                    first_slot_id,
+                    first_slot_id,
+                    second_slot_id,
+                ),
+            )
+        return counts[first_slot_id], counts[second_slot_id]
+
+    def combine_slot_contents(self, source_slot_id: int, target_slot_id: int) -> int:
+        """Atomically move every source-cell product into the target cell."""
+        if source_slot_id == target_slot_id:
+            raise ValueError("Choose two different cells to combine.")
+        with closing(self.connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            slots = connection.execute(
+                "SELECT slot_id FROM slots WHERE slot_id IN (?, ?)",
+                (source_slot_id, target_slot_id),
+            ).fetchall()
+            if len(slots) != 2:
+                raise KeyError("One of the selected shelf cells no longer exists.")
+            source_count = connection.execute(
+                "SELECT COUNT(*) FROM placements WHERE slot_id = ?",
+                (source_slot_id,),
+            ).fetchone()[0]
+            connection.execute(
+                "UPDATE placements SET slot_id = ? WHERE slot_id = ?",
+                (target_slot_id, source_slot_id),
+            )
+        return int(source_count)
 
     def assign_on_hand_to_slot(
         self,

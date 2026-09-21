@@ -15,6 +15,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .assignment_view import StockQuantityDialog
+from .cell_transfer_view import CellTransferView
 from .common import (
     APP_TITLE,
     MAX_VISIBLE_PRODUCTS,
@@ -117,7 +118,7 @@ class WarehouseMapperApp:
         ttk.Label(toolbar, text=APP_TITLE, style="Title.TLabel").pack(side="left")
         ttk.Label(
             toolbar,
-            text="Shelf design · address assignment · lookup · shelf browser",
+            text="Shelf design · address assignment · lookup · shelf browser · cell moves",
             foreground="#555555",
         ).pack(side="left", padx=(16, 0))
 
@@ -192,6 +193,13 @@ class WarehouseMapperApp:
         self.notebook.add(self.lookup, text="3. Find Product")
         self.shelf_browser = ShelfBrowserView(self.notebook, self.database)
         self.notebook.add(self.shelf_browser, text="4. Browse Shelves")
+        self.cell_transfer = CellTransferView(
+            self.notebook,
+            self.database,
+            self.on_cell_transfer_changed,
+            self.can_change_cells,
+        )
+        self.notebook.add(self.cell_transfer, text="5. Switch / Combine Cells")
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
         self.status_text = tk.StringVar(value="Ready")
@@ -211,6 +219,24 @@ class WarehouseMapperApp:
                 self.shelf_browser.refresh()
             else:
                 self.shelf_browser.show_saved_shelf(self.shelf_browser.current_shelf_id)
+        elif self.notebook.select() == str(self.cell_transfer):
+            self.cell_transfer.refresh()
+
+    def on_cell_transfer_changed(self, message: str) -> None:
+        """Synchronize every other tab after an immediate cell operation."""
+        self.reload_database_state()
+        self.status_text.set(message)
+
+    def can_change_cells(self) -> bool:
+        if not self.has_pending_changes():
+            return True
+        messagebox.showinfo(
+            "Finish pending shelf changes",
+            "Commit or discard the pending Shelf Designer changes before switching "
+            "or combining saved cells.",
+            parent=self.root,
+        )
+        return False
 
     def _editor_state(self) -> tuple:
         return (

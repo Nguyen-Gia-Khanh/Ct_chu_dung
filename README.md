@@ -4,7 +4,7 @@ A local Windows/Tkinter application for mapping products to irregular warehouse
 shelves. SQLite lives beside the Python entry point, so no Docker or database
 server is required.
 
-## Four focused tabs
+## Five focused tabs
 
 1. **Shelf Designer** — import CSV files, create or edit a shelf, and commit its
    structure. Rows count upward from the ground and may contain different cell
@@ -16,6 +16,9 @@ server is required.
    the product's committed shelf location.
 4. **Browse Shelves** — choose a committed shelf, view its 2D front layout, and
    click cells to inspect their products.
+5. **Switch / Combine Cells** — load two shelves independently, select one cell
+   on each side, then atomically switch their contents or combine one complete
+   cell into the other.
 
 The total queue, on-hand queue, and assigned shelf locations are separate
 states. A working product is in exactly one of them at a time.
@@ -72,6 +75,22 @@ reports its current position, and stops at the first failed SKU so the browser i
 not advanced from an uncertain state. The temporarily hidden stock-upload action
 uses the same single/all-products switch.
 
+### Switch or combine cells
+
+1. Open tab 5 and use each side's Floor → Side → Shelf → Row → Cell selectors,
+   or find a cell by exact product ID/location ID.
+2. Check the product list beneath each selected cell.
+3. Use **Switch cells ↔** to exchange both complete contents, or either
+   **Combine** button to empty its source into the other cell while keeping the
+   target's existing products.
+
+Each action asks for confirmation and writes one immediate SQLite transaction.
+Stock quantities and original shelf-added timestamps are preserved. The two
+shelves may be the same shelf or different shelves, but the selected cells must
+be different. Pending Shelf Designer changes must be committed or discarded
+first. This tab changes local SQLite locations only; use the tab 2 web action
+afterward when KiotViet must receive the new location IDs.
+
 ## Search and catalog behavior
 
 One search box filters both the total queue and the full catalog. It searches
@@ -113,6 +132,7 @@ assignment time.
 | `mapper/location_assignment_view.py` | Tab 2 total queue, on-hand batch, address form, and address contents. |
 | `mapper/lookup_view.py` | Tab 3 product-to-location lookup. |
 | `mapper/shelf_browser.py` | Tab 4 read-only shelf selector and front view. |
+| `mapper/cell_transfer_view.py` | Tab 5 two-shelf cell switch/combine workspace. |
 | `mapper/assignment_view.py` | Shared shelf renderer plus stock quantity dialog. |
 | `mapper/database.py` | SQLite schema and atomic queue/location operations. |
 | `mapper/csv_import.py` | CSV parsing and column mapping. |
@@ -133,6 +153,7 @@ the app runs.
 
 ```powershell
 python -m unittest testers.test_on_hand_queue -v
+python -m unittest testers.test_cell_transfer -v
 python -m unittest testers.test_mapper_stock testers.test_web_upload testers.test_widgets -v
 ```
 
