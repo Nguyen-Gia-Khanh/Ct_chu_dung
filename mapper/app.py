@@ -1128,26 +1128,64 @@ class WarehouseMapperApp:
             return
 
         if hasattr(self.assignments, "on_hand_tree"):
-            assigned_count = sum(
-                product_id in self.committed_placements for product_id in product_ids
-            )
-            on_hand_count = sum(
-                product_id in self.on_hand_products for product_id in product_ids
-            )
+            staged_stock: dict[str, int | None] = {}
+            for product_id in product_ids:
+                staged = self.staged_assignments.pop(product_id, None)
+                if staged is not None:
+                    staged_stock[product_id] = staged.stock_qty
+                    if staged.stock_qty is not None:
+                        self.transferred_stock[product_id] = staged.stock_qty
+                self.pending_unassignments.discard(product_id)
+
+            # Sync transferred_stock for any products currently placed on a shelf
+            for product_id in product_ids:
+                saved = self.committed_placements.get(product_id)
+                if saved is not None and saved.stock_qty is not None:
+                    self.transferred_stock[product_id] = saved.stock_qty
+
+            returned_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            try:
+                pulled_placements, pulled_on_hand = self.database.force_pull_to_queue(
+                    product_ids,
+                    returned_at,
+                    extra_stock=staged_stock,
+                )
+            except Exception as error:
+                messagebox.showerror("Transfer failed", str(error), parent=self.root)
+                return
+
             new_products = sum(
                 product_id not in existing_products for product_id in product_ids
             )
+            already_waiting = (
+                len(product_ids)
+                - new_products
+                - pulled_placements
+                - pulled_on_hand
+                - len(staged_stock)
+            )
+            if already_waiting < 0:
+                already_waiting = 0
+
             self.reload_database_state()
             self.refresh_all_views()
-            kept = assigned_count + on_hand_count
-            suffix = (
-                f" {kept} already assigned/on-hand product(s) stayed where they were."
-                if kept
-                else ""
-            )
+            if hasattr(self, "shelf_browser"):
+                self.shelf_browser.refresh()
+
+            summary: list[str] = []
+            if new_products:
+                summary.append(f"{new_products} added to queue")
+            if pulled_placements:
+                summary.append(f"{pulled_placements} pulled from shelf")
+            if pulled_on_hand:
+                summary.append(f"{pulled_on_hand} pulled from on-hand")
+            if staged_stock:
+                summary.append(f"{len(staged_stock)} pulled from staged slot")
+            if already_waiting:
+                summary.append(f"{already_waiting} already in queue")
+
             self.status_text.set(
-                f"Catalog transfer: {new_products} added to the total queue."
-                f" Catalog entries were kept.{suffix}"
+                f"Catalog transfer: {', '.join(summary) if summary else 'Done'}. Product(s) ready in total queue."
             )
             return
 

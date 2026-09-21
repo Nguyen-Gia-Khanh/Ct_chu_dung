@@ -263,6 +263,53 @@ class StockPlacementTests(unittest.TestCase):
         self.assertEqual(app.transferred_stock["P1"], 27)
         self.assertIn(("P1", "Bolts", "Bolt"), self.database.get_catalog_products())
 
+    def test_catalog_transfer_with_on_hand_tree_force_pulls_shelf_and_hand_products(self):
+        placement = Placement(CELL_ONE, 27, FIRST_TIME)
+        self.database.import_catalog_products({
+            "P1": ("Bolts", "Bolt"),
+            "P2": ("Washers", "Washer"),
+            "C1": ("New Nut", "Nut"),
+        })
+        self.database.commit_shelf("1", "A", [2], {"P1": placement}, set())
+        self.database.add_to_on_hand({"P2": 14}, FIRST_TIME)
+        app = self.make_app()
+        app.assignments.on_hand_tree = Mock()
+        app.assignments.search_var = Mock()
+        app.assignments.search_var.get.return_value = ""
+        app.assignments.queue_count_text = Mock()
+        app.assignments.on_hand_count_text = Mock()
+        app.assignments.catalog_count_text = Mock()
+        app.catalog_products = {
+            "P1": ("Bolts", "Bolt"),
+            "P2": ("Washers", "Washer"),
+            "C1": ("New Nut", "Nut"),
+        }
+        app.committed_placements = {"P1": placement}
+        app.committed_locations = {"P1": CELL_ONE}
+        app.assignments.catalog_tree = Mock()
+        app.assignments.catalog_tree.get_children.return_value = ()
+        app.assignments.on_hand_tree.get_children.return_value = ()
+        app.assignments.queue_tree.get_children.return_value = ()
+        app.assignments.catalog_tree.selection.return_value = (
+            "catalog::P1",
+            "catalog::P2",
+            "catalog::C1",
+        )
+
+        app.transfer_catalog_selection_to_queue()
+
+        self.assertNotIn("P1", self.database.get_placement_details())
+        self.assertNotIn("P2", self.database.get_on_hand_products())
+        returned = self.database.get_returned_queue_products()
+        self.assertEqual(returned["P1"].stock_qty, 27)
+        self.assertEqual(returned["P2"].stock_qty, 14)
+        self.assertEqual(app.transferred_stock.get("P1"), 27)
+        self.assertIn(("C1", "New Nut"), self.database.get_products())
+        status_msg = app.status_text.set.call_args[0][0]
+        self.assertIn("pulled from shelf", status_msg)
+        self.assertIn("pulled from on-hand", status_msg)
+        self.assertIn("added to queue", status_msg)
+
     def test_double_click_located_catalog_product_searches_without_transferring(self):
         app = self.make_app()
         placement = Placement(CELL_ONE, 27, FIRST_TIME)
