@@ -518,4 +518,108 @@ export const ApiService = {
     }
     return localBackend.findProduct(query);
   },
+
+  async getOnHandProducts(): Promise<OnHandProduct[]> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/products/on-hand`);
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('API getOnHandProducts error:', e);
+    }
+    return [];
+  },
+
+  async addToOnHand(productIds: string[], quantities: Record<string, number> = {}): Promise<ApiResponse> {
+    const items = productIds.map((pid) => ({
+      product_id: pid,
+      quantity: quantities[pid] || 1,
+    }));
+    const res = await fetch(`${API_BASE_URL}/on-hand/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    });
+    return await res.json();
+  },
+
+  async dequeueOnHand(productIds: string[]): Promise<ApiResponse> {
+    const res = await fetch(`${API_BASE_URL}/on-hand/dequeue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_ids: productIds }),
+    });
+    return await res.json();
+  },
+
+  async updateOnHandStock(productId: string, quantity: number): Promise<ApiResponse> {
+    const res = await fetch(`${API_BASE_URL}/on-hand/update-stock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_id: productId, quantity }),
+    });
+    return await res.json();
+  },
+
+  async getSlotAddress(floor: number | string, side: number | string, shelf: string, row: number | string, col: number | string): Promise<ApiResponse> {
+    const query = new URLSearchParams({
+      floor: String(floor),
+      side: String(side),
+      shelf: String(shelf),
+      row: String(row),
+      col: String(col),
+    });
+    const res = await fetch(`${API_BASE_URL}/slot-address?${query}`);
+    return await res.json();
+  },
+
+  async assignOnHandToSlot(slotId: number, productIds: string[]): Promise<ApiResponse> {
+    const res = await fetch(`${API_BASE_URL}/assignments/assign-on-hand`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slot_id: slotId, product_ids: productIds }),
+    });
+    return await res.json();
+  },
+
+  async moveSlotToOnHand(slotId: number, productIds: string[] | null = null): Promise<ApiResponse> {
+    const res = await fetch(`${API_BASE_URL}/slot-contents/move-to-hand`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slot_id: slotId, product_ids: productIds }),
+    });
+    return await res.json();
+  },
+
+  async updateSlotStock(slotId: number, productId: string, quantity: number): Promise<ApiResponse> {
+    const res = await fetch(`${API_BASE_URL}/slot-contents/update-stock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slot_id: slotId, product_id: productId, quantity }),
+    });
+    return await res.json();
+  },
+
+  async transferCatalogToQueue(productIds: string[]): Promise<ApiResponse> {
+    const res = await fetch(`${API_BASE_URL}/catalog/transfer-to-queue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_ids: productIds }),
+    });
+    return await res.json();
+  },
+
+  async connectChrome(): Promise<ApiResponse> {
+    const res = await fetch(`${API_BASE_URL}/web/connect-chrome`, { method: 'POST' });
+    return await res.json();
+  },
+
+  async modifyLocationWeb(productIds: string[], slotName: string): Promise<ApiResponse> {
+    const res = await fetch(`${API_BASE_URL}/web/modify-location`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_ids: productIds, slot_name: slotName }),
+    });
+    return await res.json();
+  },
 };
+

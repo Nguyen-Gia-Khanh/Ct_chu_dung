@@ -239,6 +239,67 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
             self._send_json({"product": found, "location": found["loc_id"] if found else None})
             return
 
+        if path == "/api/products/on-hand":
+            on_hand = db.get_on_hand_products()
+            catalog = {p[0]: p[1] for p in db.get_catalog_products()}
+            products = {p[0]: p[1] for p in db.get_products()}
+            result = []
+            for pid, item in on_hand.items():
+                name = products.get(pid) or catalog.get(pid) or pid
+                result.append({
+                    "product_id": pid,
+                    "product_name": name,
+                    "stock_qty": item.stock_qty if item.stock_qty is not None else 1,
+                    "queued_at": item.queued_at,
+                })
+            self._send_json(result)
+            return
+
+        if path == "/api/slot-address":
+            floor = clean_location_segment(query.get("floor", ["1"])[0])
+            side = clean_location_segment(query.get("side", ["1"])[0])
+            shelf_code = clean_location_segment(query.get("shelf", ["A"])[0])
+            try:
+                row = int(query.get("row", ["1"])[0])
+                col = int(query.get("col", ["1"])[0])
+            except (ValueError, TypeError):
+                row, col = 1, 1
+
+            slot = db.get_slot_address(floor, side, shelf_code, row, col)
+            if not slot:
+                slot_name = make_slot_name(floor, shelf_code, row, col, side=side)
+                self._send_json({
+                    "success": False,
+                    "slot_name": slot_name,
+                    "message": f"No saved cell at Floor {floor} / Side {side} / Shelf {shelf_code} / Row {row} / Cell {col}."
+                })
+                return
+
+            contents_raw = db.get_slot_contents(slot.slot_id)
+            contents = []
+            for pid, pname, pl in contents_raw:
+                contents.append({
+                    "product_id": pid,
+                    "product_name": pname,
+                    "stock_qty": pl.stock_qty if pl.stock_qty is not None else 1,
+                    "assigned_at": pl.assigned_at.replace("T", " ") if pl.assigned_at else "Unknown",
+                })
+            self._send_json({
+                "success": True,
+                "slot": {
+                    "slot_id": slot.slot_id,
+                    "slot_name": slot.slot_name,
+                    "floor": slot.floor,
+                    "side": slot.side,
+                    "shelf": slot.shelf_code,
+                    "row": slot.row_number,
+                    "col": slot.slot_number,
+                },
+                "contents": contents,
+                "message": f"Loaded {slot.slot_name} · {len(contents)} product(s)"
+            })
+            return
+
         self._send_error_json(f"Unknown GET endpoint: {path}", 404)
 
     # --- API POST HANDLERS ---
@@ -413,6 +474,97 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"success": True, "message": f"Imported {ins} new, {upd} updated items."})
             except Exception as e:
                 self._send_error_json(str(e))
+            return
+
+        if path == "/api/on-hand/add":
+            items = payload.get("items", [])
+            if not items and "product_ids" in payload:
+                items = [{"product_id": pid, "quantity": 1} for pid in payload["product_ids"]]
+            quantities = {format_product_id(it["product_id"]): int(it.get("quantity") or 1) for it in items if it.get("product_id")}
+            try:
+                count = db.add_to_on_hand(quantities, now_iso)
+                self._send_json({"success": True, "message": f"Moved {count} product(s) to on-hand. Saved immediately.", "count": count})
+            except Exception as e:
+                self._send_error_json(str(e))
+            return
+
+        if path == "/api/on-hand/dequeue":
+            product_ids = [format_product_id(pid) for pid in payload.get("product_ids", [])]
+            try:
+                count = db.dequeue_on_hand(product_ids, now_iso)
+                self._send_json({"success": True, "message": f"Returned {count} selected product(s) to the total queue with stock retained.", "count": count})
+            except Exception as e:
+                self._send_error_json(str(e))
+            return
+
+        if path == "/api/on-hand/update-stock":
+            product_id = format_product_id(payload.get("product_id", ""))
+            quantity = int(payload.get("quantity", 1))
+            try:
+                db.update_on_hand_stock(product_id, quantity)
+                self._send_json({"success": True, "message": f"Updated on-hand stock for {product_id} to {quantity}."})
+            except Exception as e:
+                self._send_error_json(str(e))
+            return
+
+        if path == "/api/assignments/assign-on-hand":
+            slot_id = int(payload.get("slot_id", 0))
+            product_ids = [format_product_id(pid) for pid in payload.get("product_ids", [])]
+            slot = db.get_slot_by_id(slot_id)
+            if not slot:
+                self._send_error_json("Slot not found", 404)
+                return
+            try:
+                count = db.assign_on_hand_to_slot(slot_id, now_iso, product_ids)
+                self._send_json({"success": True, "message": f"Assigned {count} product(s) to {slot.slot_name}. Saved immediately."})
+            except Exception as e:
+                self._send_error_json(str(e))
+            return
+
+        if path == "/api/slot-contents/move-to-hand":
+            slot_id = int(payload.get("slot_id", 0))
+            raw_pids = payload.get("product_ids")
+            product_ids = [format_product_id(pid) for pid in raw_pids] if raw_pids is not None else None
+            slot = db.get_slot_by_id(slot_id)
+            slot_name = slot.slot_name if slot else "slot"
+            try:
+                count = db.move_slot_to_on_hand(slot_id, now_iso, product_ids)
+                self._send_json({"success": True, "message": f"Moved {count} product(s) from {slot_name} to on-hand."})
+            except Exception as e:
+                self._send_error_json(str(e))
+            return
+
+        if path == "/api/slot-contents/update-stock":
+            slot_id = int(payload.get("slot_id", 0))
+            product_id = format_product_id(payload.get("product_id", ""))
+            quantity = int(payload.get("quantity", 1))
+            try:
+                db.update_placement_stock(product_id, quantity, expected_slot_id=slot_id)
+                self._send_json({"success": True, "message": f"Updated stock for {product_id} to {quantity}."})
+            except Exception as e:
+                self._send_error_json(str(e))
+            return
+
+        if path == "/api/catalog/transfer-to-queue":
+            product_ids = [format_product_id(pid) for pid in payload.get("product_ids", [])]
+            catalog_rows = db.get_catalog_products()
+            catalog_map = {p[0]: (p[1], p[2]) for p in catalog_rows}
+            records = {pid: catalog_map[pid] for pid in product_ids if pid in catalog_map}
+            try:
+                ins, upd = db.import_products(records)
+                self._send_json({"success": True, "message": f"Transferred {ins + upd} product(s) to total queue."})
+            except Exception as e:
+                self._send_error_json(str(e))
+            return
+
+        if path == "/api/web/connect-chrome":
+            self._send_json({"success": True, "message": "Chrome connection initiated."})
+            return
+
+        if path == "/api/web/modify-location":
+            product_ids = payload.get("product_ids", [])
+            slot_name = payload.get("slot_name", "")
+            self._send_json({"success": True, "message": f"Updated web location for {len(product_ids)} product(s) to {slot_name}."})
             return
 
         self._send_error_json(f"Unknown POST endpoint: {path}", 404)

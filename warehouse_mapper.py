@@ -39,7 +39,7 @@ __all__ = [
 # Set to "ts" (or "vscode") to run the modern VS Code Light+ desktop app (smooth, fast, reliable).
 # Set to "tkinter" to run the classic Tkinter desktop UI.
 # ==============================================================================
-UI_MODE = "tkinter"
+UI_MODE = "ts"
 
 
 def main() -> None:
