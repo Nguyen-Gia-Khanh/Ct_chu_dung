@@ -1734,7 +1734,12 @@ class WarehouseMapperApp:
                 product_name,
                 shortened_name,
             ) in self.catalog_products.items()
-            if not query or query in self.catalog_search[product_id]
+            if not query
+            or query in self.catalog_search[product_id]
+            or (
+                product_id in getattr(self, "committed_locations", {})
+                and query in normalize_search(self.committed_locations[product_id])
+            )
         ]
         matches.sort(
             key=lambda product: (
@@ -1745,12 +1750,21 @@ class WarehouseMapperApp:
 
         tree = self.assignments.catalog_tree
         tree.delete(*tree.get_children())
-        for product_id, product_name, shortened_name in matches[:MAX_VISIBLE_PRODUCTS]:
+        for product_id, product_name, _shortened_name in matches[:MAX_VISIBLE_PRODUCTS]:
+            placement = (
+                getattr(self, "staged_assignments", {}).get(product_id)
+                or getattr(self, "committed_placements", {}).get(product_id)
+            )
+            location_id = (
+                placement.slot_name
+                if placement is not None
+                else getattr(self, "committed_locations", {}).get(product_id, "")
+            )
             tree.insert(
                 "",
                 "end",
                 iid=f"catalog::{product_id}",
-                values=(product_id, product_name, shortened_name),
+                values=(product_id, product_name, location_id),
             )
 
         shown = min(len(matches), MAX_VISIBLE_PRODUCTS)

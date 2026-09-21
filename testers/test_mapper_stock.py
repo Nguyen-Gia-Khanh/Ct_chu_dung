@@ -403,9 +403,31 @@ class StockPlacementTests(unittest.TestCase):
         app.refresh_catalog()
 
         app.assignments.catalog_tree.insert.assert_called_once_with(
-            "", "end", iid="catalog::C1", values=("C1", "Catalog bolt", "C bolt")
+            "", "end", iid="catalog::C1", values=("C1", "Catalog bolt", "")
         )
         app.refresh_search_location.assert_called_once_with("C bolt")
+
+    def test_catalog_refresh_shows_assigned_location_id(self):
+        app = self.make_app()
+        app.catalog_products = {
+            "C1": ("Catalog bolt", "C bolt"),
+        }
+        app.catalog_search = {
+            "C1": "c1 catalog bolt c bolt",
+        }
+        app.committed_locations = {"C1": "L1-1A8-10"}
+        app.assignments.search_var = Mock()
+        app.assignments.search_var.get.return_value = ""
+        app.assignments.catalog_tree = Mock()
+        app.assignments.catalog_tree.get_children.return_value = ()
+        app.assignments.catalog_count_text = Mock()
+        app.refresh_search_location = Mock()
+
+        app.refresh_catalog()
+
+        app.assignments.catalog_tree.insert.assert_called_once_with(
+            "", "end", iid="catalog::C1", values=("C1", "Catalog bolt", "L1-1A8-10")
+        )
 
     def test_queue_search_index_includes_shortened_name(self):
         self.database.import_products({"P1": ("Bolts", "Fastener alias")})
@@ -583,6 +605,35 @@ class AssignmentViewInteractionTests(unittest.TestCase):
 
         self.assertEqual(view.copy_product_id(SimpleNamespace(x=120, y=20)), "break")
         view.clipboard_append.assert_called_once_with("P1")
+
+    def test_location_assignment_view_catalog_columns(self):
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            from mapper.location_assignment_view import LocationAssignmentView
+            view = LocationAssignmentView(
+                root,
+                on_search=Mock(),
+                on_queue_to_hand=Mock(),
+                on_catalog_to_queue=Mock(),
+                on_catalog_activate=Mock(),
+                on_load_address=Mock(),
+                on_assign_address=Mock(),
+                on_dequeue_hand=Mock(),
+                on_selected_to_hand=Mock(),
+                on_slot_to_hand=Mock(),
+                on_modify_hand_stock=Mock(),
+                on_modify_stock=Mock(),
+                on_upload=Mock(),
+                on_modify_location=Mock(),
+                on_connect_chrome=Mock(),
+            )
+            cols = view.catalog_tree["columns"]
+            self.assertEqual(tuple(cols), ("product_id", "product_name", "location_id"))
+            self.assertEqual(view.catalog_tree.heading("location_id")["text"], "Location ID")
+            view.destroy()
+        finally:
+            root.destroy()
 
 
 if __name__ == "__main__":

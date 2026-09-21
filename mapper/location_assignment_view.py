@@ -165,7 +165,7 @@ class LocationAssignmentView(ttk.Frame):
         catalog_body.columnconfigure(0, weight=1)
         self.catalog_tree = ttk.Treeview(
             catalog_body,
-            columns=("product_id", "product_name", "shortened_name"),
+            columns=("product_id", "product_name", "location_id"),
             show="headings",
             selectmode="extended",
             height=8,
@@ -199,10 +199,10 @@ class LocationAssignmentView(ttk.Frame):
     def _configure_product_tree(tree: ttk.Treeview) -> None:
         tree.heading("product_id", text="Product ID")
         tree.heading("product_name", text="Product name")
-        tree.heading("shortened_name", text="Shortened name")
+        tree.heading("location_id", text="Location ID")
         tree.column("product_id", width=110, minwidth=80, stretch=False)
         tree.column("product_name", width=190, minwidth=110)
-        tree.column("shortened_name", width=145, minwidth=95)
+        tree.column("location_id", width=120, minwidth=85, stretch=False)
 
     @staticmethod
     def _configure_queue_tree(tree: ttk.Treeview) -> None:
