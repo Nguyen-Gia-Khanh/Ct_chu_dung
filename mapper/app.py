@@ -37,6 +37,7 @@ from .database import (
 from .designer import ShelfDesigner
 from .location_assignment_view import LocationAssignmentView
 from .lookup_view import ProductLookupView
+from .primal_queue_view import PrimalQueueView
 from .shelf_browser import ShelfBrowserView
 from .web_upload import LocationUpdate, UploadProduct, WebsiteUploader
 
@@ -200,6 +201,8 @@ class WarehouseMapperApp:
             self.can_change_cells,
         )
         self.notebook.add(self.cell_transfer, text="5. Switch / Combine Cells")
+        self.primal_view = PrimalQueueView(self.notebook, self.database)
+        self.notebook.add(self.primal_view, text="6. Primal Queue / Shelves")
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
         self.status_text = tk.StringVar(value="Ready")
@@ -221,6 +224,8 @@ class WarehouseMapperApp:
                 self.shelf_browser.show_saved_shelf(self.shelf_browser.current_shelf_id)
         elif self.notebook.select() == str(self.cell_transfer):
             self.cell_transfer.refresh()
+        elif hasattr(self, "primal_view") and self.notebook.select() == str(self.primal_view):
+            self.primal_view.refresh()
 
     def on_cell_transfer_changed(self, message: str) -> None:
         """Synchronize every other tab after an immediate cell operation."""
@@ -1909,6 +1914,8 @@ class WarehouseMapperApp:
             self.refresh_product_lists()
             self.refresh_on_hand_queue()
             self.refresh_address_contents()
+        if hasattr(self, "primal_view"):
+            self.primal_view.refresh()
 
     def refresh_shelf_selector(self) -> None:
         choices = self.database.list_shelves()
@@ -1924,6 +1931,8 @@ class WarehouseMapperApp:
                     break
         if hasattr(self, "shelf_browser"):
             self.shelf_browser.refresh()
+        if hasattr(self, "primal_view"):
+            self.primal_view.refresh()
 
     def import_csv(self) -> None:
         selected = filedialog.askopenfilename(
