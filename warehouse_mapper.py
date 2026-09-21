@@ -6,7 +6,7 @@ Choose which UI to run using the UI_MODE constant below:
 
 Editable modules live in mapper/:
     web_server.py       HTTP server and REST API bridge for the TypeScript UI.
-    ui/                 Desktop Tkinter UI components.
+    tkinter_ui/         Desktop Tkinter UI components.
     database.py         SQLite tables and commit operations.
     csv_import.py       CSV reader and column-selection dialog.
     common.py           Location naming, search normalization, and paths.
@@ -19,7 +19,7 @@ TypeScript UI source code lives in ui/:
 import sys
 import tkinter as tk
 
-from mapper.ui.app import WarehouseMapperApp
+from mapper.tkinter_ui.app import WarehouseMapperApp
 # Retain these imports for existing scripts/tests that imported from this file.
 from mapper.common import make_slot_name, normalize_search
 from mapper.database import LayoutConflictError, WarehouseDatabase

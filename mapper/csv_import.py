@@ -1,6 +1,6 @@
 """CSV reading functions and data models.
 
-The interactive Tkinter dialog lives in mapper.ui.csv_dialog.
+The interactive Tkinter dialog lives in mapper.tkinter_ui.csv_dialog.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from pathlib import Path
 
 def __getattr__(name: str):
     if name == "ColumnMappingDialog":
-        from mapper.ui.csv_dialog import ColumnMappingDialog
+        from mapper.tkinter_ui.csv_dialog import ColumnMappingDialog
         return ColumnMappingDialog
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

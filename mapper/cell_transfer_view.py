@@ -1,6 +1,6 @@
-"""Backward-compatible re-export for mapper.ui.cell_transfer_view."""
+"""Backward-compatible re-export for mapper.tkinter_ui.cell_transfer_view."""
 
 import sys
-import mapper.ui.cell_transfer_view as _mod
+import mapper.tkinter_ui.cell_transfer_view as _mod
 
 sys.modules[__name__] = _mod

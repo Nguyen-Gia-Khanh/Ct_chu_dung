@@ -131,16 +131,16 @@ assignment time.
 | `mapper/csv_import.py` | Pure backend CSV reading and parsing (`read_csv`, `CSVData`). |
 | `mapper/common.py` | Location IDs, search normalization, and database path. |
 | `mapper/web_upload.py` | Optional Selenium/KiotViet integration. |
-| `mapper/ui/` | Dedicated Tkinter Desktop UI package. |
-| `mapper/ui/app.py` | Main window, tabs, and application controller (`WarehouseMapperApp`). |
-| `mapper/ui/designer.py` | Tab 1: Shelf metadata and irregular row editor. |
-| `mapper/ui/location_assignment_view.py` | Tab 2: Total queue, on-hand batch, address form, and address contents. |
-| `mapper/ui/primal_queue_view.py` | Tab 3: Primal queue (hot sellers), catalog search, and shelf view. |
-| `mapper/ui/shelf_browser.py` | Tab 4: Read-only shelf selector and front view. |
-| `mapper/ui/cell_transfer_view.py` | Tab 5: Two-shelf cell switch/combine workspace. |
-| `mapper/ui/assignment_view.py` | Shared shelf renderer plus stock quantity dialog. |
-| `mapper/ui/widgets.py` | Shared custom UI widgets (`ScrollableFrame`). |
-| `mapper/ui/csv_dialog.py` | Interactive column selection dialog for CSV import. |
+| `mapper/tkinter_ui/` | Dedicated Tkinter Desktop UI package. |
+| `mapper/tkinter_ui/app.py` | Main window, tabs, and application controller (`WarehouseMapperApp`). |
+| `mapper/tkinter_ui/designer.py` | Tab 1: Shelf metadata and irregular row editor. |
+| `mapper/tkinter_ui/location_assignment_view.py` | Tab 2: Total queue, on-hand batch, address form, and address contents. |
+| `mapper/tkinter_ui/primal_queue_view.py` | Tab 3: Primal queue (hot sellers), catalog search, and shelf view. |
+| `mapper/tkinter_ui/shelf_browser.py` | Tab 4: Read-only shelf selector and front view. |
+| `mapper/tkinter_ui/cell_transfer_view.py` | Tab 5: Two-shelf cell switch/combine workspace. |
+| `mapper/tkinter_ui/assignment_view.py` | Shared shelf renderer plus stock quantity dialog. |
+| `mapper/tkinter_ui/widgets.py` | Shared custom UI widgets (`ScrollableFrame`). |
+| `mapper/tkinter_ui/csv_dialog.py` | Interactive column selection dialog for CSV import. |
 
 ## Data and backup
 

@@ -1,6 +1,6 @@
-"""Backward-compatible re-export for mapper.ui.widgets."""
+"""Backward-compatible re-export for mapper.tkinter_ui.widgets."""
 
 import sys
-import mapper.ui.widgets as _mod
+import mapper.tkinter_ui.widgets as _mod
 
 sys.modules[__name__] = _mod
