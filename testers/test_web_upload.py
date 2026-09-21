@@ -66,7 +66,7 @@ class UploadInteractionTests(unittest.TestCase):
         uploader._set_location = Mock()
         uploader._wait = Mock()
 
-        uploader.upload(product)
+        uploader.upload(product, save=False)
 
         uploader._pause.assert_not_called()
         uploader._open_product.assert_called_once_with(product)
@@ -107,6 +107,8 @@ class UploadInteractionTests(unittest.TestCase):
     def test_dom_automation_does_not_force_focus_or_scroll(self):
         self.assertNotIn(".focus()", DOM_SCRIPT)
         self.assertNotIn("scrollIntoView", DOM_SCRIPT)
+        self.assertIn("targetClick", DOM_SCRIPT)
+        self.assertIn("preventDefault", DOM_SCRIPT)
 
 
 if __name__ == "__main__":

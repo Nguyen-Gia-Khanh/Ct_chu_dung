@@ -22,7 +22,7 @@ TIMEOUT_SECONDS = 20
 STEP_DELAY_SECONDS = 2.0
 # Controls only the final product Save. A newly created location must always
 # save its own dialog before it can be assigned to the product.
-SAVE_ON_UPLOAD = False  # Keep False while testing; set True only for production.
+SAVE_ON_UPLOAD = True  # Keep False while testing; set True only for production.
 VERIFY_AFTER_SAVE = False  # Set True to reopen the product and verify saved values.
 SET_LOCATION_ON_UPLOAD = True  # Set False to skip all location lookup/create/select work.
 
@@ -311,7 +311,33 @@ const lookupProduct = async (skuValue, auth) => {
         const productForEdit = Object.assign({}, scope.dataItem || {}, product);
         scope.$applyAsync(() => {
             try {
-                scope.UpdateProduct(productForEdit);
+                const prevX = window.scrollX || window.pageXOffset || 0;
+                const prevY = window.scrollY || window.pageYOffset || 0;
+                const docElem = document.documentElement;
+                const body = document.body;
+                const prevDocTop = docElem ? docElem.scrollTop : 0;
+                const prevBodyTop = body ? body.scrollTop : 0;
+
+                const origScrollTo = window.scrollTo;
+                const origScroll = window.scroll;
+                const origScrollBy = window.scrollBy;
+
+                if (typeof window.scrollTo === 'function') window.scrollTo = () => {};
+                if (typeof window.scroll === 'function') window.scroll = () => {};
+                if (typeof window.scrollBy === 'function') window.scrollBy = () => {};
+
+                try {
+                    scope.UpdateProduct(productForEdit);
+                } finally {
+                    window.scrollTo = origScrollTo;
+                    window.scroll = origScroll;
+                    window.scrollBy = origScrollBy;
+
+                    if (typeof window.scrollTo === 'function') window.scrollTo(prevX, prevY);
+                    if (docElem && docElem.scrollTop !== prevDocTop) docElem.scrollTop = prevDocTop;
+                    if (body && body.scrollTop !== prevBodyTop) body.scrollTop = prevBodyTop;
+                }
+
                 finish({
                     ok: true,
                     product_id: String(product.Code || sku),
@@ -450,6 +476,13 @@ const findCurrentAuth = () => {
 # WebDriver arguments, never interpolated into executable JavaScript.
 DOM_SCRIPT = r"""
 const [action, paths, value] = arguments;
+const prevScrollX = window.scrollX || window.pageXOffset || 0;
+const prevScrollY = window.scrollY || window.pageYOffset || 0;
+const docElem = document.documentElement;
+const body = document.body;
+const prevDocTop = docElem ? docElem.scrollTop : 0;
+const prevBodyTop = body ? body.scrollTop : 0;
+
 const visible = e => !!e && e.getClientRects().length > 0 &&
     getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
 const all = path => {
@@ -477,6 +510,42 @@ const setValue = (e, text) => {
     }
     e.dispatchEvent(new Event('input', {bubbles: true}));
     e.dispatchEvent(new Event('change', {bubbles: true}));
+};
+const targetClick = e => {
+    if (!e || e.disabled || e.getAttribute('aria-disabled') === 'true' || e.classList.contains('disabled')) return false;
+    const prevX = window.scrollX || window.pageXOffset || 0;
+    const prevY = window.scrollY || window.pageYOffset || 0;
+    const dTop = docElem ? docElem.scrollTop : 0;
+    const bTop = body ? body.scrollTop : 0;
+
+    const anchor = e.tagName === 'A' ? e : (e.closest ? e.closest('a') : null);
+    if (anchor) {
+        const href = anchor.getAttribute('href');
+        if (!href || href === '#' || href.startsWith('javascript:')) {
+            anchor.addEventListener('click', ev => ev.preventDefault(), {once: true});
+        }
+    }
+
+    const origScrollTo = window.scrollTo;
+    const origScroll = window.scroll;
+    const origScrollBy = window.scrollBy;
+
+    if (typeof window.scrollTo === 'function') window.scrollTo = () => {};
+    if (typeof window.scroll === 'function') window.scroll = () => {};
+    if (typeof window.scrollBy === 'function') window.scrollBy = () => {};
+
+    try {
+        e.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+    } finally {
+        window.scrollTo = origScrollTo;
+        window.scroll = origScroll;
+        window.scrollBy = origScrollBy;
+
+        if (typeof window.scrollTo === 'function') window.scrollTo(prevX, prevY);
+        if (docElem && docElem.scrollTop !== dTop) docElem.scrollTop = dTop;
+        if (body && body.scrollTop !== bTop) body.scrollTop = bTop;
+    }
+    return true;
 };
 const widget = root => {
     if (!window.jQuery || !root) return null;
@@ -545,7 +614,6 @@ const chooseLocation = (root, target) => {
         // Match the website's Add behavior: preserve other selected locations.
         w.value(found.kind === 'kendoMultiSelect' ? [...new Set([...w.value(), id])] : id);
         w.trigger('change');
-        if (w.close) w.close();
         return selectedLocation(root, target);
     }
     for (const select of root.querySelectorAll('select')) {
@@ -563,111 +631,124 @@ const chooseLocation = (root, target) => {
         '.ui-select-choices-row, .select2-results__option, .select2-result-selectable'
     )).filter(e => visible(e) && clean(e.textContent) === target);
     if (choices.length > 1) throw Error('More than one exact location option is visible.');
-    if (choices.length === 1) choices[0].click();
+    if (choices.length === 1) targetClick(choices[0]);
     return selectedLocation(root, target);
 };
 
-if (action === 'product_page') {
-    const host = String(location.hostname || '').toLowerCase();
-    const href = String(location.href || '');
-    return !!window.angular && host.endsWith('.kiotviet.vn') && /\/man\/.*#\/Products/i.test(href);
-}
-if (action === 'product_controller') {
-    if (!window.angular) return false;
-    const elements = [document.documentElement, document.body,
-        ...document.querySelectorAll('.ng-scope, [ng-controller], [data-ng-controller]')].filter(Boolean);
-    const seen = new Set();
-    for (const element of elements) {
-        try {
-            let scope = window.angular.element(element).scope();
-            while (scope) {
-                const key = scope.$id != null ? scope.$id : scope;
-                if (seen.has(key)) break;
-                seen.add(key);
-                if (typeof scope.UpdateProduct === 'function') return true;
-                scope = scope.$parent;
-            }
-        } catch (_error) {}
+const executeAction = () => {
+    if (action === 'product_page') {
+        const host = String(location.hostname || '').toLowerCase();
+        const href = String(location.href || '');
+        return !!window.angular && host.endsWith('.kiotviet.vn') && /\/man\/.*#\/Products/i.test(href);
     }
-    return false;
-}
-if (action === 'element') return one(paths);
-if (action === 'present') return !!one(paths);
-if (action === 'set') { const e = one(paths); if (!e) return false; setValue(e, value); return true; }
-if (action === 'click') {
-    const e = one(paths);
-    if (!e || e.disabled || e.getAttribute('aria-disabled') === 'true' || e.classList.contains('disabled')) return false;
-    e.click(); return true;
-}
-if (action === 'identity') {
-    if (paths.id) { const e = one(paths.id); return !!e && clean(e.value || e.textContent) === value; }
-    const form = one(paths.form);
-    if (!form) return false;
-    const candidates = Array.from(form.querySelectorAll('input')).filter(e => {
-        const attrs = [e.id, e.name, e.getAttribute('ng-model'), e.getAttribute('data-ng-model'),
-            e.getAttribute('placeholder'), e.getAttribute('aria-label')].join(' ');
-        return visible(e) && /code|sku|product.?id|ma.?hang|ma.?san.?pham/.test(fold(attrs));
-    });
-    return candidates.some(e => clean(e.value) === value);
-}
-if (action === 'quantity') {
-    const e = one(paths);
-    if (!e) return null;
-    const w = window.jQuery && window.jQuery(e).data('kendoNumericTextBox');
-    return w ? w.value() : e.value;
-}
-if (action === 'location_selected') return onlySelectedLocation(one(paths), value);
-if (action === 'location_pick') return chooseLocation(one(paths), value);
-if (action === 'location_pick_id') {
-    const root = one(paths);
-    if (!root || !value) return false;
-
-    const targetId = clean(value.id);
-    const targetName = clean(value.name);
-    if (!targetId || !targetName) return false;
-
-    const select = root.querySelector('select[data-role="multiselect"]');
-    const w = window.jQuery && select && window.jQuery(select).data('kendoMultiSelect');
-    if (!w) return false;
-
-    const current = Array.from(w.value() || []).map(String);
-    if (current.length !== 1 || current[0] !== targetId) {
-        // A product has one location: replace the whole selection instead of
-        // clicking each old tag's close button or appending another location.
-        w.value([targetId]);
-        w.trigger('change');
+    if (action === 'product_controller') {
+        if (!window.angular) return false;
+        const elements = [document.documentElement, document.body,
+            ...document.querySelectorAll('.ng-scope, [ng-controller], [data-ng-controller]')].filter(Boolean);
+        const seen = new Set();
+        for (const element of elements) {
+            try {
+                let scope = window.angular.element(element).scope();
+                while (scope) {
+                    const key = scope.$id != null ? scope.$id : scope;
+                    if (seen.has(key)) break;
+                    seen.add(key);
+                    if (typeof scope.UpdateProduct === 'function') return true;
+                    scope = scope.$parent;
+                }
+            } catch (_error) {}
+        }
+        return false;
     }
-    if (w.close) w.close();
-
-    return onlySelectedLocation(root, targetName);
-}
-if (action === 'location_search') {
-    const root = one(paths);
-    if (!root) return false;
-    const found = widget(root);
-    if (found) {
-        const w = found.w;
-        if (w.element && w.element[0] && !editable(w.element[0]))
-            throw Error('The location selector is disabled or read-only.');
-        w.open();
-        if (w.search) w.search(value);
-        else if (w.options.dataTextField) w.dataSource.filter({field: w.options.dataTextField, operator: 'eq', value});
-        return true;
+    if (action === 'element') return one(paths);
+    if (action === 'present') return !!one(paths);
+    if (action === 'set') { const e = one(paths); if (!e) return false; setValue(e, value); return true; }
+    if (action === 'click') {
+        const e = one(paths);
+        if (!e) return false;
+        return targetClick(e);
     }
-    const toggle = root.querySelector('.ui-select-toggle, .select2-choice, .select2-selection');
-    if (toggle && visible(toggle)) toggle.click();
-    const input = Array.from(root.querySelectorAll('input')).find(e => visible(e) && editable(e)) ||
-        (toggle && Array.from(document.querySelectorAll('.select2-container--open .select2-search__field'))
-            .find(e => visible(e) && editable(e)));
-    if (input) { setValue(input, value); return true; }
-    return !!toggle && visible(toggle);
+    if (action === 'identity') {
+        if (paths.id) { const e = one(paths.id); return !!e && clean(e.value || e.textContent) === value; }
+        const form = one(paths.form);
+        if (!form) return false;
+        const candidates = Array.from(form.querySelectorAll('input')).filter(e => {
+            const attrs = [e.id, e.name, e.getAttribute('ng-model'), e.getAttribute('data-ng-model'),
+                e.getAttribute('placeholder'), e.getAttribute('aria-label')].join(' ');
+            return visible(e) && /code|sku|product.?id|ma.?hang|ma.?san.?pham/.test(fold(attrs));
+        });
+        return candidates.some(e => clean(e.value) === value);
+    }
+    if (action === 'quantity') {
+        const e = one(paths);
+        if (!e) return null;
+        const w = window.jQuery && window.jQuery(e).data('kendoNumericTextBox');
+        return w ? w.value() : e.value;
+    }
+    if (action === 'location_selected') return onlySelectedLocation(one(paths), value);
+    if (action === 'location_pick') return chooseLocation(one(paths), value);
+    if (action === 'location_pick_id') {
+        const root = one(paths);
+        if (!root || !value) return false;
+
+        const targetId = clean(value.id);
+        const targetName = clean(value.name);
+        if (!targetId || !targetName) return false;
+
+        const select = root.querySelector('select[data-role="multiselect"]');
+        const w = window.jQuery && select && window.jQuery(select).data('kendoMultiSelect');
+        if (!w) return false;
+
+        const current = Array.from(w.value() || []).map(String);
+        if (current.length !== 1 || current[0] !== targetId) {
+            // A product has one location: replace the whole selection instead of
+            // clicking each old tag's close button or appending another location.
+            w.value([targetId]);
+            w.trigger('change');
+        }
+
+        return onlySelectedLocation(root, targetName);
+    }
+    if (action === 'location_search') {
+        const root = one(paths);
+        if (!root) return false;
+        const found = widget(root);
+        if (found) {
+            const w = found.w;
+            if (w.element && w.element[0] && !editable(w.element[0]))
+                throw Error('The location selector is disabled or read-only.');
+            if (w.search) w.search(value);
+            else if (w.options.dataTextField) w.dataSource.filter({field: w.options.dataTextField, operator: 'eq', value});
+            return true;
+        }
+        const toggle = root.querySelector('.ui-select-toggle, .select2-choice, .select2-selection');
+        if (toggle && visible(toggle)) targetClick(toggle);
+        const input = Array.from(root.querySelectorAll('input')).find(e => visible(e) && editable(e)) ||
+            (toggle && Array.from(document.querySelectorAll('.select2-container--open .select2-search__field'))
+                .find(e => visible(e) && editable(e)));
+        if (input) { setValue(input, value); return true; }
+        return !!toggle && visible(toggle);
+    }
+    if (action === 'errors') {
+        return [...new Set(Array.from(document.querySelectorAll(
+            '.validation-summary-errors, .field-validation-error, .k-notification-error, .toast-error, .alert-danger, [class*="validation-error"]'
+        )).filter(visible).map(e => clean(e.textContent)).filter(Boolean))].slice(0, 3).join('\n').slice(0, 700);
+    }
+    throw Error('Unknown DOM operation: ' + action);
+};
+
+let domResult;
+try {
+    domResult = executeAction();
+} finally {
+    if ((window.scrollX || window.pageXOffset || 0) !== prevScrollX ||
+        (window.scrollY || window.pageYOffset || 0) !== prevScrollY) {
+        if (typeof window.scrollTo === 'function') window.scrollTo(prevScrollX, prevScrollY);
+    }
+    if (docElem && docElem.scrollTop !== prevDocTop) docElem.scrollTop = prevDocTop;
+    if (body && body.scrollTop !== prevBodyTop) body.scrollTop = prevBodyTop;
 }
-if (action === 'errors') {
-    return [...new Set(Array.from(document.querySelectorAll(
-        '.validation-summary-errors, .field-validation-error, .k-notification-error, .toast-error, .alert-danger, [class*="validation-error"]'
-    )).filter(visible).map(e => clean(e.textContent)).filter(Boolean))].slice(0, 3).join('\n').slice(0, 700);
-}
-throw Error('Unknown DOM operation: ' + action);
+return domResult;
 """
 
 
