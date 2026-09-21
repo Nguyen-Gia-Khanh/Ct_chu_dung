@@ -119,7 +119,7 @@ class WarehouseMapperApp:
         ttk.Label(toolbar, text=APP_TITLE, style="Title.TLabel").pack(side="left")
         ttk.Label(
             toolbar,
-            text="Shelf design · address assignment · lookup · shelf browser · cell moves",
+            text="Shelf design · address assignment · primal queue · shelf browser · cell moves",
             foreground="#555555",
         ).pack(side="left", padx=(16, 0))
 
@@ -190,8 +190,9 @@ class WarehouseMapperApp:
         self.connect_chrome_button = self.assignments.connect_chrome_button
         self.notebook.add(self.designer_tab, text="1. Shelf Designer")
         self.notebook.add(self.assignments, text="2. Assign Locations")
-        self.lookup = ProductLookupView(self.notebook, self.database)
-        self.notebook.add(self.lookup, text="3. Find Product")
+        self.primal_view = PrimalQueueView(self.notebook, self.database)
+        self.lookup = self.primal_view
+        self.notebook.add(self.primal_view, text="3. Primal Queue / Shelves")
         self.shelf_browser = ShelfBrowserView(self.notebook, self.database)
         self.notebook.add(self.shelf_browser, text="4. Browse Shelves")
         self.cell_transfer = CellTransferView(
@@ -201,8 +202,6 @@ class WarehouseMapperApp:
             self.can_change_cells,
         )
         self.notebook.add(self.cell_transfer, text="5. Switch / Combine Cells")
-        self.primal_view = PrimalQueueView(self.notebook, self.database)
-        self.notebook.add(self.primal_view, text="6. Primal Queue / Shelves")
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
         self.status_text = tk.StringVar(value="Ready")
@@ -215,8 +214,8 @@ class WarehouseMapperApp:
         ).pack(fill="x", side="bottom")
 
     def on_tab_changed(self, _event=None) -> None:
-        if self.notebook.select() == str(self.lookup):
-            self.lookup.refresh()
+        if hasattr(self, "primal_view") and self.notebook.select() == str(self.primal_view):
+            self.primal_view.refresh()
         elif self.notebook.select() == str(self.shelf_browser):
             if self.shelf_browser.current_shelf_id is None:
                 self.shelf_browser.refresh()
@@ -224,8 +223,6 @@ class WarehouseMapperApp:
                 self.shelf_browser.show_saved_shelf(self.shelf_browser.current_shelf_id)
         elif self.notebook.select() == str(self.cell_transfer):
             self.cell_transfer.refresh()
-        elif hasattr(self, "primal_view") and self.notebook.select() == str(self.primal_view):
-            self.primal_view.refresh()
 
     def on_cell_transfer_changed(self, message: str) -> None:
         """Synchronize every other tab after an immediate cell operation."""

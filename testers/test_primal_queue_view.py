@@ -1,4 +1,4 @@
-"""Automated tests for PrimalQueueView (Tab 6)."""
+"""Automated tests for PrimalQueueView (Tab 3)."""
 
 from __future__ import annotations
 
@@ -172,6 +172,29 @@ class PrimalQueueViewTests(unittest.TestCase):
             for iid in self.view.contents_tree.get_children()
         ]
         self.assertIn("HOT-1", content_ids)
+
+    def test_app_mounts_primal_queue_view_as_tab_3(self) -> None:
+        from mapper.app import WarehouseMapperApp
+        app = WarehouseMapperApp(self.root, self.path)
+        try:
+            tabs = [app.notebook.tab(i, "text") for i in range(app.notebook.index("end"))]
+            self.assertEqual(len(tabs), 5)
+            self.assertEqual(tabs[0], "1. Shelf Designer")
+            self.assertEqual(tabs[1], "2. Assign Locations")
+            self.assertEqual(tabs[2], "3. Primal Queue / Shelves")
+            self.assertEqual(tabs[3], "4. Browse Shelves")
+            self.assertEqual(tabs[4], "5. Switch / Combine Cells")
+            self.assertIs(app.primal_view, app.lookup)
+            self.assertEqual(str(app.primal_view), app.notebook.tabs()[2])
+        finally:
+            if hasattr(app, "chrome_connect_after_id") and app.chrome_connect_after_id:
+                app.root.after_cancel(app.chrome_connect_after_id)
+            if hasattr(app, "web_upload_after_id") and app.web_upload_after_id:
+                app.root.after_cancel(app.web_upload_after_id)
+            for child in app.notebook.winfo_children():
+                child.destroy()
+            app.toolbar.destroy()
+            app.notebook.destroy()
 
 
 if __name__ == "__main__":

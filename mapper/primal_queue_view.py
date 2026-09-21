@@ -13,7 +13,7 @@ from utils.barcode_scanner import BarcodeScanner, format_product_id
 
 
 class PrimalQueueView(ttk.Frame):
-    """Tab 6: Search primal queue (CSV hot sellers) & full catalog with 2D shelf view."""
+    """Tab 3: Search primal queue (CSV hot sellers) & full catalog with 2D shelf view."""
 
     def __init__(self, parent: tk.Misc, database: WarehouseDatabase) -> None:
         super().__init__(parent, padding=10)
