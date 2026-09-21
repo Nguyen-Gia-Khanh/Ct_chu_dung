@@ -251,6 +251,16 @@ class CellTransferPaneCascadeTests(unittest.TestCase):
         self.assertEqual(self.pane.selected_address.slot_name, self.slot_name)
         self.assertEqual(self.pane.selected_product_count, 1)
 
+    def test_search_entry_auto_selects_all_text_after_find(self) -> None:
+        self.pane.search_var.set("91201KVB901")
+        self.pane.find()
+        self.root.update_idletasks()
+
+        # Selection should cover the entire text so next keystroke or scan wipes it clean
+        self.assertTrue(self.pane.search_entry.selection_present())
+        self.assertEqual(self.pane.search_entry.index(tk.SEL_FIRST), 0)
+        self.assertEqual(self.pane.search_entry.index(tk.SEL_LAST), len(self.pane.search_var.get()))
+
 
 if __name__ == "__main__":
     unittest.main()

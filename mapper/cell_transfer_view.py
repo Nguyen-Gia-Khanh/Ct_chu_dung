@@ -10,7 +10,7 @@ from tkinter import messagebox, ttk
 from .common import clean_location_segment, make_slot_name, normalize_search
 from .database import Placement, SlotAddress, WarehouseDatabase
 from .widgets import ScrollableFrame
-from utils.barcode_scanner import format_product_id
+from utils.barcode_scanner import BarcodeScanner, format_product_id
 
 
 class CellTransferPane(ttk.LabelFrame):
@@ -30,6 +30,7 @@ class CellTransferPane(ttk.LabelFrame):
         self.current_contents: list[tuple[str, str, Placement]] = []
         self.selected_address: SlotAddress | None = None
         self.slot_buttons: dict[str, tk.Button] = {}
+        self.on_focus_callback: Callable[[CellTransferPane], object] | None = None
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=3)
@@ -93,6 +94,16 @@ class CellTransferPane(ttk.LabelFrame):
         self.search_entry = ttk.Entry(search, textvariable=self.search_var)
         self.search_entry.grid(row=0, column=1, sticky="ew")
         self.search_entry.bind("<Return>", self.find)
+        self.search_entry.bind(
+            "<FocusIn>",
+            self._on_search_focus,
+            add="+",
+        )
+        self.search_entry.bind(
+            "<Button-1>",
+            self._on_search_click,
+            add="+",
+        )
         ttk.Button(search, text="Find", command=self.find).grid(
             row=0, column=2, padx=(5, 0)
         )
@@ -151,6 +162,7 @@ class CellTransferPane(ttk.LabelFrame):
             xscrollcommand=x_scroll.set,
         )
         self.contents_tree.grid(row=0, column=0, sticky="nsew")
+        self.contents_tree.bind("<Double-1>", self._on_contents_double_click)
         y_scroll.grid(row=0, column=1, sticky="ns")
         x_scroll.grid(row=1, column=0, sticky="ew")
 
@@ -202,6 +214,36 @@ class CellTransferPane(ttk.LabelFrame):
             self._clear_all_selectors()
             self._render_empty("The previously selected shelf no longer exists.")
 
+    @staticmethod
+    def _select_search_entry(entry: ttk.Entry) -> None:
+        entry.focus_set()
+        entry.selection_range(0, tk.END)
+        entry.icursor(tk.END)
+
+    def _set_and_select_search(self, value: str) -> None:
+        self.search_var.set(value)
+        self.after_idle(lambda: self._select_search_entry(self.search_entry))
+
+    def _on_search_focus(self, _event: tk.Event | None = None) -> None:
+        if self.on_focus_callback is not None:
+            self.on_focus_callback(self)
+        self.after_idle(lambda: self._select_search_entry(self.search_entry))
+
+    def _on_search_click(self, _event: tk.Event | None = None) -> None:
+        if self.on_focus_callback is not None:
+            self.on_focus_callback(self)
+        self.after_idle(lambda: self._select_search_entry(self.search_entry))
+
+    def _on_contents_double_click(self, _event: tk.Event | None = None) -> None:
+        selection = self.contents_tree.selection()
+        if not selection:
+            return
+        item_id = selection[0]
+        if item_id.startswith("product::"):
+            product_id = item_id.removeprefix("product::")
+            self._set_and_select_search(product_id)
+            self.find()
+
     def find(self, _event: tk.Event | None = None) -> str:
         raw_query = self.search_var.get().strip()
         if not raw_query:
@@ -234,8 +276,7 @@ class CellTransferPane(ttk.LabelFrame):
             if not self.shelf_choices:
                 self.refresh()
             self.load_shelf(address.shelf_id, select_slot_id=address.slot_id)
-            self.search_var.set(query)
-            self.search_entry.selection_range(0, tk.END)
+            self._set_and_select_search(query)
             return "break"
 
         # 3. Fallback: check if query matches a shelf name
@@ -251,18 +292,21 @@ class CellTransferPane(ttk.LabelFrame):
         ]
         if len(shelf_matches) == 1:
             self.load_shelf(shelf_matches[0][0])
+            self._set_and_select_search(query)
         elif len(shelf_matches) > 1:
             messagebox.showinfo(
                 "More than one shelf found",
                 "Use the Shelf dropdown above to select the exact shelf.",
                 parent=self,
             )
+            self._set_and_select_search(query)
         else:
             messagebox.showinfo(
                 "Product not found",
                 f"Product ID or location '{raw_query}' was not found on any shelf.",
                 parent=self,
             )
+            self._set_and_select_search(query)
         return "break"
 
     def load_shelf(
@@ -601,7 +645,20 @@ class CellTransferView(ttk.Frame):
 
         self.right = CellTransferPane(workspace, "Right cell", database)
         self.right.grid(row=0, column=2, sticky="nsew")
+
+        self.last_active_pane: CellTransferPane = self.left
+        self.left.on_focus_callback = self._set_active_pane
+        self.right.on_focus_callback = self._set_active_pane
+        self.barcode_scanner = BarcodeScanner(self, self.on_barcode_scan)
         self.refresh()
+
+    def _set_active_pane(self, pane: CellTransferPane) -> None:
+        self.last_active_pane = pane
+
+    def on_barcode_scan(self, barcode: str) -> None:
+        target = self.last_active_pane if self.last_active_pane is not None else self.left
+        target._set_and_select_search(format_product_id(barcode))
+        target.find()
 
     def refresh(self) -> None:
         self.left.refresh()
