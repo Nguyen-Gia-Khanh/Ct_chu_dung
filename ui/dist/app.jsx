@@ -2327,6 +2327,26 @@ function App() {
         {activeTab === 'browser' && <ShelfBrowserView />}
         {activeTab === 'cell_transfer' && <CellTransferView />}
       </main>
+
+      <footer className="ide-statusbar">
+        <div className="statusbar-item">
+          <span className="status-dot"></span>
+          <span>Ready</span>
+        </div>
+        <div className="statusbar-item">
+          <span>DB: <code>warehouse.db</code></span>
+        </div>
+        <div className="statusbar-spacer"></div>
+        <div className="statusbar-item">
+          <span>Catalog: <strong>{catalogCount}</strong> items</span>
+        </div>
+        <div className="statusbar-item">
+          <span>Queue: <strong>{pendingCount}</strong> pending</span>
+        </div>
+        <div className="statusbar-item">
+          <span>App: Desktop (TS)</span>
+        </div>
+      </footer>
     </div>
   );
 }

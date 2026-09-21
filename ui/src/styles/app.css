@@ -40,12 +40,18 @@
   padding: 0;
 }
 
+html, body {
+  height: 100%;
+  overflow: hidden;
+  user-select: none;
+}
+
 body {
   font-family: var(--font-family);
   background-color: var(--bg-app);
   color: var(--text-main);
   line-height: 1.5;
-  font-size: 14px;
+  font-size: 13.5px;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -614,3 +620,37 @@ button, input, select, textarea {
   accent-color: var(--primary);
   cursor: pointer;
 }
+
+/* IntelliJ-Style Desktop Status Bar */
+.ide-statusbar {
+  height: 26px;
+  background: #ffffff;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  user-select: none;
+  gap: 1.5rem;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.statusbar-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+}
+
+.statusbar-spacer {
+  flex: 1;
+}
+

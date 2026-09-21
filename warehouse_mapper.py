@@ -45,9 +45,9 @@ UI_MODE = "ts"
 def main() -> None:
     mode = UI_MODE.strip().lower()
 
-    if mode in ("ts", "typescript", "web"):
-        from mapper.web_server import run_server
-        run_server(port=8000, open_browser=True)
+    if mode in ("ts", "typescript", "web", "app"):
+        from mapper.web_server import run_desktop_app
+        run_desktop_app(port=8000, title="Warehouse Shelf Mapper")
     elif mode == "tkinter":
         root = tk.Tk()
         root.state("zoomed")

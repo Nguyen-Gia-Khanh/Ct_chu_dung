@@ -482,12 +482,33 @@ def _is_port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
-def run_server(port: int = 8000, open_browser: bool = True) -> None:
-    """Launch the HTTP server and open the browser."""
-    # Ensure database is initialized
+def _launch_app_mode(url: str, title: str = "Warehouse Shelf Mapper") -> bool:
+    import os
+    import subprocess
+    candidates = [
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+    ]
+    for exe in candidates:
+        if exe.exists():
+            proc = subprocess.Popen([
+                str(exe),
+                f"--app={url}",
+                "--window-size=1400,860",
+                f"--app-id=warehouse_mapper",
+            ])
+            proc.wait()
+            return True
+    return False
+
+
+def run_desktop_app(port: int = 8000, title: str = "Warehouse Shelf Mapper") -> None:
+    """Launch the TypeScript UI in a clean, standalone native desktop window (like IntelliJ/Tkinter)."""
     _get_database()
 
-    # Find open port starting from 8000
     current_port = port
     server = None
     while current_port < port + 20:
@@ -501,24 +522,57 @@ def run_server(port: int = 8000, open_browser: bool = True) -> None:
         print(f"Error: Could not bind to any port between {port} and {port + 20}.", file=sys.stderr)
         return
 
+    # Start background API server
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
     url = f"http://localhost:{current_port}"
+    target_url = "http://localhost:3000" if _is_port_in_use(3000) else url
     print("=" * 60)
-    print("  Warehouse Shelf Mapper - TypeScript Web Interface")
-    print(f"  Serving at: {url}")
-    print("  Press Ctrl+C in this terminal to stop.")
+    print(f"  {title} - Native Desktop Window")
+    print(f"  Backend server running at: {url}")
     print("=" * 60)
 
-    if open_browser:
-        # If Vite dev server is running on 3000, open 3000, else open current_port
-        target_url = "http://localhost:3000" if _is_port_in_use(3000) else url
-        threading.Timer(0.6, lambda: webbrowser.open(target_url)).start()
-
+    # 1. Primary: Use pywebview for native Edge WebView2 desktop window
+    launched = False
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down server...")
-        server.server_close()
+        import webview
+        window = webview.create_window(
+            title,
+            target_url,
+            width=1400,
+            height=860,
+            min_size=(1024, 680),
+            resizable=True,
+            text_select=True,
+        )
+        webview.start()
+        launched = True
+    except Exception as ex:
+        print(f"pywebview notice: {ex}")
+        launched = False
+
+    # 2. Fallback: Standalone App Window mode (--app)
+    if not launched:
+        launched = _launch_app_mode(target_url, title)
+
+    # 3. Last fallback: Browser tab
+    if not launched:
+        webbrowser.open(target_url)
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+
+    server.shutdown()
+
+
+def run_server(port: int = 8000, open_browser: bool = True) -> None:
+    """Compatibility alias to run desktop app."""
+    run_desktop_app(port=port)
 
 
 if __name__ == "__main__":
-    run_server()
+    run_desktop_app()
+
