@@ -28,6 +28,7 @@ from .database import (
     LayoutConflictError,
     OnHandProduct,
     Placement,
+    ReturnedQueueProduct,
     SlotAddress,
     WarehouseDatabase,
     validate_stock_quantity,
@@ -53,6 +54,7 @@ class WarehouseMapperApp:
         self.committed_locations: dict[str, str] = {}
         self.committed_placements: dict[str, Placement] = {}
         self.on_hand_products: dict[str, OnHandProduct] = {}
+        self.returned_queue_products: dict[str, ReturnedQueueProduct] = {}
         self.selected_address: SlotAddress | None = None
         self.staged_assignments: dict[str, Placement] = {}
         self.pending_unassignments: set[str] = set()
@@ -174,7 +176,7 @@ class WarehouseMapperApp:
             on_catalog_activate=self.activate_catalog_product,
             on_load_address=self.load_assignment_address,
             on_assign_address=self.assign_on_hand_to_address,
-            on_clear_hand=self.clear_on_hand_queue,
+            on_dequeue_hand=self.dequeue_selected_on_hand,
             on_selected_to_hand=self.move_selected_address_to_on_hand,
             on_slot_to_hand=self.move_address_to_on_hand,
             on_modify_hand_stock=self.modify_on_hand_stock,
@@ -418,6 +420,11 @@ class WarehouseMapperApp:
             self.root,
             "On-hand queue",
             [(product_id, self.products[product_id]) for product_id in product_ids],
+            initial_quantities={
+                product_id: self.returned_queue_products[product_id].stock_qty
+                for product_id in product_ids
+                if product_id in self.returned_queue_products
+            },
             title_text="Move products to on-hand",
             destination_label="Persistent on-hand batch",
             button_text="Move to on-hand",
@@ -640,26 +647,34 @@ class WarehouseMapperApp:
             f"Assigned {moved} product(s) to {address.slot_name}. Saved immediately."
         )
 
-    def clear_on_hand_queue(self) -> None:
-        if not self.on_hand_products:
-            self.status_text.set("The on-hand queue is already empty.")
+    def dequeue_selected_on_hand(self) -> None:
+        selected_items = self.assignments.on_hand_tree.selection()
+        product_ids = [
+            item_id.removeprefix("hand::")
+            for item_id in selected_items
+            if item_id.startswith("hand::")
+            and item_id.removeprefix("hand::") in self.on_hand_products
+        ]
+        if not product_ids:
+            messagebox.showinfo(
+                "Choose on-hand products",
+                "Select one or more on-hand products with Ctrl-click first.",
+                parent=self.root,
+            )
             return
-        if not messagebox.askyesno(
-            "Dequeue all products?",
-            f"Return all {len(self.on_hand_products)} on-hand product(s) to the total queue?",
-            parent=self.root,
-        ):
-            return
+        returned_at = datetime.now().astimezone().isoformat(timespec="seconds")
         try:
-            moved = self.database.clear_on_hand()
+            moved = self.database.dequeue_on_hand(product_ids, returned_at)
         except Exception as error:
             messagebox.showerror(
-                "Could not clear on-hand", str(error), parent=self.root
+                "Could not dequeue products", str(error), parent=self.root
             )
             return
         self.reload_database_state()
         self.refresh_all_views()
-        self.status_text.set(f"Returned {moved} product(s) to the total queue.")
+        self.status_text.set(
+            f"Returned {moved} selected product(s) to the total queue with stock retained."
+        )
 
     def move_address_to_on_hand(self) -> None:
         if self.selected_address is None:
@@ -1580,6 +1595,7 @@ class WarehouseMapperApp:
         committed = set(self.committed_locations)
         staged = set(self.staged_assignments)
         on_hand = set(getattr(self, "on_hand_products", {}))
+        returned_queue = getattr(self, "returned_queue_products", {})
 
         available = []
         for product_id, product_name in self.products.items():
@@ -1599,6 +1615,7 @@ class WarehouseMapperApp:
             available.append((product_id, product_name))
         available.sort(
             key=lambda product: (
+                product[0] not in returned_queue,
                 product[0].casefold() != raw_query.casefold(),
                 product[0].casefold(),
             )
@@ -1607,12 +1624,15 @@ class WarehouseMapperApp:
         self.assignments.queue_tree.delete(*self.assignments.queue_tree.get_children())
         for product_id, product_name in available[:MAX_VISIBLE_PRODUCTS]:
             if hasattr(self.assignments, "on_hand_tree"):
-                values = (
-                    product_id,
-                    product_name,
-                    self.product_shortened_names.get(product_id, ""),
-                )
-                tags = ()
+                returned = returned_queue.get(product_id)
+                if returned is None:
+                    qty_text = ""
+                elif returned.stock_qty is None:
+                    qty_text = "Unknown"
+                else:
+                    qty_text = str(returned.stock_qty)
+                values = (product_id, product_name, qty_text)
+                tags = ("returned",) if returned is not None else ()
             else:
                 stored_qty = self.transferred_stock.get(product_id)
                 tags = ("transferred",) if product_id in self.transferred_stock else ()
@@ -1707,6 +1727,9 @@ class WarehouseMapperApp:
             staged = self.staged_assignments.get(product_id)
             saved = self.committed_placements.get(product_id)
             on_hand_item = getattr(self, "on_hand_products", {}).get(product_id)
+            returned_item = getattr(self, "returned_queue_products", {}).get(
+                product_id
+            )
             if on_hand_item is not None:
                 quantity = (
                     on_hand_item.stock_qty
@@ -1727,6 +1750,13 @@ class WarehouseMapperApp:
                 )
                 message = f"Already at {saved.slot_name}{suffix}"
                 location_exists = True
+            elif returned_item is not None:
+                quantity = (
+                    returned_item.stock_qty
+                    if returned_item.stock_qty is not None
+                    else "Unknown"
+                )
+                message = f"In total queue · returned stock {quantity}"
             else:
                 message = "Not in"
 
@@ -1778,6 +1808,7 @@ class WarehouseMapperApp:
         }
         self.committed_placements = self.database.get_placement_details()
         self.on_hand_products = self.database.get_on_hand_products()
+        self.returned_queue_products = self.database.get_returned_queue_products()
         if self.current_shelf_id is not None and self.preview_key:
             saved_floor, saved_side, saved_code, saved_layout = self.database.get_shelf(
                 self.current_shelf_id

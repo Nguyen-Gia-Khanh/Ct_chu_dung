@@ -22,7 +22,7 @@ class LocationAssignmentView(ttk.Frame):
         on_catalog_activate: Callable[[tk.Event], object],
         on_load_address: Callable[[], object],
         on_assign_address: Callable[[], object],
-        on_clear_hand: Callable[[], object],
+        on_dequeue_hand: Callable[[], object],
         on_selected_to_hand: Callable[[], object],
         on_slot_to_hand: Callable[[], object],
         on_modify_hand_stock: Callable[[], object],
@@ -70,7 +70,7 @@ class LocationAssignmentView(ttk.Frame):
             hand_panel,
             on_load_address,
             on_assign_address,
-            on_clear_hand,
+            on_dequeue_hand,
             on_modify_hand_stock,
         )
         self._build_contents_panel(
@@ -123,12 +123,17 @@ class LocationAssignmentView(ttk.Frame):
         queue_body.columnconfigure(0, weight=1)
         self.queue_tree = ttk.Treeview(
             queue_body,
-            columns=("product_id", "product_name", "shortened_name"),
+            columns=("product_id", "product_name", "stock_qty"),
             show="headings",
             selectmode="extended",
             height=8,
         )
-        self._configure_product_tree(self.queue_tree)
+        self._configure_queue_tree(self.queue_tree)
+        self.queue_tree.tag_configure(
+            "returned",
+            background="#fff2a8",
+            font=("Segoe UI", 9, "bold"),
+        )
         queue_scroll = ttk.Scrollbar(
             queue_body, orient="vertical", command=self.queue_tree.yview
         )
@@ -199,12 +204,21 @@ class LocationAssignmentView(ttk.Frame):
         tree.column("product_name", width=190, minwidth=110)
         tree.column("shortened_name", width=145, minwidth=95)
 
+    @staticmethod
+    def _configure_queue_tree(tree: ttk.Treeview) -> None:
+        tree.heading("product_id", text="Product ID")
+        tree.heading("product_name", text="Product name")
+        tree.heading("stock_qty", text="Stock")
+        tree.column("product_id", width=110, minwidth=80, stretch=False)
+        tree.column("product_name", width=190, minwidth=110)
+        tree.column("stock_qty", width=65, minwidth=50, anchor="e", stretch=False)
+
     def _build_hand_panel(
         self,
         parent: ttk.LabelFrame,
         on_load_address: Callable[[], object],
         on_assign_address: Callable[[], object],
-        on_clear_hand: Callable[[], object],
+        on_dequeue_hand: Callable[[], object],
         on_modify_hand_stock: Callable[[], object],
     ) -> None:
         parent.rowconfigure(0, weight=1)
@@ -257,8 +271,8 @@ class LocationAssignmentView(ttk.Frame):
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
         ttk.Button(
             hand_actions,
-            text="Dequeue all → total queue",
-            command=on_clear_hand,
+            text="Dequeue selected → total queue",
+            command=on_dequeue_hand,
         ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
 
         address = ttk.LabelFrame(parent, text="Shelf address", padding=8)

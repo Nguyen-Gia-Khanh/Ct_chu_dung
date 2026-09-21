@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from mapper.database import Placement, WarehouseDatabase
+from mapper.database import Placement, ReturnedQueueProduct, WarehouseDatabase
 
 
 FIRST_TIME = "2026-09-20T08:00:00+00:00"
@@ -120,15 +120,45 @@ class OnHandQueueTests(unittest.TestCase):
             {"P1": Placement(self.address.slot_name, 12, SECOND_TIME)},
         )
 
-    def test_dequeue_all_returns_products_to_unassigned_state(self) -> None:
+    def test_dequeue_selected_retains_stock_and_leaves_other_products_on_hand(
+        self,
+    ) -> None:
         self.database.add_to_on_hand({"P1": 12, "P2": 4}, FIRST_TIME)
 
-        self.assertEqual(self.database.clear_on_hand(), 2)
-        self.assertEqual(self.database.get_on_hand_products(), {})
+        self.assertEqual(self.database.dequeue_on_hand(["P1"], SECOND_TIME), 1)
+        self.assertEqual(set(self.database.get_on_hand_products()), {"P2"})
         self.assertEqual(
             set(product_id for product_id, _name in self.database.get_products()),
             {"P1", "P2"},
         )
+        self.assertEqual(
+            self.database.get_returned_queue_products(),
+            {"P1": ReturnedQueueProduct("P1", 12, SECOND_TIME)},
+        )
+
+    def test_returned_queue_stock_survives_reopen_and_clears_on_requeue(self) -> None:
+        self.database.add_to_on_hand({"P1": 12}, FIRST_TIME)
+        self.database.dequeue_on_hand(["P1"], SECOND_TIME)
+
+        reopened = WarehouseDatabase(self.path)
+        self.assertEqual(
+            reopened.get_returned_queue_products(),
+            {"P1": ReturnedQueueProduct("P1", 12, SECOND_TIME)},
+        )
+
+        reopened.add_to_on_hand({"P1": 12}, FIRST_TIME)
+
+        self.assertEqual(reopened.get_returned_queue_products(), {})
+        self.assertEqual(reopened.get_on_hand_products()["P1"].stock_qty, 12)
+
+    def test_stale_dequeue_selection_rolls_back_the_complete_move(self) -> None:
+        self.database.add_to_on_hand({"P1": 12, "P2": 4}, FIRST_TIME)
+
+        with self.assertRaises(KeyError):
+            self.database.dequeue_on_hand(["P1", "MISSING"], SECOND_TIME)
+
+        self.assertEqual(set(self.database.get_on_hand_products()), {"P1", "P2"})
+        self.assertEqual(self.database.get_returned_queue_products(), {})
 
     def test_assigned_product_cannot_also_enter_on_hand(self) -> None:
         self.database.commit_shelf(

@@ -55,11 +55,14 @@ warehouse mapper itself uses Python's standard library.
    loaded address**. Only that selected subset moves; the rest stays on-hand.
    The move is saved immediately in one SQLite transaction.
 
-Use **Dequeue all → total queue** to clear the on-hand batch without assigning
-it. In the loaded address, Ctrl-click one or more rows and use **Selected
-product(s) → on-hand** for a partial transfer. **Shelf → on-hand (all)** remains
-available when the complete address must be emptied. Both actions preserve each
-product's recorded stock quantity for reassignment.
+Ctrl-click one or more on-hand rows and use **Dequeue selected → total queue**
+to return only that subset without assigning it. Returned products keep their
+stock in the total queue and appear first in bold yellow; moving them to on-hand
+again prefills that stock and removes the highlight. In the loaded address,
+Ctrl-click one or more rows and use **Selected product(s) → on-hand** for a
+partial transfer. **Shelf → on-hand (all)** remains available when the complete
+address must be emptied. These actions preserve each product's recorded stock
+quantity for reassignment.
 
 Web actions default to one product: click exactly one row in the loaded address,
 then press **Modify selected product's web location**. Turn on **Process and save
@@ -73,8 +76,8 @@ uses the same single/all-products switch.
 
 One search box filters both the total queue and the full catalog. It searches
 product ID, full name, and shortened name without case or Vietnamese accents.
-An exact product ID also reports whether the product is on-hand or already at a
-shelf address.
+An exact product ID also reports whether the product is on-hand, returned to the
+total queue, or already at a shelf address.
 
 The full catalog is a permanent reference list. **Transfer selected to total
 queue** copies catalog-only products into the working product list without
@@ -120,8 +123,8 @@ assignment time.
 
 The app creates `warehouse_locations.db` beside `warehouse_mapper.py`. Close the
 app and copy this one file to make a complete backup. Existing current-schema
-databases are upgraded automatically with the new `on_hand_queue` table; shelves,
-placements, quantities, and timestamps are not rewritten.
+databases are upgraded automatically with the queue tables; shelves, placements,
+quantities, and timestamps are not rewritten.
 
 Deleting the database intentionally starts from an empty schema the next time
 the app runs.

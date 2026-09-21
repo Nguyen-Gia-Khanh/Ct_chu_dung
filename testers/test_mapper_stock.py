@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 from mapper.app import WarehouseMapperApp
 from mapper.assignment_view import AssignmentView, StockQuantityDialog
 from mapper.common import make_slot_name
-from mapper.database import Placement, WarehouseDatabase
+from mapper.database import Placement, ReturnedQueueProduct, WarehouseDatabase
 
 
 CELL_ONE = make_slot_name("1", "A", 1, 1, side="1")
@@ -44,6 +44,8 @@ class StockPlacementTests(unittest.TestCase):
         app.staged_assignments = {}
         app.pending_unassignments = set()
         app.transferred_stock = {}
+        app.on_hand_products = {}
+        app.returned_queue_products = {}
         app.selected_slot = CELL_ONE
         app.current_layout = [2]
         app.preview_key = ("1", "1", "A")
@@ -366,6 +368,79 @@ class StockPlacementTests(unittest.TestCase):
         app.reload_database_state()
 
         self.assertIn("fastener alias", app.product_search["P1"])
+
+    def test_total_queue_shows_returned_stock_first_with_highlight(self):
+        app = self.make_app()
+        app.product_search = {"P1": "p1 bolts", "P2": "p2 washers"}
+        app.search_after_id = None
+        app.returned_queue_products = {
+            "P1": ReturnedQueueProduct("P1", 42, SECOND_TIME)
+        }
+        app.assignments.search_var = Mock()
+        app.assignments.search_var.get.return_value = ""
+        app.assignments.on_hand_tree = Mock()
+        app.assignments.queue_tree.get_children.return_value = ()
+        app.assignments.queue_count_text = Mock()
+
+        WarehouseMapperApp.refresh_product_queue(app)
+
+        calls = app.assignments.queue_tree.insert.call_args_list
+        self.assertEqual(
+            calls[0].kwargs,
+            {
+                "iid": "product::P1",
+                "values": ("P1", "Bolts", "42"),
+                "tags": ("returned",),
+            },
+        )
+        self.assertEqual(
+            calls[1].kwargs,
+            {
+                "iid": "product::P2",
+                "values": ("P2", "Washers", ""),
+                "tags": (),
+            },
+        )
+
+    def test_move_returned_product_to_on_hand_prefills_and_clears_marker(self):
+        self.database.add_to_on_hand({"P1": 42}, FIRST_TIME)
+        self.database.dequeue_on_hand(["P1"], SECOND_TIME)
+        app = self.make_app()
+        app.returned_queue_products = self.database.get_returned_queue_products()
+        app.assignments.queue_tree.selection.return_value = ("product::P1",)
+
+        with patch("mapper.app.StockQuantityDialog") as mock_dialog, patch(
+            "mapper.app.datetime"
+        ) as clock:
+            mock_dialog.return_value = SimpleNamespace(result={"P1": 42})
+            clock.now.return_value = datetime.fromisoformat(SECOND_TIME)
+
+            app.move_selected_to_on_hand()
+
+        self.assertEqual(
+            mock_dialog.call_args.kwargs["initial_quantities"], {"P1": 42}
+        )
+        self.assertEqual(self.database.get_returned_queue_products(), {})
+        self.assertEqual(self.database.get_on_hand_products()["P1"].stock_qty, 42)
+
+    def test_dequeue_action_moves_only_selected_on_hand_rows(self):
+        self.database.add_to_on_hand({"P1": 12, "P2": 4}, FIRST_TIME)
+        app = self.make_app()
+        app.on_hand_products = self.database.get_on_hand_products()
+        app.assignments.on_hand_tree = Mock()
+        app.assignments.on_hand_tree.get_children.return_value = ()
+        app.assignments.on_hand_tree.selection.return_value = ("hand::P1",)
+        app.assignments.on_hand_count_text = Mock()
+
+        with patch("mapper.app.datetime") as clock:
+            clock.now.return_value = datetime.fromisoformat(SECOND_TIME)
+            app.dequeue_selected_on_hand()
+
+        self.assertEqual(set(self.database.get_on_hand_products()), {"P2"})
+        self.assertEqual(
+            self.database.get_returned_queue_products()["P1"].stock_qty, 12
+        )
+        app.refresh_all_views.assert_called_once()
 
     def test_assign_prefills_transferred_stock_and_cleans_up(self):
         app = self.make_app()

@@ -46,6 +46,13 @@ class OnHandProduct:
 
 
 @dataclass(frozen=True)
+class ReturnedQueueProduct:
+    product_id: str
+    stock_qty: int | None
+    returned_at: str
+
+
+@dataclass(frozen=True)
 class SlotAddress:
     slot_id: int
     shelf_id: int
@@ -129,6 +136,15 @@ class WarehouseDatabase:
                     queued_at  TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS returned_queue_products (
+                    product_id  TEXT PRIMARY KEY REFERENCES products(product_id) ON DELETE CASCADE,
+                    stock_qty   INTEGER CHECK (
+                        stock_qty IS NULL OR
+                        (stock_qty >= 0 AND typeof(stock_qty) = 'integer')
+                    ),
+                    returned_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_products_name
                     ON products(product_name COLLATE NOCASE);
                 CREATE INDEX IF NOT EXISTS idx_catalog_products_name
@@ -137,6 +153,8 @@ class WarehouseDatabase:
                     ON placements(slot_id);
                 CREATE INDEX IF NOT EXISTS idx_on_hand_queued_at
                     ON on_hand_queue(queued_at);
+                CREATE INDEX IF NOT EXISTS idx_returned_queue_returned_at
+                    ON returned_queue_products(returned_at);
                 """
             )
             product_columns = {
@@ -492,6 +510,22 @@ class WarehouseDatabase:
             for row in rows
         }
 
+    def get_returned_queue_products(self) -> dict[str, ReturnedQueueProduct]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT product_id, stock_qty, returned_at
+                FROM returned_queue_products
+                ORDER BY returned_at, product_id COLLATE NOCASE
+                """
+            ).fetchall()
+        return {
+            row["product_id"]: ReturnedQueueProduct(
+                row["product_id"], row["stock_qty"], row["returned_at"]
+            )
+            for row in rows
+        }
+
     def add_to_on_hand(
         self,
         quantities: dict[str, int | None],
@@ -544,6 +578,10 @@ class WarehouseDatabase:
                     for product_id, quantity in quantities.items()
                 ),
             )
+            connection.executemany(
+                "DELETE FROM returned_queue_products WHERE product_id = ?",
+                ((product_id,) for product_id in product_ids),
+            )
         return len(quantities)
 
     def update_on_hand_stock(self, product_id: str, quantity: int) -> None:
@@ -558,13 +596,69 @@ class WarehouseDatabase:
                     f"Product {product_id} is no longer in the on-hand queue."
                 )
 
-    def clear_on_hand(self) -> int:
+    def dequeue_on_hand(
+        self,
+        product_ids: list[str] | tuple[str, ...],
+        returned_at: str,
+    ) -> int:
+        """Move selected on-hand products back to the total queue with stock."""
+        selected_ids = tuple(dict.fromkeys(product_ids))
+        if not selected_ids:
+            return 0
+        if not returned_at or datetime.fromisoformat(returned_at).utcoffset() is None:
+            raise ValueError("The return time must include a timezone.")
+
+        placeholders = ",".join("?" for _ in selected_ids)
         with closing(self.connect()) as connection, connection:
-            count = connection.execute("SELECT COUNT(*) FROM on_hand_queue").fetchone()[
-                0
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                f"""
+                SELECT product_id, stock_qty
+                FROM on_hand_queue
+                WHERE product_id IN ({placeholders})
+                """,
+                selected_ids,
+            ).fetchall()
+            rows_by_id = {row["product_id"]: row for row in rows}
+            missing = [
+                product_id
+                for product_id in selected_ids
+                if product_id not in rows_by_id
             ]
-            connection.execute("DELETE FROM on_hand_queue")
-        return int(count)
+            if missing:
+                raise KeyError(
+                    f"Product {missing[0]} is no longer in the on-hand queue."
+                )
+            connection.executemany(
+                """
+                INSERT INTO returned_queue_products (product_id, stock_qty, returned_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(product_id) DO UPDATE SET
+                    stock_qty = excluded.stock_qty,
+                    returned_at = excluded.returned_at
+                """,
+                (
+                    (
+                        product_id,
+                        rows_by_id[product_id]["stock_qty"],
+                        returned_at,
+                    )
+                    for product_id in selected_ids
+                ),
+            )
+            connection.executemany(
+                "DELETE FROM on_hand_queue WHERE product_id = ?",
+                ((product_id,) for product_id in selected_ids),
+            )
+        return len(selected_ids)
+
+    def clear_on_hand(self) -> int:
+        """Compatibility helper: return the complete on-hand batch with stock."""
+        product_ids = tuple(self.get_on_hand_products())
+        if not product_ids:
+            return 0
+        returned_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        return self.dequeue_on_hand(product_ids, returned_at)
 
     def get_slot_address(
         self,
@@ -988,6 +1082,10 @@ class WarehouseDatabase:
             )
             connection.executemany(
                 "DELETE FROM on_hand_queue WHERE product_id = ?",
+                ((product_id,) for product_id in staged_assignments),
+            )
+            connection.executemany(
+                "DELETE FROM returned_queue_products WHERE product_id = ?",
                 ((product_id,) for product_id in staged_assignments),
             )
             self._sync_layout(
