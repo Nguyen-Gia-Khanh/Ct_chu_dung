@@ -14,7 +14,7 @@ Keep the mapper folder beside this script.
 
 import tkinter as tk
 
-from mapper.app import WarehouseMapperApp
+from mapper.ui.app import WarehouseMapperApp
 # Retain these imports for existing scripts/tests that imported from this file.
 from mapper.common import make_slot_name, normalize_search
 from mapper.database import LayoutConflictError, WarehouseDatabase
