@@ -91,10 +91,15 @@ class StockQuantityDialog(tk.Toplevel):
         self.bind("<Return>", self.confirm)
         self.bind("<Escape>", lambda _event: self.destroy())
         self.protocol("WM_DELETE_WINDOW", self.destroy)
-        self.wait_visibility()
-        self.grab_set()
+        self.lift()
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
         if self.quantity_inputs:
             next(iter(self.quantity_inputs.values()))[1].focus_set()
+        else:
+            self.focus_force()
 
     def confirm(self, _event=None) -> None:
         quantities = {}

@@ -269,7 +269,7 @@ class PrimalQueueView(ttk.Frame):
 
         self._render_empty_shelf("Choose a shelf above or search a product on the left.")
 
-    def refresh(self) -> None:
+    def refresh(self, reload_catalog: bool = False) -> None:
         """Reload all data from database and refresh views."""
         product_rows = self.database.get_product_records()
         self.products = {
@@ -287,17 +287,18 @@ class PrimalQueueView(ttk.Frame):
             for product_id, product_name, shortened_name in product_rows
         }
 
-        catalog_rows = self.database.get_catalog_products()
-        self.catalog_products = {
-            product_id: (product_name, shortened_name)
-            for product_id, product_name, shortened_name in catalog_rows
-        }
-        self.catalog_search = {
-            product_id: normalize_search(
-                f"{product_id} {product_name} {shortened_name}"
-            )
-            for product_id, product_name, shortened_name in catalog_rows
-        }
+        if reload_catalog or not self.catalog_products:
+            catalog_rows = self.database.get_catalog_products()
+            self.catalog_products = {
+                product_id: (product_name, shortened_name)
+                for product_id, product_name, shortened_name in catalog_rows
+            }
+            self.catalog_search = {
+                product_id: normalize_search(
+                    f"{product_id} {product_name} {shortened_name}"
+                )
+                for product_id, product_name, shortened_name in catalog_rows
+            }
 
         self.placements = self.database.get_placement_details()
         self.on_hand_products = self.database.get_on_hand_products()

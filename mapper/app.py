@@ -81,7 +81,7 @@ class WarehouseMapperApp:
 
         self._configure_window()
         self._build_ui()
-        self.reload_database_state()
+        self.reload_database_state(reload_catalog=True)
         self.saved_editor_state = self._editor_state()
 
     def _configure_window(self) -> None:
@@ -1172,7 +1172,7 @@ class WarehouseMapperApp:
             if already_waiting < 0:
                 already_waiting = 0
 
-            self.reload_database_state()
+            self.reload_database_state(reload_catalog=True)
             self.refresh_all_views()
             if hasattr(self, "shelf_browser"):
                 self.shelf_browser.refresh()
@@ -1848,7 +1848,7 @@ class WarehouseMapperApp:
         self.refresh_address_contents()
         self.refresh_change_summary()
 
-    def reload_database_state(self) -> None:
+    def reload_database_state(self, reload_catalog: bool = False) -> None:
         product_rows = self.database.get_product_records()
         self.products = {
             product_id: product_name
@@ -1864,17 +1864,18 @@ class WarehouseMapperApp:
             )
             for product_id, product_name, shortened_name in product_rows
         }
-        catalog_rows = self.database.get_catalog_products()
-        self.catalog_products = {
-            product_id: (product_name, shortened_name)
-            for product_id, product_name, shortened_name in catalog_rows
-        }
-        self.catalog_search = {
-            product_id: normalize_search(
-                f"{product_id} {product_name} {shortened_name}"
-            )
-            for product_id, product_name, shortened_name in catalog_rows
-        }
+        if reload_catalog or not hasattr(self, "catalog_products") or not self.catalog_products:
+            catalog_rows = self.database.get_catalog_products()
+            self.catalog_products = {
+                product_id: (product_name, shortened_name)
+                for product_id, product_name, shortened_name in catalog_rows
+            }
+            self.catalog_search = {
+                product_id: normalize_search(
+                    f"{product_id} {product_name} {shortened_name}"
+                )
+                for product_id, product_name, shortened_name in catalog_rows
+            }
         self.committed_placements = self.database.get_placement_details()
         self.on_hand_products = self.database.get_on_hand_products()
         self.returned_queue_products = self.database.get_returned_queue_products()
@@ -1915,7 +1916,7 @@ class WarehouseMapperApp:
             self.refresh_on_hand_queue()
             self.refresh_address_contents()
         if hasattr(self, "primal_view"):
-            self.primal_view.refresh()
+            self.primal_view.refresh(reload_catalog=reload_catalog)
 
     def refresh_shelf_selector(self) -> None:
         choices = self.database.list_shelves()
@@ -1931,8 +1932,6 @@ class WarehouseMapperApp:
                     break
         if hasattr(self, "shelf_browser"):
             self.shelf_browser.refresh()
-        if hasattr(self, "primal_view"):
-            self.primal_view.refresh()
 
     def import_csv(self) -> None:
         selected = filedialog.askopenfilename(
@@ -1986,7 +1985,7 @@ class WarehouseMapperApp:
             messagebox.showerror("Import failed", str(error))
             return
 
-        self.reload_database_state()
+        self.reload_database_state(reload_catalog=True)
         self.refresh_all_views()
         messagebox.showinfo(
             "Import complete",
@@ -2051,7 +2050,7 @@ class WarehouseMapperApp:
             messagebox.showerror("Catalog import failed", str(error))
             return
 
-        self.reload_database_state()
+        self.reload_database_state(reload_catalog=True)
         messagebox.showinfo(
             "Catalog import complete",
             f"New catalog products: {inserted:,}\n"
