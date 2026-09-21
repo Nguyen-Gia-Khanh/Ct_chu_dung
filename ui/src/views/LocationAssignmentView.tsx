@@ -296,25 +296,25 @@ export const LocationAssignmentView: React.FC = () => {
               <span className="form-label" style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
                 Total Unassigned Product Queue ({pendingQueue.length})
               </span>
-              <div className="table-container" style={{ flex: 1, maxHeight: '200px' }}>
+              <div className="table-container" style={{ flex: 1, maxHeight: '210px' }}>
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Product ID</th>
+                      <th style={{ width: '105px' }}>Product ID</th>
                       <th>Product Name</th>
-                      <th style={{ width: '60px' }}>Stock</th>
-                      <th style={{ width: '50px' }}>Action</th>
+                      <th style={{ width: '50px', textAlign: 'right' }}>Stock</th>
+                      <th style={{ width: '60px', textAlign: 'center' }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredPending.map((item) => (
-                      <tr key={item.code}>
+                    {filteredPending.slice(0, 100).map((item) => (
+                      <tr key={item.code} className={item.returned ? 'returned' : ''}>
                         <td className="font-mono">
                           <strong>{item.code}</strong>
                         </td>
                         <td>{item.name}</td>
-                        <td>{item.on_hand}</td>
-                        <td>
+                        <td style={{ textAlign: 'right' }}>{item.on_hand}</td>
+                        <td style={{ textAlign: 'center' }}>
                           <button
                             className="btn btn-secondary btn-sm"
                             onClick={() => handleQueueToHand(item)}
@@ -325,6 +325,13 @@ export const LocationAssignmentView: React.FC = () => {
                         </td>
                       </tr>
                     ))}
+                    {filteredPending.length > 100 && (
+                      <tr>
+                        <td colSpan={4} style={{ textAlign: 'center', color: '#616161', padding: '6px', fontSize: '11px', background: '#f8f8f8' }}>
+                          Showing top 100 of {filteredPending.length} items. Refine search to see more.
+                        </td>
+                      </tr>
+                    )}
                     {filteredPending.length === 0 && (
                       <tr>
                         <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
@@ -342,18 +349,18 @@ export const LocationAssignmentView: React.FC = () => {
               <span className="form-label" style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
                 Full Product Catalog ({catalog.length})
               </span>
-              <div className="table-container" style={{ flex: 1, maxHeight: '200px' }}>
+              <div className="table-container" style={{ flex: 1, maxHeight: '210px' }}>
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Product ID</th>
+                      <th style={{ width: '95px' }}>Product ID</th>
                       <th>Product Name</th>
-                      <th>Location ID</th>
-                      <th style={{ width: '85px' }}>Action</th>
+                      <th style={{ width: '75px' }}>Location</th>
+                      <th style={{ width: '110px', textAlign: 'center' }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredCatalog.map((prod) => (
+                    {filteredCatalog.slice(0, 100).map((prod) => (
                       <tr key={prod.product_id}>
                         <td className="font-mono">
                           <strong>{prod.product_id}</strong>
@@ -366,8 +373,8 @@ export const LocationAssignmentView: React.FC = () => {
                             <span className="loc-pill">Unassigned</span>
                           )}
                         </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '0.2rem' }}>
+                        <td style={{ textAlign: 'center' }}>
+                          <div style={{ display: 'flex', gap: '0.2rem', justifyContent: 'center' }}>
                             <button
                               className="btn btn-secondary btn-sm"
                               onClick={() => handleCatalogToHand(prod)}
@@ -386,6 +393,20 @@ export const LocationAssignmentView: React.FC = () => {
                         </td>
                       </tr>
                     ))}
+                    {filteredCatalog.length > 100 && (
+                      <tr>
+                        <td colSpan={4} style={{ textAlign: 'center', color: '#616161', padding: '6px', fontSize: '11px', background: '#f8f8f8' }}>
+                          Showing top 100 of {filteredCatalog.length} items. Refine search to see more.
+                        </td>
+                      </tr>
+                    )}
+                    {filteredCatalog.length === 0 && (
+                      <tr>
+                        <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                          No catalog items found.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -393,7 +414,7 @@ export const LocationAssignmentView: React.FC = () => {
           </div>
         </div>
 
-        {/* PANE 2: On-Hand Queue and Shelf Address (Matching Tkinter) */}
+        {/* PANE 2: On-Hand Queue and Shelf Address */}
         <div className="panel">
           <div className="panel-header">
             <span className="panel-title">On-Hand Queue and Shelf Address</span>
@@ -401,88 +422,137 @@ export const LocationAssignmentView: React.FC = () => {
           </div>
 
           <div className="panel-body">
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.4rem' }}>
-              <div className="form-group">
-                <label className="form-label">Floor</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  className="input-text font-mono"
-                  value={floor}
-                  onChange={(e) => setFloor(parseInt(e.target.value, 10) || 1)}
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Side</label>
-                <select
-                  className="input-select"
-                  value={side}
-                  onChange={(e) => setSide(parseInt(e.target.value, 10) || 1)}
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
+                <span className="form-label" style={{ fontWeight: 600 }}>
+                  On-Hand Working Batch ({onHandBatch.length})
+                </span>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setOnHandBatch([])}
+                  disabled={onHandBatch.length === 0}
                 >
-                  <option value={1}>1</option>
-                  <option value={2}>2</option>
-                </select>
+                  Clear on-hand
+                </button>
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Shelf</label>
-                <input
-                  type="text"
-                  maxLength={3}
-                  className="input-text font-mono"
-                  value={shelf}
-                  onChange={(e) => setShelf(e.target.value.toUpperCase())}
-                />
+              <div className="table-container" style={{ flex: 1, maxHeight: '210px' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '105px' }}>Product ID</th>
+                      <th>Product Name</th>
+                      <th style={{ width: '45px', textAlign: 'right' }}>Qty</th>
+                      <th style={{ width: '45px', textAlign: 'center' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {onHandBatch.map((item) => (
+                      <tr key={item.code}>
+                        <td className="font-mono">
+                          <strong>{item.code}</strong>
+                        </td>
+                        <td>{item.name}</td>
+                        <td style={{ textAlign: 'right' }}>{item.on_hand}</td>
+                        <td style={{ textAlign: 'center' }}>
+                          <button
+                            className="btn btn-danger btn-sm"
+                            onClick={() => handleRemoveFromHand(item.code)}
+                            title="Remove from batch"
+                          >
+                            &times;
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {onHandBatch.length === 0 && (
+                      <tr>
+                        <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                          On-hand batch is empty. Add products from the left.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
-              <div className="form-group">
-                <label className="form-label">Row number</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="25"
-                  className="input-text font-mono"
-                  value={row}
-                  onChange={(e) => setRow(parseInt(e.target.value, 10) || 1)}
-                />
+            {/* Target Address Card */}
+            <div style={{ background: 'var(--vscode-workbench-bg)', border: '1px solid var(--vscode-border)', borderRadius: '3px', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span className="form-label" style={{ fontWeight: 700 }}>
+                  Target Shelf Address
+                </span>
+                <span className="loc-pill assigned">{currentSlotName}</span>
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Slot number</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="50"
-                  className="input-text font-mono"
-                  value={col}
-                  onChange={(e) => setCol(parseInt(e.target.value, 10) || 1)}
-                />
-              </div>
-            </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px' }}>
+                <div className="form-group">
+                  <label className="form-label">Floor</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    className="input-text font-mono"
+                    value={floor}
+                    onChange={(e) => setFloor(parseInt(e.target.value, 10) || 1)}
+                  />
+                </div>
 
-            <div style={{ display: 'flex', gap: '0.4rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Side</label>
+                  <select className="input-select" value={side} onChange={(e) => setSide(parseInt(e.target.value, 10) || 1)}>
+                    <option value={1}>1</option>
+                    <option value={2}>2</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Shelf</label>
+                  <input
+                    type="text"
+                    maxLength={3}
+                    className="input-text font-mono"
+                    value={shelf}
+                    onChange={(e) => setShelf(e.target.value.toUpperCase())}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Row</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="25"
+                    className="input-text font-mono"
+                    value={row}
+                    onChange={(e) => setRow(parseInt(e.target.value, 10) || 1)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Col</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="50"
+                    className="input-text font-mono"
+                    value={col}
+                    onChange={(e) => setCol(parseInt(e.target.value, 10) || 1)}
+                  />
+                </div>
+              </div>
+
               <button
                 className="btn btn-primary"
-                style={{ flex: 1 }}
+                style={{ width: '100%', height: '28px', marginTop: '2px', fontWeight: 600 }}
                 onClick={handleAssignOnHandToAddress}
-              >
-                Assign on-hand to address
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setOnHandBatch([])}
                 disabled={onHandBatch.length === 0}
               >
-                Clear on-hand
+                Assign on-hand → {currentSlotName}
               </button>
-            </div>
 
-            <div>
-              <label className="toggle-label">
+              <label className="toggle-label" style={{ marginTop: '2px' }}>
                 <input
                   type="checkbox"
                   className="toggle-checkbox"
@@ -491,48 +561,6 @@ export const LocationAssignmentView: React.FC = () => {
                 />
                 <span>Upload to KiotViet automatically</span>
               </label>
-            </div>
-
-            <span className="form-label" style={{ fontWeight: 600, marginTop: '0.3rem' }}>
-              On-Hand Working Batch ({onHandBatch.length})
-            </span>
-            <div className="table-container" style={{ flex: 1, maxHeight: '240px' }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Product ID</th>
-                    <th>Product Name</th>
-                    <th style={{ width: '55px' }}>Qty</th>
-                    <th style={{ width: '45px' }}>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {onHandBatch.map((item) => (
-                    <tr key={item.code}>
-                      <td className="font-mono">
-                        <strong>{item.code}</strong>
-                      </td>
-                      <td>{item.name}</td>
-                      <td>{item.on_hand}</td>
-                      <td>
-                        <button
-                          className="btn btn-danger btn-sm"
-                          onClick={() => handleRemoveFromHand(item.code)}
-                        >
-                          &times;
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {onHandBatch.length === 0 && (
-                    <tr>
-                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                        On-hand batch is empty.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
             </div>
           </div>
         </div>

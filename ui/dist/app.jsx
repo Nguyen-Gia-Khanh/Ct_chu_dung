@@ -1176,25 +1176,25 @@ function LocationAssignmentView() {
               <span className="form-label" style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
                 Total Unassigned Product Queue ({pendingQueue.length})
               </span>
-              <div className="table-container" style={{ flex: 1, maxHeight: '200px' }}>
+              <div className="table-container" style={{ flex: 1, maxHeight: '210px' }}>
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Product ID</th>
+                      <th style={{ width: '105px' }}>Product ID</th>
                       <th>Product Name</th>
-                      <th style={{ width: '60px' }}>Stock</th>
-                      <th style={{ width: '50px' }}>Action</th>
+                      <th style={{ width: '50px', textAlign: 'right' }}>Stock</th>
+                      <th style={{ width: '60px', textAlign: 'center' }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredPending.slice(0, 100).map((item) => (
-                      <tr key={item.code}>
+                      <tr key={item.code} className={item.returned ? 'returned' : ''}>
                         <td className="font-mono">
                           <strong>{item.code}</strong>
                         </td>
                         <td>{item.name}</td>
-                        <td>{item.on_hand}</td>
-                        <td>
+                        <td style={{ textAlign: 'right' }}>{item.on_hand}</td>
+                        <td style={{ textAlign: 'center' }}>
                           <button
                             className="btn btn-secondary btn-sm"
                             onClick={() => handleQueueToHand(item)}
@@ -1228,14 +1228,14 @@ function LocationAssignmentView() {
               <span className="form-label" style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
                 Full Product Catalog ({catalog.length})
               </span>
-              <div className="table-container" style={{ flex: 1, maxHeight: '200px' }}>
+              <div className="table-container" style={{ flex: 1, maxHeight: '210px' }}>
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Product ID</th>
+                      <th style={{ width: '95px' }}>Product ID</th>
                       <th>Product Name</th>
-                      <th>Location ID</th>
-                      <th style={{ width: '85px' }}>Action</th>
+                      <th style={{ width: '75px' }}>Location</th>
+                      <th style={{ width: '110px', textAlign: 'center' }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1252,8 +1252,8 @@ function LocationAssignmentView() {
                             <span className="loc-pill">Unassigned</span>
                           )}
                         </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '0.2rem' }}>
+                        <td style={{ textAlign: 'center' }}>
+                          <div style={{ display: 'flex', gap: '0.2rem', justifyContent: 'center' }}>
                             <button
                               className="btn btn-secondary btn-sm"
                               onClick={() => handleCatalogToHand(prod)}
@@ -1301,80 +1301,137 @@ function LocationAssignmentView() {
           </div>
 
           <div className="panel-body">
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.4rem' }}>
-              <div className="form-group">
-                <label className="form-label">Floor</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  className="input-text font-mono"
-                  value={floor}
-                  onChange={(e) => setFloor(parseInt(e.target.value, 10) || 1)}
-                />
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
+                <span className="form-label" style={{ fontWeight: 600 }}>
+                  On-Hand Working Batch ({onHandBatch.length})
+                </span>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setOnHandBatch([])}
+                  disabled={onHandBatch.length === 0}
+                >
+                  Clear on-hand
+                </button>
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Side</label>
-                <select className="input-select" value={side} onChange={(e) => setSide(parseInt(e.target.value, 10) || 1)}>
-                  <option value={1}>1</option>
-                  <option value={2}>2</option>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Shelf</label>
-                <input
-                  type="text"
-                  maxLength={3}
-                  className="input-text font-mono"
-                  value={shelf}
-                  onChange={(e) => setShelf(e.target.value.toUpperCase())}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
-              <div className="form-group">
-                <label className="form-label">Row number</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="25"
-                  className="input-text font-mono"
-                  value={row}
-                  onChange={(e) => setRow(parseInt(e.target.value, 10) || 1)}
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Slot number</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="50"
-                  className="input-text font-mono"
-                  value={col}
-                  onChange={(e) => setCol(parseInt(e.target.value, 10) || 1)}
-                />
+              <div className="table-container" style={{ flex: 1, maxHeight: '210px' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '105px' }}>Product ID</th>
+                      <th>Product Name</th>
+                      <th style={{ width: '45px', textAlign: 'right' }}>Qty</th>
+                      <th style={{ width: '45px', textAlign: 'center' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {onHandBatch.map((item) => (
+                      <tr key={item.code}>
+                        <td className="font-mono">
+                          <strong>{item.code}</strong>
+                        </td>
+                        <td>{item.name}</td>
+                        <td style={{ textAlign: 'right' }}>{item.on_hand}</td>
+                        <td style={{ textAlign: 'center' }}>
+                          <button
+                            className="btn btn-danger btn-sm"
+                            onClick={() => handleRemoveFromHand(item.code)}
+                            title="Remove from batch"
+                          >
+                            &times;
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {onHandBatch.length === 0 && (
+                      <tr>
+                        <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                          On-hand batch is empty. Add products from the left.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '0.4rem' }}>
-              <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleAssignOnHandToAddress}>
-                Assign on-hand to address
-              </button>
+            {/* Target Address Card */}
+            <div style={{ background: 'var(--vscode-workbench-bg)', border: '1px solid var(--vscode-border)', borderRadius: '3px', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span className="form-label" style={{ fontWeight: 700 }}>
+                  Target Shelf Address
+                </span>
+                <span className="loc-pill assigned">{currentSlotName}</span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px' }}>
+                <div className="form-group">
+                  <label className="form-label">Floor</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    className="input-text font-mono"
+                    value={floor}
+                    onChange={(e) => setFloor(parseInt(e.target.value, 10) || 1)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Side</label>
+                  <select className="input-select" value={side} onChange={(e) => setSide(parseInt(e.target.value, 10) || 1)}>
+                    <option value={1}>1</option>
+                    <option value={2}>2</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Shelf</label>
+                  <input
+                    type="text"
+                    maxLength={3}
+                    className="input-text font-mono"
+                    value={shelf}
+                    onChange={(e) => setShelf(e.target.value.toUpperCase())}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Row</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="25"
+                    className="input-text font-mono"
+                    value={row}
+                    onChange={(e) => setRow(parseInt(e.target.value, 10) || 1)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Col</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="50"
+                    className="input-text font-mono"
+                    value={col}
+                    onChange={(e) => setCol(parseInt(e.target.value, 10) || 1)}
+                  />
+                </div>
+              </div>
+
               <button
-                className="btn btn-secondary"
-                onClick={() => setOnHandBatch([])}
+                className="btn btn-primary"
+                style={{ width: '100%', height: '28px', marginTop: '2px', fontWeight: 600 }}
+                onClick={handleAssignOnHandToAddress}
                 disabled={onHandBatch.length === 0}
               >
-                Clear on-hand
+                Assign on-hand → {currentSlotName}
               </button>
-            </div>
 
-            <div>
-              <label className="toggle-label">
+              <label className="toggle-label" style={{ marginTop: '2px' }}>
                 <input
                   type="checkbox"
                   className="toggle-checkbox"
@@ -1383,48 +1440,6 @@ function LocationAssignmentView() {
                 />
                 <span>Upload to KiotViet automatically</span>
               </label>
-            </div>
-
-            <span className="form-label" style={{ fontWeight: 600, marginTop: '0.3rem' }}>
-              On-Hand Working Batch ({onHandBatch.length})
-            </span>
-            <div className="table-container" style={{ flex: 1, maxHeight: '240px' }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Product ID</th>
-                    <th>Product Name</th>
-                    <th style={{ width: '55px' }}>Qty</th>
-                    <th style={{ width: '45px' }}>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {onHandBatch.map((item) => (
-                    <tr key={item.code}>
-                      <td className="font-mono">
-                        <strong>{item.code}</strong>
-                      </td>
-                      <td>{item.name}</td>
-                      <td>{item.on_hand}</td>
-                      <td>
-                        <button
-                          className="btn btn-danger btn-sm"
-                          onClick={() => handleRemoveFromHand(item.code)}
-                        >
-                          &times;
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {onHandBatch.length === 0 && (
-                    <tr>
-                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                        On-hand batch is empty.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
             </div>
           </div>
         </div>
@@ -2498,123 +2513,58 @@ function App() {
 
   return (
     <div className="vscode-workbench">
-      <div className="vscode-main-area">
-        {/* VS Code Left Activity Bar */}
-        <nav className="vscode-activity-bar" aria-label="Activity Bar">
-          <button
-            className={`activity-item ${activeTab === 'designer' ? 'active' : ''}`}
-            onClick={() => setActiveTab('designer')}
-            title="1. Shelf Designer"
-          >
-            <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M1 2.5A1.5 1.5 0 0 1 2.5 1h11A1.5 1.5 0 0 1 15 2.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 2.5zM2.5 2a.5.5 0 0 0-.5.5V7h5V2H2.5zM8 2v5h6V2.5a.5.5 0 0 0-.5-.5H8zm6 6H8v6h5.5a.5.5 0 0 0 .5-.5V8zm-7 6V8H2v5.5a.5.5 0 0 0 .5.5H7z"/>
-            </svg>
-          </button>
+      {/* Top Navigation Tabs */}
+      <div className="vscode-tab-bar" role="tablist">
+        <div
+          className={`vscode-tab ${activeTab === 'designer' ? 'active' : ''}`}
+          onClick={() => setActiveTab('designer')}
+          role="tab"
+        >
+          <span>1. Shelf Designer</span>
+        </div>
 
-          <button
-            className={`activity-item ${activeTab === 'assignment' ? 'active' : ''}`}
-            onClick={() => setActiveTab('assignment')}
-            title="2. Assign Locations"
-          >
-            <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M2.5 3a.5.5 0 0 0 0 1h11a.5.5 0 0 0 0-1h-11zm0 5a.5.5 0 0 0 0 1h11a.5.5 0 0 0 0-1h-11zm0 5a.5.5 0 0 0 0 1h11a.5.5 0 0 0 0-1h-11zM1 3.5a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0zm0 5a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0zm0 5a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0z"/>
-            </svg>
-            {pendingCount > 0 && <span className="activity-badge">{pendingCount}</span>}
-          </button>
+        <div
+          className={`vscode-tab ${activeTab === 'assignment' ? 'active' : ''}`}
+          onClick={() => setActiveTab('assignment')}
+          role="tab"
+        >
+          <span>2. Assign Locations</span>
+          {pendingCount > 0 && <span className="vscode-tab-badge">{pendingCount}</span>}
+        </div>
 
-          <button
-            className={`activity-item ${activeTab === 'primal_queue' ? 'active' : ''}`}
-            onClick={() => setActiveTab('primal_queue')}
-            title="3. Primal Queue / Shelves"
-          >
-            <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M8.1 1.05a1 1 0 0 0-.2 0l-6 2.5A1 1 0 0 0 1.5 4.5v7a1 1 0 0 0 .56.9l6 2.5a1 1 0 0 0 .88 0l6-2.5a1 1 0 0 0 .56-.9v-7a1 1 0 0 0-.6-.92l-6-2.53zM8 2.14l5.14 2.14L8 6.43 2.86 4.28 8 2.14zM2.5 5.37l5 2.14v6.2l-5-2.08V5.37zm6 8.34v-6.2l5-2.14v6.26l-5 2.08z"/>
-            </svg>
-          </button>
+        <div
+          className={`vscode-tab ${activeTab === 'primal_queue' ? 'active' : ''}`}
+          onClick={() => setActiveTab('primal_queue')}
+          role="tab"
+        >
+          <span>3. Primal Queue / Shelves</span>
+        </div>
 
-          <button
-            className={`activity-item ${activeTab === 'browser' ? 'active' : ''}`}
-            onClick={() => setActiveTab('browser')}
-            title="4. Browse Shelves"
-          >
-            <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
-            </svg>
-          </button>
+        <div
+          className={`vscode-tab ${activeTab === 'browser' ? 'active' : ''}`}
+          onClick={() => setActiveTab('browser')}
+          role="tab"
+        >
+          <span>4. Browse Shelves</span>
+        </div>
 
-          <button
-            className={`activity-item ${activeTab === 'cell_transfer' ? 'active' : ''}`}
-            onClick={() => setActiveTab('cell_transfer')}
-            title="5. Switch / Combine Cells"
-          >
-            <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M1 11.5a.5.5 0 0 0 .5.5h11.793l-3.147 3.146a.5.5 0 0 0 .708.708l4-4a.5.5 0 0 0 0-.708l-4-4a.5.5 0 0 0-.708.708L13.293 11H1.5a.5.5 0 0 0-.5.5zm14-7a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 1 0 .708-.708L2.707 4H14.5a.5.5 0 0 0 .5-.5z"/>
-            </svg>
-          </button>
-
-          <div className="activity-spacer"></div>
-
-          <button className="activity-item" title="Settings / DB Status">
-            <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M9.1 4.4L8.6 2H7.4l-.5 2.4-.7.3-2-1.3-.9.8 1.3 2-.2.7-2.4.5v1.2l2.4.5.3.8-1.3 2 .8.8 2-1.3.8.3.4 2.3h1.2l.5-2.4.8-.3 2 1.3.8-.8-1.3-2 .3-.8 2.3-.4V7.4l-2.4-.5-.3-.7 1.3-2-.8-.9-2 1.3-.7-.3zM8 10a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/>
-            </svg>
-          </button>
-        </nav>
-
-        {/* Editor part */}
-        <div className="vscode-editor-part">
-          <div className="vscode-tab-bar" role="tablist">
-            <div
-              className={`vscode-tab ${activeTab === 'designer' ? 'active' : ''}`}
-              onClick={() => setActiveTab('designer')}
-              role="tab"
-            >
-              <span>1. Shelf Designer</span>
-            </div>
-
-            <div
-              className={`vscode-tab ${activeTab === 'assignment' ? 'active' : ''}`}
-              onClick={() => setActiveTab('assignment')}
-              role="tab"
-            >
-              <span>2. Assign Locations</span>
-              {pendingCount > 0 && <span className="vscode-tab-badge">{pendingCount}</span>}
-            </div>
-
-            <div
-              className={`vscode-tab ${activeTab === 'primal_queue' ? 'active' : ''}`}
-              onClick={() => setActiveTab('primal_queue')}
-              role="tab"
-            >
-              <span>3. Primal Queue / Shelves</span>
-            </div>
-
-            <div
-              className={`vscode-tab ${activeTab === 'browser' ? 'active' : ''}`}
-              onClick={() => setActiveTab('browser')}
-              role="tab"
-            >
-              <span>4. Browse Shelves</span>
-            </div>
-
-            <div
-              className={`vscode-tab ${activeTab === 'cell_transfer' ? 'active' : ''}`}
-              onClick={() => setActiveTab('cell_transfer')}
-              role="tab"
-            >
-              <span>5. Switch / Combine Cells</span>
-            </div>
-          </div>
-
-          <main className="vscode-content-view">
-            {activeTab === 'designer' && <ShelfDesignerView />}
-            {activeTab === 'assignment' && <LocationAssignmentView />}
-            {activeTab === 'primal_queue' && <PrimalQueueView />}
-            {activeTab === 'browser' && <ShelfBrowserView />}
-            {activeTab === 'cell_transfer' && <CellTransferView />}
-          </main>
+        <div
+          className={`vscode-tab ${activeTab === 'cell_transfer' ? 'active' : ''}`}
+          onClick={() => setActiveTab('cell_transfer')}
+          role="tab"
+        >
+          <span>5. Switch / Combine Cells</span>
         </div>
       </div>
+
+      {/* Main Content Workspace */}
+      <main className="vscode-content-view">
+        {activeTab === 'designer' && <ShelfDesignerView />}
+        {activeTab === 'assignment' && <LocationAssignmentView />}
+        {activeTab === 'primal_queue' && <PrimalQueueView />}
+        {activeTab === 'browser' && <ShelfBrowserView />}
+        {activeTab === 'cell_transfer' && <CellTransferView />}
+      </main>
 
       {/* VS Code Bottom Status Bar (#007acc) */}
       <footer className="vscode-status-bar">
