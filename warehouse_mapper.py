@@ -39,7 +39,7 @@ __all__ = [
 # Set to "ts" (or "typescript") to run the modern TypeScript UI.
 # Set to "tkinter" to run the classic Tkinter desktop UI.
 # ==============================================================================
-UI_MODE = "ts"
+UI_MODE = "tkinter"
 
 
 def main() -> None:

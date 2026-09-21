@@ -1,4 +1,4 @@
-// Warehouse Shelf Mapper - Browser Runtime
+// Warehouse Shelf Mapper - IntelliJ Desktop App Runtime
 const { useState, useEffect, useRef } = React;
 
 // --- UTILITIES ---
@@ -187,7 +187,6 @@ function Navbar({ activeTab, onSelectTab, pendingCount = 0, catalogCount = 0 }) 
   return (
     <header className="navbar">
       <div className="brand-container">
-        <div className="brand-icon">📦</div>
         <span className="brand-title">Warehouse Shelf Mapper</span>
       </div>
 
@@ -225,12 +224,12 @@ function Navbar({ activeTab, onSelectTab, pendingCount = 0, catalogCount = 0 }) 
           className={`nav-tab ${activeTab === 'cell_transfer' ? 'active' : ''}`}
           onClick={() => onSelectTab('cell_transfer')}
         >
-          Tab 5: Switch / Combine
+          Tab 5: Switch / Combine Cells
         </button>
       </nav>
 
       <div className="navbar-actions">
-        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+        <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
           Catalog: <strong>{catalogCount}</strong> items
         </span>
       </div>
@@ -633,14 +632,21 @@ function ShelfDesignerView() {
     setRowCols(updated);
   };
 
-  const handleDefaultColsChange = (newDefault) => {
-    const clamped = Math.max(1, Math.min(40, newDefault));
-    setDefaultCols(clamped);
-    const updated = {};
-    for (let r = 1; r <= rowsCount; r++) {
-      updated[r] = clamped;
-    }
-    setRowCols(updated);
+  const handleAddRowAtTop = () => {
+    const next = rowsCount + 1;
+    setRowsCount(next);
+    setRowCols((prev) => ({ ...prev, [next]: defaultCols }));
+  };
+
+  const handleRemoveTopRow = () => {
+    if (rowsCount <= 1) return;
+    const next = rowsCount - 1;
+    setRowsCount(next);
+    setRowCols((prev) => {
+      const copy = { ...prev };
+      delete copy[rowsCount];
+      return copy;
+    });
   };
 
   const handleRowColOverride = (rowNum, cols) => {
@@ -695,158 +701,169 @@ function ShelfDesignerView() {
   return (
     <div className="view-container">
       <div className="split-pane">
-        <div className="panel">
-          <div className="panel-header">
-            <h2 className="panel-title">📐 Shelf Designer & Layout</h2>
-            <button className="btn btn-primary btn-sm" onClick={handleSaveShelf}>
-              💾 Save Shelf to DB
-            </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+          <div className="panel">
+            <div className="panel-header">
+              <span className="panel-title">Shelf Metadata</span>
+              <button className="btn btn-primary btn-sm" onClick={handleSaveShelf}>
+                Save Shelf to DB
+              </button>
+            </div>
+
+            <div className="panel-body">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Floor</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    className="input-text font-mono"
+                    value={floor}
+                    onChange={(e) => setFloor(parseInt(e.target.value, 10) || 1)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Side</label>
+                  <select className="input-select" value={side} onChange={(e) => setSide(parseInt(e.target.value, 10) || 1)}>
+                    <option value={1}>Side 1</option>
+                    <option value={2}>Side 2</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Shelf code</label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    className="input-text font-mono"
+                    value={shelfLetter}
+                    onChange={(e) => setShelfLetter(e.target.value.toUpperCase())}
+                    placeholder="e.g. A"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Number of rows</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="25"
+                    className="input-text font-mono"
+                    value={rowsCount}
+                    onChange={(e) => handleRowsCountChange(parseInt(e.target.value, 10) || 1)}
+                  />
+                </div>
+              </div>
+
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                Row 1 is at ground level. New rows are added at the top. Location example: L1-1A8-10.
+                Changing a loaded shelf's metadata renames it on Commit. Use New shelf for another side.
+              </div>
+            </div>
           </div>
 
-          <div className="panel-body">
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginBottom: '1rem' }}>
-              <div className="form-group">
-                <label className="form-label">Floor</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  className="input-text font-mono"
-                  value={floor}
-                  onChange={(e) => setFloor(parseInt(e.target.value, 10) || 1)}
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Side</label>
-                <select className="input-select" value={side} onChange={(e) => setSide(parseInt(e.target.value, 10) || 1)}>
-                  <option value={1}>Side 1</option>
-                  <option value={2}>Side 2</option>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Shelf Code</label>
-                <input
-                  type="text"
-                  maxLength={4}
-                  className="input-text font-mono"
-                  value={shelfLetter}
-                  onChange={(e) => setShelfLetter(e.target.value.toUpperCase())}
-                  placeholder="e.g. A"
-                />
+          <div className="panel" style={{ flex: 1 }}>
+            <div className="panel-header">
+              <span className="panel-title">Rows — Front View</span>
+              <div style={{ display: 'flex', gap: '0.4rem' }}>
+                <button className="btn btn-secondary btn-sm" onClick={handleAddRowAtTop}>
+                  Add row at top
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={handleRemoveTopRow}>
+                  Remove top row
+                </button>
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-              <div className="form-group">
-                <label className="form-label">Total Rows</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="25"
-                  className="input-text font-mono"
-                  value={rowsCount}
-                  onChange={(e) => handleRowsCountChange(parseInt(e.target.value, 10) || 1)}
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Default Columns / Row</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="35"
-                  className="input-text font-mono"
-                  value={defaultCols}
-                  onChange={(e) => handleDefaultColsChange(parseInt(e.target.value, 10) || 1)}
-                />
-              </div>
-            </div>
-
-            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
-              Per-Row Column Count Customizer:
-            </div>
-            <div className="table-container" style={{ maxHeight: '220px', marginBottom: '1rem' }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Row Number (Ground Up)</th>
-                    <th>Columns in this Row</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Array.from({ length: rowsCount }, (_, i) => rowsCount - i).map((rowNum) => (
-                    <tr key={rowNum}>
-                      <td className="font-mono">
-                        <strong>Row {rowNum}</strong>
-                      </td>
-                      <td>
-                        <input
-                          type="number"
-                          min="1"
-                          max="40"
-                          className="input-text font-mono"
-                          style={{ width: '80px', padding: '0.2rem 0.4rem' }}
-                          value={rowCols[rowNum] || defaultCols}
-                          onChange={(e) => handleRowColOverride(rowNum, parseInt(e.target.value, 10) || defaultCols)}
-                        />
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => handleRowColOverride(rowNum, defaultCols)}
-                        >
-                          Reset to Default
-                        </button>
-                      </td>
+            <div className="panel-body">
+              <div className="table-container" style={{ maxHeight: '240px' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '120px' }}>Row</th>
+                      <th>Slots in row</th>
+                      <th style={{ width: '100px' }}>Action</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {Array.from({ length: rowsCount }, (_, i) => rowsCount - i).map((rowNum) => (
+                      <tr key={rowNum}>
+                        <td className="font-mono">
+                          <strong>Row {rowNum}</strong>
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min="1"
+                            max="40"
+                            className="input-text font-mono"
+                            style={{ width: '70px', height: '22px', padding: '0 0.3rem' }}
+                            value={rowCols[rowNum] || defaultCols}
+                            onChange={(e) => handleRowColOverride(rowNum, parseInt(e.target.value, 10) || defaultCols)}
+                          />
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleRowColOverride(rowNum, defaultCols)}
+                          >
+                            Reset
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
-            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
-              Existing Shelves in Warehouse:
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-              {shelves.map((s) => (
-                <div
-                  key={s.id}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.3rem',
-                    background: '#f1f5f9',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '4px',
-                    padding: '0.2rem 0.5rem',
-                    fontSize: '0.8rem',
-                  }}
-                >
-                  <span style={{ cursor: 'pointer', fontWeight: 600 }} onClick={() => handleSelectExisting(s)}>
-                    {getShelfCode(s.floor, s.side, s.shelf)} ({s.rows_count}×{s.default_cols})
-                  </span>
-                  <button
-                    onClick={() => handleDeleteShelf(s.id)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}
-                    title="Delete shelf"
-                  >
-                    &times;
-                  </button>
+              <div style={{ marginTop: '0.5rem' }}>
+                <span className="form-label" style={{ display: 'block', marginBottom: '0.3rem' }}>
+                  Existing Shelves in Database:
+                </span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                  {shelves.map((s) => (
+                    <div
+                      key={s.id}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.3rem',
+                        background: 'var(--bg-subtle)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '2px',
+                        padding: '0.15rem 0.45rem',
+                        fontSize: '11.5px',
+                      }}
+                    >
+                      <span style={{ cursor: 'pointer', fontWeight: 600 }} onClick={() => handleSelectExisting(s)}>
+                        {getShelfCode(s.floor, s.side, s.shelf)} ({s.rows_count}×{s.default_cols})
+                      </span>
+                      <button
+                        onClick={() => handleDeleteShelf(s.id)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}
+                        title="Delete shelf"
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  ))}
+                  {shelves.length === 0 && (
+                    <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>No shelves saved.</span>
+                  )}
                 </div>
-              ))}
+              </div>
             </div>
           </div>
         </div>
 
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">
-              🖼️ 2D Front-View Preview: {getShelfCode(floor, side, shelfLetter)}
-            </h2>
+            <span className="panel-title">
+              2D Front-View Preview: {getShelfCode(floor, side, shelfLetter)}
+            </span>
             {selectedRow && selectedCol && (
               <span className="loc-pill assigned">
                 Selected: R{selectedRow}-C{selectedCol}
@@ -874,12 +891,22 @@ function ShelfDesignerView() {
             {statusMsg && (
               <div
                 style={{
-                  marginTop: '1rem',
-                  padding: '0.6rem 0.8rem',
-                  borderRadius: '6px',
-                  fontSize: '0.825rem',
-                  background: statusMsg.type === 'success' ? '#dcfce7' : statusMsg.type === 'error' ? '#fee2e2' : '#eff6ff',
-                  color: statusMsg.type === 'success' ? '#166534' : statusMsg.type === 'error' ? '#991b1b' : '#1e40af',
+                  marginTop: '0.5rem',
+                  padding: '0.4rem 0.6rem',
+                  borderRadius: '3px',
+                  fontSize: '11.5px',
+                  background:
+                    statusMsg.type === 'success'
+                      ? 'var(--success-subtle)'
+                      : statusMsg.type === 'error'
+                      ? 'var(--danger-subtle)'
+                      : 'var(--primary-subtle)',
+                  color:
+                    statusMsg.type === 'success'
+                      ? 'var(--success)'
+                      : statusMsg.type === 'error'
+                      ? 'var(--danger)'
+                      : 'var(--primary)',
                 }}
               >
                 {statusMsg.text}
@@ -895,18 +922,16 @@ function ShelfDesignerView() {
 function LocationAssignmentView() {
   const [catalog, setCatalog] = useState([]);
   const [pendingQueue, setPendingQueue] = useState([]);
-  const [batchQueue, setBatchQueue] = useState([]);
-  const [activeListTab, setActiveListTab] = useState('pending');
+  const [onHandBatch, setOnHandBatch] = useState([]);
+  const [slotContents, setSlotContents] = useState([]);
 
-  const [catalogSearch, setCatalogSearch] = useState('');
-  const [queueSearch, setQueueSearch] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [floor, setFloor] = useState(1);
   const [side, setSide] = useState(1);
   const [shelf, setShelf] = useState('A');
   const [row, setRow] = useState(1);
   const [col, setCol] = useState(1);
-  const [manualLocInput, setManualLocInput] = useState('');
 
   const [uploadToKiotViet, setUploadToKiotViet] = useState(false);
   const [logs, setLogs] = useState([]);
@@ -917,9 +942,15 @@ function LocationAssignmentView() {
   const fileInputRef = useRef(null);
   const importModeRef = useRef('new');
 
+  const currentSlotName = makeSlotName(floor, shelf, row, col, side);
+
   useEffect(() => {
     refreshData();
   }, []);
+
+  useEffect(() => {
+    loadSlotContents();
+  }, [floor, side, shelf, row, col]);
 
   const refreshData = async () => {
     const [cats, pends] = await Promise.all([ApiService.getCatalog(), ApiService.getPendingQueue()]);
@@ -927,84 +958,118 @@ function LocationAssignmentView() {
     setPendingQueue(pends);
   };
 
-  const addLog = (msg, type = 'info') => {
+  const loadSlotContents = async () => {
+    const shelfCode = getShelfCode(floor, side, shelf);
+    const cells = await ApiService.getShelfCells(shelfCode);
+    const cell = cells[currentSlotName];
+    setSlotContents(cell ? cell.items : []);
+  };
+
+  const addLog = (msg) => {
     const time = new Date().toLocaleTimeString();
-    setLogs((prev) => [`[${time}] ${msg}`, ...prev.slice(0, 50)]);
+    setLogs((prev) => [`[${time}] ${msg}`, ...prev.slice(0, 40)]);
   };
 
-  const handleManualLocChange = (val) => {
-    setManualLocInput(val);
-    const parsed = parseSlotName(val);
-    if (parsed) {
-      setFloor(parsed.floor);
-      setSide(parsed.side);
-      setShelf(parsed.shelf);
-      setRow(parsed.row);
-      setCol(parsed.col);
+  const handleQueueToHand = (item) => {
+    if (!onHandBatch.some((b) => b.code === item.code)) {
+      setOnHandBatch((prev) => [...prev, item]);
+      addLog(`Added ${item.code} to on-hand batch.`);
     }
   };
 
-  const currentComputedSlot = makeSlotName(floor, shelf, row, col, side);
-
-  const handleAddToBatch = (item) => {
-    if (!batchQueue.some((b) => b.code === item.code)) {
-      setBatchQueue((prev) => [...prev, item]);
-      addLog(`Added ${item.code} to work batch.`);
+  const handleCatalogToHand = (prod) => {
+    if (!onHandBatch.some((b) => b.code === prod.product_id)) {
+      setOnHandBatch((prev) => [
+        ...prev,
+        {
+          code: prod.product_id,
+          name: prod.product_name,
+          on_hand: prod.on_hand,
+          loc_id: prod.loc_id,
+        },
+      ]);
+      addLog(`Added ${prod.product_id} to on-hand batch.`);
     }
   };
 
-  const handleRemoveFromBatch = (code) => {
-    setBatchQueue((prev) => prev.filter((b) => b.code !== code));
+  const handleRemoveFromHand = (code) => {
+    setOnHandBatch((prev) => prev.filter((b) => b.code !== code));
   };
 
-  const handleStartAssign = () => {
-    let itemsToAssign = [];
-    if (activeListTab === 'batch') {
-      itemsToAssign = batchQueue.map((b) => ({ id: b.code, name: b.name, initialQuantity: b.on_hand || 1 }));
-    } else if (activeListTab === 'pending') {
-      const selected = pendingQueue.filter((p) => p.selected);
-      if (selected.length > 0) {
-        itemsToAssign = selected.map((p) => ({ id: p.code, name: p.name, initialQuantity: p.on_hand || 1 }));
-      }
-    }
-    if (itemsToAssign.length === 0) {
-      alert('Please select at least one product to assign.');
+  const handleAssignOnHandToAddress = () => {
+    if (onHandBatch.length === 0) {
+      alert('On-hand batch is empty. Select products to stage first.');
       return;
     }
-    setStockDialogProducts(itemsToAssign);
+    const items = onHandBatch.map((b) => ({
+      id: b.code,
+      name: b.name,
+      initialQuantity: b.on_hand || 1,
+    }));
+    setStockDialogProducts(items);
   };
 
   const handleConfirmStockAssignment = async (quantities) => {
     const slotObj = { floor, side, shelf, row, col };
     for (const [prodId, qty] of Object.entries(quantities)) {
-      const found = catalog.find((c) => c.product_id === prodId) || pendingQueue.find((p) => p.code === prodId);
+      const found =
+        catalog.find((c) => c.product_id === prodId) ||
+        pendingQueue.find((p) => p.code === prodId) ||
+        onHandBatch.find((b) => b.code === prodId);
+
+      const name = found ? (found.name || found.product_name) : prodId;
+      const barcode = found && found.barcode ? found.barcode : prodId;
+
       const res = await ApiService.assignLocation({
         product_id: prodId,
-        product_name: found ? (found.name || found.product_name) : prodId,
-        barcode: found && found.barcode ? found.barcode : prodId,
+        product_name: name,
+        barcode: barcode,
         slot: slotObj,
         quantity: qty,
         upload_to_kiotviet: uploadToKiotViet,
       });
+
       if (res.success) {
-        addLog(res.message || `Assigned ${prodId} to ${currentComputedSlot}`);
+        addLog(res.message || `Assigned ${prodId} to ${currentSlotName}`);
       } else {
         addLog(res.error || `Failed to assign ${prodId}`);
       }
     }
+
     setStockDialogProducts(null);
-    setBatchQueue([]);
-    refreshData();
+    setOnHandBatch([]);
+    await refreshData();
+    await loadSlotContents();
   };
 
   const handleDirectMove = async (prod) => {
     const targetSlot = { floor, side, shelf, row, col };
     const res = await ApiService.directMoveLocation(prod.product_id, targetSlot);
     if (res.success) {
-      addLog(`Direct moved ${prod.product_id} to ${currentComputedSlot}`);
-      refreshData();
+      addLog(`Direct moved ${prod.product_id} to ${currentSlotName}`);
+      await refreshData();
+      await loadSlotContents();
     } else {
       addLog(res.error || 'Move failed');
+    }
+  };
+
+  const handleSlotProductToHand = (item) => {
+    handleCatalogToHand({
+      product_id: item.product_id,
+      product_name: item.product_name,
+      barcode: item.barcode,
+      on_hand: item.quantity,
+      loc_id: currentSlotName,
+    });
+  };
+
+  const handleRemoveSlotProduct = async (productId) => {
+    if (confirm(`Remove ${productId} from ${currentSlotName}?`)) {
+      await ApiService.removePlacement(productId, currentSlotName);
+      addLog(`Removed ${productId} from ${currentSlotName}`);
+      await refreshData();
+      await loadSlotContents();
     }
   };
 
@@ -1043,27 +1108,23 @@ function LocationAssignmentView() {
     if (!csvDataToMap) return;
     const res = await ApiService.importCSV(csvDataToMap.data, mapping, csvDataToMap.mode);
     if (res.success) {
-      addLog(`CSV Import successful: ${res.message}`);
-      refreshData();
+      addLog(`CSV import successful: ${res.message}`);
+      await refreshData();
     } else {
-      addLog(`CSV Import error: ${res.error}`);
+      addLog(`CSV import error: ${res.error}`);
     }
     setCsvDataToMap(null);
   };
 
   const filteredPending = pendingQueue.filter((p) => {
-    if (!queueSearch) return true;
-    const s = normalizeSearch(queueSearch);
-    return (
-      normalizeSearch(p.code).includes(s) ||
-      normalizeSearch(p.name).includes(s) ||
-      (p.loc_id && normalizeSearch(p.loc_id).includes(s))
-    );
+    if (!searchQuery) return true;
+    const s = normalizeSearch(searchQuery);
+    return normalizeSearch(p.code).includes(s) || normalizeSearch(p.name).includes(s);
   });
 
   const filteredCatalog = catalog.filter((p) => {
-    if (!catalogSearch) return true;
-    const s = normalizeSearch(catalogSearch);
+    if (!searchQuery) return true;
+    const s = normalizeSearch(searchQuery);
     return (
       normalizeSearch(p.product_id).includes(s) ||
       normalizeSearch(p.barcode).includes(s) ||
@@ -1076,266 +1137,150 @@ function LocationAssignmentView() {
     <div className="view-container">
       <input type="file" ref={fileInputRef} accept=".csv" style={{ display: 'none' }} onChange={handleFileSelected} />
 
-      <div className="split-pane left-heavy">
+      <div className="split-pane three-column">
+        {/* PANE 1: Products */}
         <div className="panel">
           <div className="panel-header">
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button
-                className={`btn btn-sm ${activeListTab === 'pending' ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setActiveListTab('pending')}
-              >
-                Pending Queue ({pendingQueue.length})
+            <span className="panel-title">Products</span>
+            <div style={{ display: 'flex', gap: '0.3rem' }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => handleTriggerCSV('new')}>
+                Import CSV
               </button>
-              <button
-                className={`btn btn-sm ${activeListTab === 'catalog' ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setActiveListTab('catalog')}
-              >
-                Full Catalog ({catalog.length})
-              </button>
-              <button
-                className={`btn btn-sm ${activeListTab === 'batch' ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setActiveListTab('batch')}
-              >
-                Work Batch ({batchQueue.length})
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.4rem' }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => handleTriggerCSV('new')} title="Import new products from CSV">
-                📥 Import CSV
-              </button>
-              <button className="btn btn-secondary btn-sm" onClick={() => handleTriggerCSV('return')} title="Import returned inventory from CSV">
-                ↩️ Return CSV
+              <button className="btn btn-secondary btn-sm" onClick={() => handleTriggerCSV('return')}>
+                Return CSV
               </button>
             </div>
           </div>
 
           <div className="panel-body">
-            {activeListTab === 'pending' && (
-              <div>
-                <div className="input-search-wrapper" style={{ marginBottom: '0.75rem' }}>
-                  <input
-                    type="text"
-                    className="input-text"
-                    placeholder="Search pending queue by code or name..."
-                    value={queueSearch}
-                    onChange={(e) => setQueueSearch(e.target.value)}
-                    onFocus={(e) => e.target.select()}
-                  />
-                  {queueSearch && (
-                    <button className="search-clear-btn" onClick={() => setQueueSearch('')}>
-                      &times;
-                    </button>
-                  )}
-                </div>
-
-                <div className="table-container" style={{ maxHeight: '420px' }}>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th style={{ width: '36px' }}>
-                          <input
-                            type="checkbox"
-                            onChange={(e) => {
-                              const checked = e.target.checked;
-                              setPendingQueue((prev) => prev.map((p) => ({ ...p, selected: checked })));
-                            }}
-                          />
-                        </th>
-                        <th>Product ID</th>
-                        <th>Product Name</th>
-                        <th>On Hand</th>
-                        <th>Current Loc</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredPending.map((item) => (
-                        <tr key={item.code} className={item.selected ? 'selected' : ''}>
-                          <td>
-                            <input
-                              type="checkbox"
-                              checked={!!item.selected}
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                setPendingQueue((prev) =>
-                                  prev.map((p) => (p.code === item.code ? { ...p, selected: checked } : p))
-                                );
-                              }}
-                            />
-                          </td>
-                          <td className="font-mono">
-                            <strong>{item.code}</strong>
-                          </td>
-                          <td>{item.name}</td>
-                          <td>{item.on_hand}</td>
-                          <td>
-                            {item.loc_id ? <span className="loc-pill assigned">{item.loc_id}</span> : <span className="loc-pill">Unassigned</span>}
-                          </td>
-                          <td>
-                            <button className="btn btn-secondary btn-sm" onClick={() => handleAddToBatch(item)}>
-                              + Batch
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {filteredPending.length === 0 && (
-                        <tr>
-                          <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                            No pending products in queue.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {activeListTab === 'catalog' && (
-              <div>
-                <div className="input-search-wrapper" style={{ marginBottom: '0.75rem' }}>
-                  <input
-                    type="text"
-                    className="input-text"
-                    placeholder="Search catalog by code, name, barcode, location..."
-                    value={catalogSearch}
-                    onChange={(e) => setCatalogSearch(e.target.value)}
-                    onFocus={(e) => e.target.select()}
-                  />
-                  {catalogSearch && (
-                    <button className="search-clear-btn" onClick={() => setCatalogSearch('')}>
-                      &times;
-                    </button>
-                  )}
-                </div>
-
-                <div className="table-container" style={{ maxHeight: '420px' }}>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Product ID</th>
-                        <th>Product Name</th>
-                        <th>On Hand</th>
-                        <th>Location ID</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredCatalog.map((prod) => (
-                        <tr key={prod.product_id}>
-                          <td className="font-mono">
-                            <strong>{prod.product_id}</strong>
-                          </td>
-                          <td>{prod.product_name}</td>
-                          <td>{prod.on_hand}</td>
-                          <td>
-                            {prod.loc_id ? <span className="loc-pill assigned">{prod.loc_id}</span> : <span className="loc-pill">None</span>}
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', gap: '0.3rem' }}>
-                              <button
-                                className="btn btn-secondary btn-sm"
-                                onClick={() =>
-                                  handleAddToBatch({
-                                    code: prod.product_id,
-                                    name: prod.product_name,
-                                    on_hand: prod.on_hand,
-                                    loc_id: prod.loc_id,
-                                  })
-                                }
-                              >
-                                + Batch
-                              </button>
-                              <button
-                                className="btn btn-primary btn-sm"
-                                onClick={() => handleDirectMove(prod)}
-                                title={`Move directly to ${currentComputedSlot}`}
-                              >
-                                ➔ Move Here
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {activeListTab === 'batch' && (
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    Items to be assigned to <strong>{currentComputedSlot}</strong>
-                  </span>
-                  <button className="btn btn-secondary btn-sm" onClick={() => setBatchQueue([])} disabled={batchQueue.length === 0}>
-                    Clear Batch
+            <div className="form-group">
+              <label className="form-label">Search code, full name, or barcode</label>
+              <div className="input-search-wrapper">
+                <input
+                  type="text"
+                  className="input-text"
+                  placeholder="Type to filter queue and catalog..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={(e) => e.target.select()}
+                />
+                {searchQuery && (
+                  <button className="search-clear-btn" onClick={() => setSearchQuery('')}>
+                    &times;
                   </button>
-                </div>
-
-                <div className="table-container" style={{ maxHeight: '420px' }}>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Code</th>
-                        <th>Name</th>
-                        <th>Qty</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {batchQueue.map((item) => (
-                        <tr key={item.code}>
-                          <td className="font-mono">
-                            <strong>{item.code}</strong>
-                          </td>
-                          <td>{item.name}</td>
-                          <td>{item.on_hand}</td>
-                          <td>
-                            <button className="btn btn-danger btn-sm" onClick={() => handleRemoveFromBatch(item.code)}>
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {batchQueue.length === 0 && (
-                        <tr>
-                          <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                            Batch is empty. Select items from Pending or Catalog.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                )}
               </div>
-            )}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+              <span className="form-label" style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
+                Total Unassigned Product Queue ({pendingQueue.length})
+              </span>
+              <div className="table-container" style={{ flex: 1, maxHeight: '200px' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Product ID</th>
+                      <th>Product Name</th>
+                      <th style={{ width: '60px' }}>Stock</th>
+                      <th style={{ width: '50px' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredPending.map((item) => (
+                      <tr key={item.code}>
+                        <td className="font-mono">
+                          <strong>{item.code}</strong>
+                        </td>
+                        <td>{item.name}</td>
+                        <td>{item.on_hand}</td>
+                        <td>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleQueueToHand(item)}
+                            title="Move to on-hand batch"
+                          >
+                            + Hand
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredPending.length === 0 && (
+                      <tr>
+                        <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                          No pending products.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+              <span className="form-label" style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
+                Full Product Catalog ({catalog.length})
+              </span>
+              <div className="table-container" style={{ flex: 1, maxHeight: '200px' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Product ID</th>
+                      <th>Product Name</th>
+                      <th>Location ID</th>
+                      <th style={{ width: '85px' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredCatalog.map((prod) => (
+                      <tr key={prod.product_id}>
+                        <td className="font-mono">
+                          <strong>{prod.product_id}</strong>
+                        </td>
+                        <td>{prod.product_name}</td>
+                        <td>
+                          {prod.loc_id ? (
+                            <span className="loc-pill assigned">{prod.loc_id}</span>
+                          ) : (
+                            <span className="loc-pill">Unassigned</span>
+                          )}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.2rem' }}>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => handleCatalogToHand(prod)}
+                              title="Stage to on-hand batch"
+                            >
+                              + Hand
+                            </button>
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => handleDirectMove(prod)}
+                              title={`Direct move to ${currentSlotName}`}
+                            >
+                              Move
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
 
+        {/* PANE 2: On-Hand Queue and Shelf Address */}
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">📍 Target Shelf Address</h2>
-            <span className="loc-pill assigned" style={{ fontSize: '0.9rem' }}>
-              {currentComputedSlot}
-            </span>
+            <span className="panel-title">On-Hand Queue and Shelf Address</span>
+            <span className="loc-pill assigned">{currentSlotName}</span>
           </div>
 
           <div className="panel-body">
-            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-              <label className="form-label">Quick Jump / Manual Location Input</label>
-              <input
-                type="text"
-                className="input-text font-mono"
-                placeholder="e.g. L1-1A8-10"
-                value={manualLocInput}
-                onChange={(e) => handleManualLocChange(e.target.value.toUpperCase())}
-              />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginBottom: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.4rem' }}>
               <div className="form-group">
                 <label className="form-label">Floor</label>
                 <input
@@ -1351,8 +1296,8 @@ function LocationAssignmentView() {
               <div className="form-group">
                 <label className="form-label">Side</label>
                 <select className="input-select" value={side} onChange={(e) => setSide(parseInt(e.target.value, 10) || 1)}>
-                  <option value={1}>Side 1</option>
-                  <option value={2}>Side 2</option>
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
                 </select>
               </div>
 
@@ -1368,9 +1313,9 @@ function LocationAssignmentView() {
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
               <div className="form-group">
-                <label className="form-label">Row (From Ground Up)</label>
+                <label className="form-label">Row number</label>
                 <input
                   type="number"
                   min="1"
@@ -1382,7 +1327,7 @@ function LocationAssignmentView() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Column / Slot</label>
+                <label className="form-label">Slot number</label>
                 <input
                   type="number"
                   min="1"
@@ -1394,7 +1339,20 @@ function LocationAssignmentView() {
               </div>
             </div>
 
-            <div style={{ marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', gap: '0.4rem' }}>
+              <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleAssignOnHandToAddress}>
+                Assign on-hand to address
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setOnHandBatch([])}
+                disabled={onHandBatch.length === 0}
+              >
+                Clear on-hand
+              </button>
+            </div>
+
+            <div>
               <label className="toggle-label">
                 <input
                   type="checkbox"
@@ -1402,24 +1360,127 @@ function LocationAssignmentView() {
                   checked={uploadToKiotViet}
                   onChange={(e) => setUploadToKiotViet(e.target.checked)}
                 />
-                <span>🌐 Upload / Sync to KiotViet Web Automatically</span>
+                <span>Upload to KiotViet automatically</span>
               </label>
             </div>
 
-            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
-              <button className="btn btn-primary" style={{ flex: 1, padding: '0.65rem' }} onClick={handleStartAssign}>
-                ✅ Assign Selected to {currentComputedSlot}
-              </button>
+            <span className="form-label" style={{ fontWeight: 600, marginTop: '0.3rem' }}>
+              On-Hand Working Batch ({onHandBatch.length})
+            </span>
+            <div className="table-container" style={{ flex: 1, maxHeight: '240px' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Product ID</th>
+                    <th>Product Name</th>
+                    <th style={{ width: '55px' }}>Qty</th>
+                    <th style={{ width: '45px' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {onHandBatch.map((item) => (
+                    <tr key={item.code}>
+                      <td className="font-mono">
+                        <strong>{item.code}</strong>
+                      </td>
+                      <td>{item.name}</td>
+                      <td>{item.on_hand}</td>
+                      <td>
+                        <button
+                          className="btn btn-danger btn-sm"
+                          onClick={() => handleRemoveFromHand(item.code)}
+                        >
+                          &times;
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {onHandBatch.length === 0 && (
+                    <tr>
+                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                        On-hand batch is empty.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* PANE 3: Loaded Address Contents */}
+        <div className="panel">
+          <div className="panel-header">
+            <span className="panel-title">Loaded Address Contents</span>
+            <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+              {slotContents.length} item(s)
+            </span>
+          </div>
+
+          <div className="panel-body">
+            <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+              Current products stored at <strong className="font-mono">{currentSlotName}</strong>:
             </div>
 
-            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
-              Activity Log:
+            <div className="table-container" style={{ flex: 1, maxHeight: '260px' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Product ID</th>
+                    <th>Product Name</th>
+                    <th style={{ width: '55px' }}>Qty</th>
+                    <th style={{ width: '85px' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {slotContents.map((it) => (
+                    <tr key={it.product_id}>
+                      <td className="font-mono">
+                        <strong>{it.product_id}</strong>
+                      </td>
+                      <td>{it.product_name}</td>
+                      <td>{it.quantity}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '0.2rem' }}>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleSlotProductToHand(it)}
+                            title="Move product to on-hand"
+                          >
+                            + Hand
+                          </button>
+                          <button
+                            className="btn btn-danger btn-sm"
+                            onClick={() => handleRemoveSlotProduct(it.product_id)}
+                            title="Remove product from slot"
+                          >
+                            Del
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {slotContents.length === 0 && (
+                    <tr>
+                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                        Slot {currentSlotName} is empty.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
-            <div className="status-log">
-              {logs.map((log, i) => (
-                <div key={i}>{log}</div>
-              ))}
-              {logs.length === 0 && <div>Waiting for action...</div>}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              <span className="form-label" style={{ fontWeight: 600 }}>
+                Activity Log
+              </span>
+              <div className="status-log">
+                {logs.map((log, i) => (
+                  <div key={i}>{log}</div>
+                ))}
+                {logs.length === 0 && <div>Ready.</div>}
+              </div>
             </div>
           </div>
         </div>
@@ -1428,7 +1489,7 @@ function LocationAssignmentView() {
       {stockDialogProducts && (
         <StockQuantityDialog
           isOpen={true}
-          slotName={currentComputedSlot}
+          slotName={currentSlotName}
           products={stockDialogProducts}
           onConfirm={handleConfirmStockAssignment}
           onCancel={() => setStockDialogProducts(null)}
@@ -1569,37 +1630,40 @@ function PrimalQueueView() {
       <div className="split-pane left-heavy">
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">⚡ Primal Product Queue & Scanner</h2>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{filteredQueue.length} items</span>
+            <span className="panel-title">Products (Primal Queue & Full Catalog)</span>
+            <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>{filteredQueue.length} items</span>
           </div>
 
           <div className="panel-body">
-            <div className="input-search-wrapper" style={{ marginBottom: '0.75rem' }}>
-              <input
-                type="text"
-                className="input-text font-mono"
-                placeholder="Scan / enter barcode (clears on click)..."
-                value={searchQuery}
-                onChange={(e) => handleSearchChange(e.target.value)}
-                onFocus={(e) => e.target.select()}
-                autoFocus
-              />
-              {searchQuery && (
-                <button className="search-clear-btn" onClick={() => setSearchQuery('')}>
-                  &times;
-                </button>
-              )}
+            <div className="form-group">
+              <label className="form-label">Search barcode or product ID (auto-formats 5-3-3)</label>
+              <div className="input-search-wrapper">
+                <input
+                  type="text"
+                  className="input-text font-mono"
+                  placeholder="Scan or type barcode (selects text on focus)..."
+                  value={searchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  onFocus={(e) => e.target.select()}
+                  autoFocus
+                />
+                {searchQuery && (
+                  <button className="search-clear-btn" onClick={() => setSearchQuery('')}>
+                    &times;
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="table-container" style={{ maxHeight: '520px' }}>
+            <div className="table-container" style={{ flex: 1, maxHeight: '520px' }}>
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Barcode / Code</th>
+                    <th>Barcode / ID</th>
                     <th>Product Name</th>
-                    <th>Qty</th>
-                    <th>Status / Location</th>
-                    <th>Action</th>
+                    <th style={{ width: '50px' }}>Qty</th>
+                    <th>Location</th>
+                    <th style={{ width: '80px' }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1631,7 +1695,7 @@ function PrimalQueueView() {
                               handleSelectProduct(item.target_location);
                             }}
                           >
-                            👁️ View Shelf
+                            View
                           </button>
                         )}
                       </td>
@@ -1640,7 +1704,7 @@ function PrimalQueueView() {
                   {filteredQueue.length === 0 && (
                     <tr>
                       <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                        No matching items found in primal queue.
+                        No items found.
                       </td>
                     </tr>
                   )}
@@ -1652,11 +1716,11 @@ function PrimalQueueView() {
 
         <div className="panel">
           <div className="panel-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <h2 className="panel-title">🗄️ Shelf View:</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span className="panel-title">Shelf View:</span>
               <select
                 className="input-select"
-                style={{ padding: '0.2rem 0.5rem', fontWeight: 600 }}
+                style={{ height: '24px', padding: '0 0.4rem', fontWeight: 600 }}
                 value={currentShelf ? currentShelf.id : ''}
                 onChange={(e) => {
                   const s = shelves.find((x) => x.id === parseInt(e.target.value, 10));
@@ -1672,8 +1736,8 @@ function PrimalQueueView() {
             </div>
 
             {selectedCellLoc && (
-              <span className="loc-pill assigned" style={{ fontSize: '0.85rem' }}>
-                Slot: {selectedCellLoc}
+              <span className="loc-pill assigned">
+                {selectedCellLoc}
               </span>
             )}
           </div>
@@ -1694,16 +1758,25 @@ function PrimalQueueView() {
               />
             ) : (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>
-                No shelves created yet. Use Tab 1: Shelf Designer to create a shelf.
+                No shelves created.
               </div>
             )}
 
-            <div style={{ marginTop: '1.25rem' }}>
-              <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem', display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ marginTop: '0.4rem' }}>
+              <div
+                style={{
+                  fontSize: '11.5px',
+                  fontWeight: 600,
+                  marginBottom: '0.3rem',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  color: 'var(--text-secondary)',
+                }}
+              >
                 <span>
-                  Contents in <strong className="font-mono">{selectedCellLoc || 'No Cell Selected'}</strong>:
+                  Contents in <strong className="font-mono">{selectedCellLoc || 'None'}</strong>:
                 </span>
-                <span style={{ color: 'var(--text-muted)' }}>{activeCellItems.length} product(s)</span>
+                <span>{activeCellItems.length} product(s)</span>
               </div>
 
               <div className="table-container" style={{ maxHeight: '180px' }}>
@@ -1712,8 +1785,8 @@ function PrimalQueueView() {
                     <tr>
                       <th>Product ID</th>
                       <th>Product Name</th>
-                      <th>Qty</th>
-                      <th>Action</th>
+                      <th style={{ width: '55px' }}>Qty</th>
+                      <th style={{ width: '60px' }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1725,7 +1798,10 @@ function PrimalQueueView() {
                         <td>{item.product_name}</td>
                         <td>{item.quantity}</td>
                         <td>
-                          <button className="btn btn-danger btn-sm" onClick={() => handleRemoveProduct(item.product_id)}>
+                          <button
+                            className="btn btn-danger btn-sm"
+                            onClick={() => handleRemoveProduct(item.product_id)}
+                          >
                             Remove
                           </button>
                         </td>
@@ -1734,7 +1810,7 @@ function PrimalQueueView() {
                     {activeCellItems.length === 0 && (
                       <tr>
                         <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                          {selectedCellLoc ? 'This cell is empty.' : 'Click any cell on the shelf above to view contents.'}
+                          {selectedCellLoc ? 'Cell is empty.' : 'Click a cell above to view contents.'}
                         </td>
                       </tr>
                     )}
@@ -1799,15 +1875,24 @@ function ShelfBrowserView() {
 
   return (
     <div className="view-container">
-      <div className="panel" style={{ marginBottom: '0.75rem' }}>
-        <div style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+      <div className="panel" style={{ marginBottom: '0.4rem' }}>
+        <div
+          style={{
+            padding: '0.45rem 0.75rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '0.75rem',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <label className="form-label" style={{ margin: 0 }}>
-              Select Shelf to Browse:
+              Existing shelf:
             </label>
             <select
               className="input-select"
-              style={{ fontWeight: 600, minWidth: '180px' }}
+              style={{ fontWeight: 600, minWidth: '220px' }}
               value={selectedShelf ? selectedShelf.id : ''}
               onChange={(e) => {
                 const found = shelves.find((s) => s.id === parseInt(e.target.value, 10));
@@ -1820,15 +1905,19 @@ function ShelfBrowserView() {
                 </option>
               ))}
             </select>
+            <button className="btn btn-secondary btn-sm" onClick={() => selectedShelf && loadShelfCells(selectedShelf)}>
+              Refresh
+            </button>
           </div>
 
-          <div style={{ display: 'flex', gap: '1.5rem', fontSize: '0.85rem' }}>
+          <div style={{ display: 'flex', gap: '1.25rem', fontSize: '12px', color: 'var(--text-secondary)' }}>
             <div>
-              Occupied Cells: <strong style={{ color: '#2e7d32' }}>{occupiedCount}</strong>
+              Occupied: <strong style={{ color: 'var(--success)' }}>{occupiedCount}</strong> cells
             </div>
             <div>
-              Total Products Stored: <strong>{totalUnits}</strong> units
+              Total Products: <strong>{totalUnits}</strong> units
             </div>
+            <div style={{ color: 'var(--text-muted)' }}>Read-only view</div>
           </div>
         </div>
       </div>
@@ -1836,9 +1925,9 @@ function ShelfBrowserView() {
       <div className="split-pane right-heavy">
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">
-              🏢 {selectedShelf ? getShelfCode(selectedShelf.floor, selectedShelf.side, selectedShelf.shelf) : 'Shelf'} Layout
-            </h2>
+            <span className="panel-title">
+              {selectedShelf ? getShelfCode(selectedShelf.floor, selectedShelf.side, selectedShelf.shelf) : 'Shelf'} Layout
+            </span>
             {selectedCellLoc && <span className="loc-pill assigned">Selected: {selectedCellLoc}</span>}
           </div>
 
@@ -1864,9 +1953,9 @@ function ShelfBrowserView() {
 
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">📋 Cell Details: {selectedCellLoc || 'Select a Cell'}</h2>
+            <span className="panel-title">Cell Details: {selectedCellLoc || 'Select a Cell'}</span>
             {selectedCellLoc && (
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
                 {items.length} item(s) / {selectedCell ? selectedCell.total_quantity : 0} units
               </span>
             )}
@@ -1875,26 +1964,23 @@ function ShelfBrowserView() {
           <div className="panel-body">
             {selectedCellLoc ? (
               <div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
-                  <div style={{ background: '#f8fafc', padding: '0.5rem', borderRadius: '4px' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>ROW (GROUND UP)</div>
-                    <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>Row {selectedRow}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.4rem', marginBottom: '0.6rem' }}>
+                  <div style={{ background: 'var(--bg-subtle)', padding: '0.4rem', borderRadius: '2px' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Row (Ground Up)</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Row {selectedRow}</div>
                   </div>
-                  <div style={{ background: '#f8fafc', padding: '0.5rem', borderRadius: '4px' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>COLUMN / CELL</div>
-                    <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>Col {selectedCol}</div>
+                  <div style={{ background: 'var(--bg-subtle)', padding: '0.4rem', borderRadius: '2px' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Slot / Column</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Col {selectedCol}</div>
                   </div>
-                  <div style={{ background: '#f8fafc', padding: '0.5rem', borderRadius: '4px' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>STATUS</div>
-                    <div style={{ fontSize: '0.9rem', fontWeight: 600, color: items.length > 0 ? '#15803d' : '#64748b' }}>
+                  <div style={{ background: 'var(--bg-subtle)', padding: '0.4rem', borderRadius: '2px' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Status</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: items.length > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
                       {items.length > 0 ? 'Occupied' : 'Empty'}
                     </div>
                   </div>
                 </div>
 
-                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
-                  Products Stored in this Cell:
-                </div>
                 <div className="table-container">
                   <table className="data-table">
                     <thead>
@@ -1902,7 +1988,7 @@ function ShelfBrowserView() {
                         <th>Product ID</th>
                         <th>Product Name</th>
                         <th>Barcode</th>
-                        <th>Qty</th>
+                        <th style={{ width: '55px' }}>Qty</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1920,7 +2006,7 @@ function ShelfBrowserView() {
                       ))}
                       {items.length === 0 && (
                         <tr>
-                          <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>
+                          <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '1.5rem' }}>
                             Cell is empty.
                           </td>
                         </tr>
@@ -1931,8 +2017,7 @@ function ShelfBrowserView() {
               </div>
             ) : (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '3rem 1rem' }}>
-                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🔍</div>
-                <div>Click on any slot in the shelf grid to inspect its contents.</div>
+                <div>Click on any slot in the shelf grid to view contents.</div>
               </div>
             )}
           </div>
@@ -2022,7 +2107,7 @@ function CellTransferView() {
           await handleSelectShelfA(foundShelf);
           setRowA(parsed.row);
           setColA(parsed.col);
-          addLog(`Jumped Shelf A to ${res.location} for product ${res.product.product_id}`);
+          addLog(`Found product ${res.product.product_id} at ${res.location}`);
         }
       }
     }
@@ -2040,7 +2125,7 @@ function CellTransferView() {
   const handleSwitchCells = async () => {
     if (!shelfA || !shelfB) return;
     if (slotLocA === slotLocB) {
-      alert('Source and destination cells must be different.');
+      alert('Choose two different cells to switch.');
       return;
     }
 
@@ -2055,7 +2140,7 @@ function CellTransferView() {
     });
 
     if (res.success) {
-      addLog(`Swapped: ${slotLocA} ⇄ ${slotLocB}`);
+      addLog(`Swapped: ${slotLocA} <-> ${slotLocB}`);
       await reloadBoth();
     } else {
       addLog(`Error: ${res.error}`);
@@ -2065,7 +2150,7 @@ function CellTransferView() {
   const handleCombineCells = async () => {
     if (!shelfA || !shelfB) return;
     if (slotLocA === slotLocB) {
-      alert('Source and destination cells must be different.');
+      alert('Choose two different cells to combine.');
       return;
     }
     if (itemsA.length === 0) {
@@ -2084,7 +2169,7 @@ function CellTransferView() {
     });
 
     if (res.success) {
-      addLog(`Combined: ${slotLocA} ➔ ${slotLocB}`);
+      addLog(`Combined: ${slotLocA} -> ${slotLocB}`);
       await reloadBoth();
     } else {
       addLog(`Error: ${res.error}`);
@@ -2093,16 +2178,16 @@ function CellTransferView() {
 
   return (
     <div className="view-container">
-      <div className="panel" style={{ padding: '0.75rem 1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+      <div className="panel" style={{ padding: '0.45rem 0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <label className="form-label" style={{ margin: 0, whiteSpace: 'nowrap' }}>
-            🔍 Product Quick Jump (Shelf A):
+            Find product ID:
           </label>
-          <div className="input-search-wrapper" style={{ flex: 1, minWidth: '260px' }}>
+          <div className="input-search-wrapper" style={{ maxWidth: '400px' }}>
             <input
               type="text"
               className="input-text font-mono"
-              placeholder="Enter or scan Product ID / Barcode to auto-select its cell (clears on focus)..."
+              placeholder="Enter product ID to locate in Shelf A (clears on focus)..."
               value={jumpQuery}
               onChange={(e) => handleQuickJump(e.target.value)}
               onFocus={(e) => e.target.select()}
@@ -2119,21 +2204,56 @@ function CellTransferView() {
       <div className="split-pane">
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">🅰️ Source Slot A: {slotLocA}</h2>
-            <select
-              className="input-select"
-              value={shelfA ? shelfA.id : ''}
-              onChange={(e) => {
-                const found = shelves.find((s) => s.id === parseInt(e.target.value, 10));
-                if (found) handleSelectShelfA(found);
-              }}
-            >
-              {shelves.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {getShelfCode(s.floor, s.side, s.shelf)} ({s.rows_count}R × {s.default_cols}C)
-                </option>
-              ))}
-            </select>
+            <span className="panel-title">Source Cell (Shelf A) — {slotLocA}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <label className="form-label" style={{ margin: 0 }}>Shelf:</label>
+              <select
+                className="input-select"
+                style={{ height: '24px', padding: '0 0.3rem' }}
+                value={shelfA ? shelfA.id : ''}
+                onChange={(e) => {
+                  const found = shelves.find((s) => s.id === parseInt(e.target.value, 10));
+                  if (found) handleSelectShelfA(found);
+                }}
+              >
+                {shelves.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {getShelfCode(s.floor, s.side, s.shelf)}
+                  </option>
+                ))}
+              </select>
+
+              <label className="form-label" style={{ margin: 0, marginLeft: '0.2rem' }}>Row:</label>
+              <select
+                className="input-select"
+                style={{ height: '24px', width: '50px', padding: '0 0.2rem' }}
+                value={rowA}
+                onChange={(e) => setRowA(parseInt(e.target.value, 10))}
+              >
+                {Array.from({ length: shelfA?.rows_count || 1 }, (_, i) => i + 1).map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+
+              <label className="form-label" style={{ margin: 0, marginLeft: '0.2rem' }}>Col:</label>
+              <select
+                className="input-select"
+                style={{ height: '24px', width: '50px', padding: '0 0.2rem' }}
+                value={colA}
+                onChange={(e) => setColA(parseInt(e.target.value, 10))}
+              >
+                {Array.from(
+                  { length: (shelfA?.custom_row_cols?.[rowA] || shelfA?.default_cols || 10) },
+                  (_, i) => i + 1
+                ).map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="panel-body">
@@ -2155,17 +2275,17 @@ function CellTransferView() {
               />
             )}
 
-            <div style={{ marginTop: '0.75rem' }}>
-              <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
-                Contents in Slot A ({itemsA.length} items):
-              </div>
+            <div style={{ marginTop: '0.3rem' }}>
+              <span className="form-label" style={{ fontWeight: 600, display: 'block', marginBottom: '0.2rem' }}>
+                Contents in Slot A ({itemsA.length} items)
+              </span>
               <div className="table-container" style={{ maxHeight: '130px' }}>
                 <table className="data-table">
                   <thead>
                     <tr>
                       <th>Product ID</th>
-                      <th>Name</th>
-                      <th>Qty</th>
+                      <th>Product Name</th>
+                      <th style={{ width: '55px' }}>Qty</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2194,21 +2314,56 @@ function CellTransferView() {
 
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">🅱️ Destination Slot B: {slotLocB}</h2>
-            <select
-              className="input-select"
-              value={shelfB ? shelfB.id : ''}
-              onChange={(e) => {
-                const found = shelves.find((s) => s.id === parseInt(e.target.value, 10));
-                if (found) handleSelectShelfB(found);
-              }}
-            >
-              {shelves.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {getShelfCode(s.floor, s.side, s.shelf)} ({s.rows_count}R × {s.default_cols}C)
-                </option>
-              ))}
-            </select>
+            <span className="panel-title">Destination Cell (Shelf B) — {slotLocB}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <label className="form-label" style={{ margin: 0 }}>Shelf:</label>
+              <select
+                className="input-select"
+                style={{ height: '24px', padding: '0 0.3rem' }}
+                value={shelfB ? shelfB.id : ''}
+                onChange={(e) => {
+                  const found = shelves.find((s) => s.id === parseInt(e.target.value, 10));
+                  if (found) handleSelectShelfB(found);
+                }}
+              >
+                {shelves.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {getShelfCode(s.floor, s.side, s.shelf)}
+                  </option>
+                ))}
+              </select>
+
+              <label className="form-label" style={{ margin: 0, marginLeft: '0.2rem' }}>Row:</label>
+              <select
+                className="input-select"
+                style={{ height: '24px', width: '50px', padding: '0 0.2rem' }}
+                value={rowB}
+                onChange={(e) => setRowB(parseInt(e.target.value, 10))}
+              >
+                {Array.from({ length: shelfB?.rows_count || 1 }, (_, i) => i + 1).map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+
+              <label className="form-label" style={{ margin: 0, marginLeft: '0.2rem' }}>Col:</label>
+              <select
+                className="input-select"
+                style={{ height: '24px', width: '50px', padding: '0 0.2rem' }}
+                value={colB}
+                onChange={(e) => setColB(parseInt(e.target.value, 10))}
+              >
+                {Array.from(
+                  { length: (shelfB?.custom_row_cols?.[rowB] || shelfB?.default_cols || 10) },
+                  (_, i) => i + 1
+                ).map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="panel-body">
@@ -2230,17 +2385,17 @@ function CellTransferView() {
               />
             )}
 
-            <div style={{ marginTop: '0.75rem' }}>
-              <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
-                Contents in Slot B ({itemsB.length} items):
-              </div>
+            <div style={{ marginTop: '0.3rem' }}>
+              <span className="form-label" style={{ fontWeight: 600, display: 'block', marginBottom: '0.2rem' }}>
+                Contents in Slot B ({itemsB.length} items)
+              </span>
               <div className="table-container" style={{ maxHeight: '130px' }}>
                 <table className="data-table">
                   <thead>
                     <tr>
                       <th>Product ID</th>
-                      <th>Name</th>
-                      <th>Qty</th>
+                      <th>Product Name</th>
+                      <th style={{ width: '55px' }}>Qty</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2268,18 +2423,20 @@ function CellTransferView() {
         </div>
       </div>
 
-      <div className="panel" style={{ padding: '0.85rem 1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-          <button className="btn btn-primary" style={{ padding: '0.6rem 1.25rem' }} onClick={handleSwitchCells}>
-            🔄 Switch Cells ({slotLocA} ⇄ {slotLocB})
+      <div className="panel" style={{ padding: '0.6rem 0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
+          <button className="btn btn-primary" onClick={handleSwitchCells}>
+            Switch cells ({slotLocA} &lt;-&gt; {slotLocB})
           </button>
-          <button className="btn btn-secondary" style={{ padding: '0.6rem 1.25rem' }} onClick={handleCombineCells}>
-            ➕ Combine Cell A into Cell B ({slotLocA} ➔ {slotLocB})
+          <button className="btn btn-secondary" onClick={handleCombineCells}>
+            Combine cell A into cell B ({slotLocA} -&gt; {slotLocB})
           </button>
-          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Both operations are executed atomically.</span>
+          <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+            Both operations are executed atomically.
+          </span>
         </div>
 
-        <div className="status-log" style={{ height: '70px' }}>
+        <div className="status-log" style={{ height: '60px' }}>
           {logs.map((log, i) => (
             <div key={i}>{log}</div>
           ))}

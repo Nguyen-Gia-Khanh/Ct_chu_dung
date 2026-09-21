@@ -43,7 +43,7 @@ export const ShelfBrowserView: React.FC = () => {
   const selectedCell = selectedCellLoc ? cellsData[selectedCellLoc] : null;
   const items = selectedCell ? selectedCell.items : [];
 
-  // Compute stats
+  // Stats
   let totalUnits = 0;
   let occupiedCount = 0;
   Object.values(cellsData).forEach((cell) => {
@@ -55,24 +55,24 @@ export const ShelfBrowserView: React.FC = () => {
 
   return (
     <div className="view-container">
-      <div className="panel" style={{ marginBottom: '0.75rem' }}>
+      <div className="panel" style={{ marginBottom: '0.4rem' }}>
         <div
           style={{
-            padding: '0.75rem 1rem',
+            padding: '0.45rem 0.75rem',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             flexWrap: 'wrap',
-            gap: '1rem',
+            gap: '0.75rem',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <label className="form-label" style={{ margin: 0 }}>
-              Select Shelf to Browse:
+              Existing shelf:
             </label>
             <select
               className="input-select"
-              style={{ fontWeight: 600, minWidth: '180px' }}
+              style={{ fontWeight: 600, minWidth: '220px' }}
               value={selectedShelf ? selectedShelf.id : ''}
               onChange={(e) => {
                 const found = shelves.find((s) => s.id === parseInt(e.target.value, 10));
@@ -85,27 +85,30 @@ export const ShelfBrowserView: React.FC = () => {
                 </option>
               ))}
             </select>
+            <button className="btn btn-secondary btn-sm" onClick={() => selectedShelf && loadShelfCells(selectedShelf)}>
+              Refresh
+            </button>
           </div>
 
-          <div style={{ display: 'flex', gap: '1.5rem', fontSize: '0.85rem' }}>
+          <div style={{ display: 'flex', gap: '1.25rem', fontSize: '12px', color: 'var(--text-secondary)' }}>
             <div>
-              Occupied Cells:{' '}
-              <strong style={{ color: '#2e7d32' }}>{occupiedCount}</strong>
+              Occupied: <strong style={{ color: 'var(--success)' }}>{occupiedCount}</strong> cells
             </div>
             <div>
-              Total Products Stored: <strong>{totalUnits}</strong> units
+              Total Products: <strong>{totalUnits}</strong> units
             </div>
+            <div style={{ color: 'var(--text-muted)' }}>Read-only view</div>
           </div>
         </div>
       </div>
 
       <div className="split-pane right-heavy">
-        {/* Left Side: 2D Interactive Shelf Canvas */}
+        {/* Left: 2D Shelf Grid */}
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">
-              🏢 {selectedShelf ? getShelfCode(selectedShelf.floor, selectedShelf.side, selectedShelf.shelf) : 'Shelf'} Layout
-            </h2>
+            <span className="panel-title">
+              {selectedShelf ? getShelfCode(selectedShelf.floor, selectedShelf.side, selectedShelf.shelf) : 'Shelf'} Layout
+            </span>
             {selectedCellLoc && (
               <span className="loc-pill assigned">
                 Selected: {selectedCellLoc}
@@ -135,14 +138,14 @@ export const ShelfBrowserView: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Side: Cell Contents & Details */}
+        {/* Right: Cell Details */}
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">
-              📋 Cell Details: {selectedCellLoc || 'Select a Cell'}
-            </h2>
+            <span className="panel-title">
+              Cell Details: {selectedCellLoc || 'Select a Cell'}
+            </span>
             {selectedCellLoc && (
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
                 {items.length} item(s) / {selectedCell?.total_quantity || 0} units
               </span>
             )}
@@ -151,26 +154,23 @@ export const ShelfBrowserView: React.FC = () => {
           <div className="panel-body">
             {selectedCellLoc ? (
               <div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
-                  <div style={{ background: '#f8fafc', padding: '0.5rem', borderRadius: '4px' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>ROW (GROUND UP)</div>
-                    <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>Row {selectedRow}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.4rem', marginBottom: '0.6rem' }}>
+                  <div style={{ background: 'var(--bg-subtle)', padding: '0.4rem', borderRadius: '2px' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Row (Ground Up)</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Row {selectedRow}</div>
                   </div>
-                  <div style={{ background: '#f8fafc', padding: '0.5rem', borderRadius: '4px' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>COLUMN / CELL</div>
-                    <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>Col {selectedCol}</div>
+                  <div style={{ background: 'var(--bg-subtle)', padding: '0.4rem', borderRadius: '2px' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Slot / Column</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Col {selectedCol}</div>
                   </div>
-                  <div style={{ background: '#f8fafc', padding: '0.5rem', borderRadius: '4px' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>STATUS</div>
-                    <div style={{ fontSize: '0.9rem', fontWeight: 600, color: items.length > 0 ? '#15803d' : '#64748b' }}>
+                  <div style={{ background: 'var(--bg-subtle)', padding: '0.4rem', borderRadius: '2px' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Status</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: items.length > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
                       {items.length > 0 ? 'Occupied' : 'Empty'}
                     </div>
                   </div>
                 </div>
 
-                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
-                  Products Stored in this Cell:
-                </div>
                 <div className="table-container">
                   <table className="data-table">
                     <thead>
@@ -178,7 +178,7 @@ export const ShelfBrowserView: React.FC = () => {
                         <th>Product ID</th>
                         <th>Product Name</th>
                         <th>Barcode</th>
-                        <th>Qty</th>
+                        <th style={{ width: '55px' }}>Qty</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -196,7 +196,7 @@ export const ShelfBrowserView: React.FC = () => {
                       ))}
                       {items.length === 0 && (
                         <tr>
-                          <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>
+                          <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '1.5rem' }}>
                             Cell is empty.
                           </td>
                         </tr>
@@ -207,8 +207,7 @@ export const ShelfBrowserView: React.FC = () => {
               </div>
             ) : (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '3rem 1rem' }}>
-                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🔍</div>
-                <div>Click on any slot in the shelf grid to inspect its contents.</div>
+                <div>Click on any slot in the shelf grid to view contents.</div>
               </div>
             )}
           </div>

@@ -51,12 +51,11 @@ export const PrimalQueueView: React.FC = () => {
     setSelectedCol(null);
   };
 
-  // Barcode / Product Search with auto-format
+  // Barcode search
   const handleSearchChange = (val: string) => {
     const formatted = formatProductId(val);
     setSearchQuery(formatted);
 
-    // If exact or strong match with a placed product, jump to its shelf and cell!
     const term = normalizeSearch(formatted);
     const found = catalog.find(
       (p) =>
@@ -126,7 +125,6 @@ export const PrimalQueueView: React.FC = () => {
     }
   };
 
-  // Filtered queue items
   const filteredQueue = primalQueue.filter((item) => {
     if (!searchQuery) return true;
     const s = normalizeSearch(searchQuery);
@@ -142,42 +140,45 @@ export const PrimalQueueView: React.FC = () => {
   return (
     <div className="view-container">
       <div className="split-pane left-heavy">
-        {/* Left Side: Primal Queue Search & Items */}
+        {/* Left Side: Products (Primal Queue & Full Catalog) */}
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">⚡ Primal Product Queue & Scanner</h2>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+            <span className="panel-title">Products (Primal Queue & Full Catalog)</span>
+            <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
               {filteredQueue.length} items
             </span>
           </div>
 
           <div className="panel-body">
-            <div className="input-search-wrapper" style={{ marginBottom: '0.75rem' }}>
-              <input
-                type="text"
-                className="input-text font-mono"
-                placeholder="Scan / enter barcode (auto-formats 5-3-3, clears on click)..."
-                value={searchQuery}
-                onChange={(e) => handleSearchChange(e.target.value)}
-                onFocus={(e) => e.target.select()}
-                autoFocus
-              />
-              {searchQuery && (
-                <button className="search-clear-btn" onClick={() => setSearchQuery('')}>
-                  &times;
-                </button>
-              )}
+            <div className="form-group">
+              <label className="form-label">Search barcode or product ID (auto-formats 5-3-3)</label>
+              <div className="input-search-wrapper">
+                <input
+                  type="text"
+                  className="input-text font-mono"
+                  placeholder="Scan or type barcode (selects text on focus)..."
+                  value={searchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  onFocus={(e) => e.target.select()}
+                  autoFocus
+                />
+                {searchQuery && (
+                  <button className="search-clear-btn" onClick={() => setSearchQuery('')}>
+                    &times;
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="table-container" style={{ maxHeight: '520px' }}>
+            <div className="table-container" style={{ flex: 1, maxHeight: '520px' }}>
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Barcode / Code</th>
+                    <th>Barcode / ID</th>
                     <th>Product Name</th>
-                    <th>Qty</th>
-                    <th>Status / Location</th>
-                    <th>Action</th>
+                    <th style={{ width: '50px' }}>Qty</th>
+                    <th>Location</th>
+                    <th style={{ width: '80px' }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -211,7 +212,7 @@ export const PrimalQueueView: React.FC = () => {
                               handleSelectProduct(item.target_location);
                             }}
                           >
-                            👁️ View Shelf
+                            View
                           </button>
                         )}
                       </td>
@@ -220,7 +221,7 @@ export const PrimalQueueView: React.FC = () => {
                   {filteredQueue.length === 0 && (
                     <tr>
                       <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                        No matching items found in primal queue.
+                        No items found.
                       </td>
                     </tr>
                   )}
@@ -230,14 +231,14 @@ export const PrimalQueueView: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Side: Interactive 2D Shelf Canvas & Cell Contents */}
+        {/* Right Side: Shelf View */}
         <div className="panel">
           <div className="panel-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <h2 className="panel-title">🗄️ Shelf View:</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span className="panel-title">Shelf View:</span>
               <select
                 className="input-select"
-                style={{ padding: '0.2rem 0.5rem', fontWeight: 600 }}
+                style={{ height: '24px', padding: '0 0.4rem', fontWeight: 600 }}
                 value={currentShelf ? currentShelf.id : ''}
                 onChange={(e) => {
                   const s = shelves.find((x) => x.id === parseInt(e.target.value, 10));
@@ -253,8 +254,8 @@ export const PrimalQueueView: React.FC = () => {
             </div>
 
             {selectedCellLoc && (
-              <span className="loc-pill assigned" style={{ fontSize: '0.85rem' }}>
-                Slot: {selectedCellLoc}
+              <span className="loc-pill assigned">
+                {selectedCellLoc}
               </span>
             )}
           </div>
@@ -275,26 +276,26 @@ export const PrimalQueueView: React.FC = () => {
               />
             ) : (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>
-                No shelves created yet. Use Tab 1: Shelf Designer to create a shelf.
+                No shelves created.
               </div>
             )}
 
-            {/* Cell Contents Detail */}
-            <div style={{ marginTop: '1.25rem' }}>
+            {/* Cell Contents */}
+            <div style={{ marginTop: '0.4rem' }}>
               <div
                 style={{
-                  fontSize: '0.85rem',
+                  fontSize: '11.5px',
                   fontWeight: 600,
-                  marginBottom: '0.4rem',
+                  marginBottom: '0.3rem',
                   display: 'flex',
                   justifyContent: 'space-between',
+                  color: 'var(--text-secondary)',
                 }}
               >
                 <span>
-                  Contents in{' '}
-                  <strong className="font-mono">{selectedCellLoc || 'No Cell Selected'}</strong>:
+                  Contents in <strong className="font-mono">{selectedCellLoc || 'None'}</strong>:
                 </span>
-                <span style={{ color: 'var(--text-muted)' }}>
+                <span>
                   {activeCellItems.length} product(s)
                 </span>
               </div>
@@ -305,8 +306,8 @@ export const PrimalQueueView: React.FC = () => {
                     <tr>
                       <th>Product ID</th>
                       <th>Product Name</th>
-                      <th>Qty</th>
-                      <th>Action</th>
+                      <th style={{ width: '55px' }}>Qty</th>
+                      <th style={{ width: '60px' }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -331,8 +332,8 @@ export const PrimalQueueView: React.FC = () => {
                       <tr>
                         <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
                           {selectedCellLoc
-                            ? 'This cell is empty.'
-                            : 'Click any cell on the shelf above to view contents.'}
+                            ? 'Cell is empty.'
+                            : 'Click a cell above to view contents.'}
                         </td>
                       </tr>
                     )}

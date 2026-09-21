@@ -17,7 +17,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header className="navbar">
       <div className="brand-container">
-        <div className="brand-icon">📦</div>
         <span className="brand-title">Warehouse Shelf Mapper</span>
       </div>
 
@@ -55,12 +54,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           className={`nav-tab ${activeTab === 'cell_transfer' ? 'active' : ''}`}
           onClick={() => onSelectTab('cell_transfer')}
         >
-          Tab 5: Switch / Combine
+          Tab 5: Switch / Combine Cells
         </button>
       </nav>
 
       <div className="navbar-actions">
-        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+        <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
           Catalog: <strong>{catalogCount}</strong> items
         </span>
       </div>

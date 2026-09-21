@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Product, OnHandProduct, SlotAddress, CSVData, CSVColumnMapping } from '../types';
+import { Product, OnHandProduct, SlotAddress, CSVData, CSVColumnMapping, CellContent } from '../types';
 import { ApiService } from '../services/api';
-import { makeSlotName, parseSlotName, normalizeSearch, formatProductId } from '../utils/coordinates';
+import { makeSlotName, parseSlotName, normalizeSearch, formatProductId, getShelfCode } from '../utils/coordinates';
 import { StockQuantityDialog, ProductQuantityItem } from '../components/StockQuantityDialog';
 import { ColumnMappingDialog } from '../components/ColumnMappingDialog';
 
@@ -9,12 +9,11 @@ export const LocationAssignmentView: React.FC = () => {
   // State
   const [catalog, setCatalog] = useState<Product[]>([]);
   const [pendingQueue, setPendingQueue] = useState<OnHandProduct[]>([]);
-  const [batchQueue, setBatchQueue] = useState<OnHandProduct[]>([]);
-  const [activeListTab, setActiveListTab] = useState<'pending' | 'catalog' | 'batch'>('pending');
+  const [onHandBatch, setOnHandBatch] = useState<OnHandProduct[]>([]);
+  const [slotContents, setSlotContents] = useState<CellContent[]>([]);
 
   // Search
-  const [catalogSearch, setCatalogSearch] = useState<string>('');
-  const [queueSearch, setQueueSearch] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Target Location Address
   const [floor, setFloor] = useState<number>(1);
@@ -22,7 +21,6 @@ export const LocationAssignmentView: React.FC = () => {
   const [shelf, setShelf] = useState<string>('A');
   const [row, setRow] = useState<number>(1);
   const [col, setCol] = useState<number>(1);
-  const [manualLocInput, setManualLocInput] = useState<string>('');
 
   // Options
   const [uploadToKiotViet, setUploadToKiotViet] = useState<boolean>(false);
@@ -35,9 +33,15 @@ export const LocationAssignmentView: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importModeRef = useRef<'new' | 'return'>('new');
 
+  const currentSlotName = makeSlotName(floor, shelf, row, col, side);
+
   useEffect(() => {
     refreshData();
   }, []);
+
+  useEffect(() => {
+    loadSlotContents();
+  }, [floor, side, shelf, row, col]);
 
   const refreshData = async () => {
     const [cats, pends] = await Promise.all([
@@ -48,101 +52,122 @@ export const LocationAssignmentView: React.FC = () => {
     setPendingQueue(pends);
   };
 
-  const addLog = (msg: string, type: 'info' | 'success' | 'error' = 'info') => {
+  const loadSlotContents = async () => {
+    const shelfCode = getShelfCode(floor, side, shelf);
+    const cells = await ApiService.getShelfCells(shelfCode);
+    const cell = cells[currentSlotName];
+    setSlotContents(cell ? cell.items : []);
+  };
+
+  const addLog = (msg: string) => {
     const time = new Date().toLocaleTimeString();
-    setLogs((prev) => [`[${time}] ${msg}`, ...prev.slice(0, 50)]);
+    setLogs((prev) => [`[${time}] ${msg}`, ...prev.slice(0, 40)]);
   };
 
-  // Sync target slot from manual input if changed
-  const handleManualLocChange = (val: string) => {
-    setManualLocInput(val);
-    const parsed = parseSlotName(val);
-    if (parsed) {
-      setFloor(parsed.floor);
-      setSide(parsed.side);
-      setShelf(parsed.shelf);
-      setRow(parsed.row);
-      setCol(parsed.col);
+  // Move queue item to on-hand batch
+  const handleQueueToHand = (item: OnHandProduct) => {
+    if (!onHandBatch.some((b) => b.code === item.code)) {
+      setOnHandBatch((prev) => [...prev, item]);
+      addLog(`Added ${item.code} to on-hand batch.`);
     }
   };
 
-  const currentComputedSlot = makeSlotName(floor, shelf, row, col, side);
-
-  // Add to batch queue
-  const handleAddToBatch = (item: OnHandProduct) => {
-    if (!batchQueue.some((b) => b.code === item.code)) {
-      setBatchQueue((prev) => [...prev, item]);
-      addLog(`Added ${item.code} to work batch.`, 'info');
+  const handleCatalogToHand = (prod: Product) => {
+    if (!onHandBatch.some((b) => b.code === prod.product_id)) {
+      setOnHandBatch((prev) => [
+        ...prev,
+        {
+          code: prod.product_id,
+          name: prod.product_name,
+          on_hand: prod.on_hand,
+          loc_id: prod.loc_id,
+        },
+      ]);
+      addLog(`Added ${prod.product_id} to on-hand batch.`);
     }
   };
 
-  const handleRemoveFromBatch = (code: string) => {
-    setBatchQueue((prev) => prev.filter((b) => b.code !== code));
+  const handleRemoveFromHand = (code: string) => {
+    setOnHandBatch((prev) => prev.filter((b) => b.code !== code));
   };
 
-  // Assign action
-  const handleStartAssign = () => {
-    let itemsToAssign: ProductQuantityItem[] = [];
-
-    if (activeListTab === 'batch') {
-      itemsToAssign = batchQueue.map((b) => ({
-        id: b.code,
-        name: b.name,
-        initialQuantity: b.on_hand || 1,
-      }));
-    } else if (activeListTab === 'pending') {
-      const selected = pendingQueue.filter((p) => p.selected);
-      if (selected.length > 0) {
-        itemsToAssign = selected.map((p) => ({
-          id: p.code,
-          name: p.name,
-          initialQuantity: p.on_hand || 1,
-        }));
-      }
-    }
-
-    if (itemsToAssign.length === 0) {
-      alert('Please select at least one product to assign.');
+  // Assign on-hand batch to address
+  const handleAssignOnHandToAddress = () => {
+    if (onHandBatch.length === 0) {
+      alert('On-hand batch is empty. Select products to stage first.');
       return;
     }
-
-    setStockDialogProducts(itemsToAssign);
+    const items = onHandBatch.map((b) => ({
+      id: b.code,
+      name: b.name,
+      initialQuantity: b.on_hand || 1,
+    }));
+    setStockDialogProducts(items);
   };
 
   const handleConfirmStockAssignment = async (quantities: Record<string, number>) => {
     const slotObj: SlotAddress = { floor, side, shelf, row, col };
     for (const [prodId, qty] of Object.entries(quantities)) {
-      const found = catalog.find((c) => c.product_id === prodId) || pendingQueue.find((p) => p.code === prodId);
+      const found =
+        catalog.find((c) => c.product_id === prodId) ||
+        pendingQueue.find((p) => p.code === prodId) ||
+        onHandBatch.find((b) => b.code === prodId);
+
+      const name = found ? ('name' in found ? found.name : found.product_name) : prodId;
+      const barcode = found && 'barcode' in found ? found.barcode : prodId;
+
       const res = await ApiService.assignLocation({
         product_id: prodId,
-        product_name: found ? ('name' in found ? found.name : found.product_name) : prodId,
-        barcode: found && 'barcode' in found ? found.barcode : prodId,
+        product_name: name,
+        barcode: barcode,
         slot: slotObj,
         quantity: qty,
         upload_to_kiotviet: uploadToKiotViet,
       });
 
       if (res.success) {
-        addLog(res.message || `Assigned ${prodId} to ${currentComputedSlot}`, 'success');
+        addLog(res.message || `Assigned ${prodId} to ${currentSlotName}`);
       } else {
-        addLog(res.error || `Failed to assign ${prodId}`, 'error');
+        addLog(res.error || `Failed to assign ${prodId}`);
       }
     }
 
     setStockDialogProducts(null);
-    setBatchQueue([]);
-    refreshData();
+    setOnHandBatch([]);
+    await refreshData();
+    await loadSlotContents();
   };
 
-  // Direct move for catalog item
+  // Direct move from catalog
   const handleDirectMove = async (prod: Product) => {
     const targetSlot: SlotAddress = { floor, side, shelf, row, col };
     const res = await ApiService.directMoveLocation(prod.product_id, targetSlot);
     if (res.success) {
-      addLog(`Direct moved ${prod.product_id} to ${currentComputedSlot}`, 'success');
-      refreshData();
+      addLog(`Direct moved ${prod.product_id} to ${currentSlotName}`);
+      await refreshData();
+      await loadSlotContents();
     } else {
-      addLog(res.error || 'Move failed', 'error');
+      addLog(res.error || 'Move failed');
+    }
+  };
+
+  // Move slot product back to on-hand
+  const handleSlotProductToHand = (item: CellContent) => {
+    handleCatalogToHand({
+      product_id: item.product_id,
+      product_name: item.product_name,
+      barcode: item.barcode,
+      on_hand: item.quantity,
+      loc_id: currentSlotName,
+    });
+  };
+
+  const handleRemoveSlotProduct = async (productId: string) => {
+    if (confirm(`Remove ${productId} from ${currentSlotName}?`)) {
+      await ApiService.removePlacement(productId, currentSlotName);
+      addLog(`Removed ${productId} from ${currentSlotName}`);
+      await refreshData();
+      await loadSlotContents();
     }
   };
 
@@ -164,7 +189,6 @@ export const LocationAssignmentView: React.FC = () => {
 
       const headers = lines[0].split(',').map((h) => h.trim().replace(/^"|"$/g, ''));
       const rows: Record<string, string>[] = [];
-
       for (let i = 1; i < lines.length; i++) {
         const parts = lines[i].split(',').map((p) => p.trim().replace(/^"|"$/g, ''));
         const rowObj: Record<string, string> = {};
@@ -187,28 +211,27 @@ export const LocationAssignmentView: React.FC = () => {
     if (!csvDataToMap) return;
     const res = await ApiService.importCSV(csvDataToMap.data, mapping, csvDataToMap.mode);
     if (res.success) {
-      addLog(`CSV Import successful: ${res.message}`, 'success');
-      refreshData();
+      addLog(`CSV import successful: ${res.message}`);
+      await refreshData();
     } else {
-      addLog(`CSV Import error: ${res.error}`, 'error');
+      addLog(`CSV import error: ${res.error}`);
     }
     setCsvDataToMap(null);
   };
 
-  // Filters
+  // Filter lists
   const filteredPending = pendingQueue.filter((p) => {
-    if (!queueSearch) return true;
-    const s = normalizeSearch(queueSearch);
+    if (!searchQuery) return true;
+    const s = normalizeSearch(searchQuery);
     return (
       normalizeSearch(p.code).includes(s) ||
-      normalizeSearch(p.name).includes(s) ||
-      (p.loc_id && normalizeSearch(p.loc_id).includes(s))
+      normalizeSearch(p.name).includes(s)
     );
   });
 
   const filteredCatalog = catalog.filter((p) => {
-    if (!catalogSearch) return true;
-    const s = normalizeSearch(catalogSearch);
+    if (!searchQuery) return true;
+    const s = normalizeSearch(searchQuery);
     return (
       normalizeSearch(p.product_id).includes(s) ||
       normalizeSearch(p.barcode).includes(s) ||
@@ -227,301 +250,158 @@ export const LocationAssignmentView: React.FC = () => {
         onChange={handleFileSelected}
       />
 
-      <div className="split-pane left-heavy">
-        {/* Left Side: Product Queues & Catalog */}
+      <div className="split-pane three-column">
+        {/* PANE 1: Products (Matching Tkinter Products panel) */}
         <div className="panel">
           <div className="panel-header">
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button
-                className={`btn btn-sm ${activeListTab === 'pending' ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setActiveListTab('pending')}
-              >
-                Pending Queue ({pendingQueue.length})
-              </button>
-              <button
-                className={`btn btn-sm ${activeListTab === 'catalog' ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setActiveListTab('catalog')}
-              >
-                Full Catalog ({catalog.length})
-              </button>
-              <button
-                className={`btn btn-sm ${activeListTab === 'batch' ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setActiveListTab('batch')}
-              >
-                Work Batch ({batchQueue.length})
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.4rem' }}>
+            <span className="panel-title">Products</span>
+            <div style={{ display: 'flex', gap: '0.3rem' }}>
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={() => handleTriggerCSV('new')}
-                title="Import new products from CSV"
               >
-                📥 Import CSV
+                Import CSV
               </button>
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={() => handleTriggerCSV('return')}
-                title="Import returned inventory from CSV"
               >
-                ↩️ Return CSV
+                Return CSV
               </button>
             </div>
           </div>
 
           <div className="panel-body">
-            {/* Tab: Pending Queue */}
-            {activeListTab === 'pending' && (
-              <div>
-                <div className="input-search-wrapper" style={{ marginBottom: '0.75rem' }}>
-                  <input
-                    type="text"
-                    className="input-text"
-                    placeholder="Search pending queue by code or name..."
-                    value={queueSearch}
-                    onChange={(e) => setQueueSearch(e.target.value)}
-                    onFocus={(e) => e.target.select()}
-                  />
-                  {queueSearch && (
-                    <button className="search-clear-btn" onClick={() => setQueueSearch('')}>
-                      &times;
-                    </button>
-                  )}
-                </div>
+            <div className="form-group">
+              <label className="form-label">Search code, full name, or barcode</label>
+              <div className="input-search-wrapper">
+                <input
+                  type="text"
+                  className="input-text"
+                  placeholder="Type to filter queue and catalog..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={(e) => e.target.select()}
+                />
+                {searchQuery && (
+                  <button className="search-clear-btn" onClick={() => setSearchQuery('')}>
+                    &times;
+                  </button>
+                )}
+              </div>
+            </div>
 
-                <div className="table-container" style={{ maxHeight: '420px' }}>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th style={{ width: '36px' }}>
-                          <input
-                            type="checkbox"
-                            onChange={(e) => {
-                              const checked = e.target.checked;
-                              setPendingQueue((prev) =>
-                                prev.map((p) => ({ ...p, selected: checked }))
-                              );
-                            }}
-                          />
-                        </th>
-                        <th>Product ID</th>
-                        <th>Product Name</th>
-                        <th>On Hand</th>
-                        <th>Current Loc</th>
-                        <th>Action</th>
+            {/* Total Unassigned Queue */}
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+              <span className="form-label" style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
+                Total Unassigned Product Queue ({pendingQueue.length})
+              </span>
+              <div className="table-container" style={{ flex: 1, maxHeight: '200px' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Product ID</th>
+                      <th>Product Name</th>
+                      <th style={{ width: '60px' }}>Stock</th>
+                      <th style={{ width: '50px' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredPending.map((item) => (
+                      <tr key={item.code}>
+                        <td className="font-mono">
+                          <strong>{item.code}</strong>
+                        </td>
+                        <td>{item.name}</td>
+                        <td>{item.on_hand}</td>
+                        <td>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleQueueToHand(item)}
+                            title="Move to on-hand batch"
+                          >
+                            + Hand
+                          </button>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {filteredPending.map((item) => (
-                        <tr key={item.code} className={item.selected ? 'selected' : ''}>
-                          <td>
-                            <input
-                              type="checkbox"
-                              checked={!!item.selected}
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                setPendingQueue((prev) =>
-                                  prev.map((p) =>
-                                    p.code === item.code ? { ...p, selected: checked } : p
-                                  )
-                                );
-                              }}
-                            />
-                          </td>
-                          <td className="font-mono">
-                            <strong>{item.code}</strong>
-                          </td>
-                          <td>{item.name}</td>
-                          <td>{item.on_hand}</td>
-                          <td>
-                            {item.loc_id ? (
-                              <span className="loc-pill assigned">{item.loc_id}</span>
-                            ) : (
-                              <span className="loc-pill">Unassigned</span>
-                            )}
-                          </td>
-                          <td>
+                    ))}
+                    {filteredPending.length === 0 && (
+                      <tr>
+                        <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                          No pending products.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Full Product Catalog with Location ID Join */}
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+              <span className="form-label" style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
+                Full Product Catalog ({catalog.length})
+              </span>
+              <div className="table-container" style={{ flex: 1, maxHeight: '200px' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Product ID</th>
+                      <th>Product Name</th>
+                      <th>Location ID</th>
+                      <th style={{ width: '85px' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredCatalog.map((prod) => (
+                      <tr key={prod.product_id}>
+                        <td className="font-mono">
+                          <strong>{prod.product_id}</strong>
+                        </td>
+                        <td>{prod.product_name}</td>
+                        <td>
+                          {prod.loc_id ? (
+                            <span className="loc-pill assigned">{prod.loc_id}</span>
+                          ) : (
+                            <span className="loc-pill">Unassigned</span>
+                          )}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.2rem' }}>
                             <button
                               className="btn btn-secondary btn-sm"
-                              onClick={() => handleAddToBatch(item)}
+                              onClick={() => handleCatalogToHand(prod)}
+                              title="Stage to on-hand batch"
                             >
-                              + Batch
+                              + Hand
                             </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {filteredPending.length === 0 && (
-                        <tr>
-                          <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                            No pending products in queue.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Tab: Full Catalog with Location ID join */}
-            {activeListTab === 'catalog' && (
-              <div>
-                <div className="input-search-wrapper" style={{ marginBottom: '0.75rem' }}>
-                  <input
-                    type="text"
-                    className="input-text"
-                    placeholder="Search catalog by code, name, barcode, location..."
-                    value={catalogSearch}
-                    onChange={(e) => setCatalogSearch(e.target.value)}
-                    onFocus={(e) => e.target.select()}
-                  />
-                  {catalogSearch && (
-                    <button className="search-clear-btn" onClick={() => setCatalogSearch('')}>
-                      &times;
-                    </button>
-                  )}
-                </div>
-
-                <div className="table-container" style={{ maxHeight: '420px' }}>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Product ID</th>
-                        <th>Product Name</th>
-                        <th>On Hand</th>
-                        <th>Location ID</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredCatalog.map((prod) => (
-                        <tr key={prod.product_id}>
-                          <td className="font-mono">
-                            <strong>{prod.product_id}</strong>
-                          </td>
-                          <td>{prod.product_name}</td>
-                          <td>{prod.on_hand}</td>
-                          <td>
-                            {prod.loc_id ? (
-                              <span className="loc-pill assigned">{prod.loc_id}</span>
-                            ) : (
-                              <span className="loc-pill">None</span>
-                            )}
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', gap: '0.3rem' }}>
-                              <button
-                                className="btn btn-secondary btn-sm"
-                                onClick={() =>
-                                  handleAddToBatch({
-                                    code: prod.product_id,
-                                    name: prod.product_name,
-                                    on_hand: prod.on_hand,
-                                    loc_id: prod.loc_id,
-                                  })
-                                }
-                              >
-                                + Batch
-                              </button>
-                              <button
-                                className="btn btn-primary btn-sm"
-                                onClick={() => handleDirectMove(prod)}
-                                title={`Move directly to ${currentComputedSlot}`}
-                              >
-                                ➔ Move Here
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Tab: Work Batch Queue */}
-            {activeListTab === 'batch' && (
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    Items to be assigned to <strong>{currentComputedSlot}</strong>
-                  </span>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => setBatchQueue([])}
-                    disabled={batchQueue.length === 0}
-                  >
-                    Clear Batch
-                  </button>
-                </div>
-
-                <div className="table-container" style={{ maxHeight: '420px' }}>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Code</th>
-                        <th>Name</th>
-                        <th>Qty</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {batchQueue.map((item) => (
-                        <tr key={item.code}>
-                          <td className="font-mono">
-                            <strong>{item.code}</strong>
-                          </td>
-                          <td>{item.name}</td>
-                          <td>{item.on_hand}</td>
-                          <td>
                             <button
-                              className="btn btn-danger btn-sm"
-                              onClick={() => handleRemoveFromBatch(item.code)}
+                              className="btn btn-primary btn-sm"
+                              onClick={() => handleDirectMove(prod)}
+                              title={`Direct move to ${currentSlotName}`}
                             >
-                              Remove
+                              Move
                             </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {batchQueue.length === 0 && (
-                        <tr>
-                          <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                            Batch is empty. Select items from Pending or Catalog.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )}
+            </div>
           </div>
         </div>
 
-        {/* Right Side: Target Address & Execution */}
+        {/* PANE 2: On-Hand Queue and Shelf Address (Matching Tkinter) */}
         <div className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">📍 Target Shelf Address</h2>
-            <span className="loc-pill assigned" style={{ fontSize: '0.9rem' }}>
-              {currentComputedSlot}
-            </span>
+            <span className="panel-title">On-Hand Queue and Shelf Address</span>
+            <span className="loc-pill assigned">{currentSlotName}</span>
           </div>
 
           <div className="panel-body">
-            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-              <label className="form-label">Quick Jump / Manual Location Input</label>
-              <input
-                type="text"
-                className="input-text font-mono"
-                placeholder="e.g. L1-1A8-10"
-                value={manualLocInput}
-                onChange={(e) => handleManualLocChange(e.target.value.toUpperCase())}
-              />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginBottom: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.4rem' }}>
               <div className="form-group">
                 <label className="form-label">Floor</label>
                 <input
@@ -541,8 +421,8 @@ export const LocationAssignmentView: React.FC = () => {
                   value={side}
                   onChange={(e) => setSide(parseInt(e.target.value, 10) || 1)}
                 >
-                  <option value={1}>Side 1</option>
-                  <option value={2}>Side 2</option>
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
                 </select>
               </div>
 
@@ -558,9 +438,9 @@ export const LocationAssignmentView: React.FC = () => {
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
               <div className="form-group">
-                <label className="form-label">Row (From Ground Up)</label>
+                <label className="form-label">Row number</label>
                 <input
                   type="number"
                   min="1"
@@ -572,7 +452,7 @@ export const LocationAssignmentView: React.FC = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Column / Slot</label>
+                <label className="form-label">Slot number</label>
                 <input
                   type="number"
                   min="1"
@@ -584,7 +464,24 @@ export const LocationAssignmentView: React.FC = () => {
               </div>
             </div>
 
-            <div style={{ marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', gap: '0.4rem' }}>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 1 }}
+                onClick={handleAssignOnHandToAddress}
+              >
+                Assign on-hand to address
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setOnHandBatch([])}
+                disabled={onHandBatch.length === 0}
+              >
+                Clear on-hand
+              </button>
+            </div>
+
+            <div>
               <label className="toggle-label">
                 <input
                   type="checkbox"
@@ -592,29 +489,127 @@ export const LocationAssignmentView: React.FC = () => {
                   checked={uploadToKiotViet}
                   onChange={(e) => setUploadToKiotViet(e.target.checked)}
                 />
-                <span>🌐 Upload / Sync to KiotViet Web Automatically</span>
+                <span>Upload to KiotViet automatically</span>
               </label>
             </div>
 
-            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
-              <button
-                className="btn btn-primary"
-                style={{ flex: 1, padding: '0.65rem' }}
-                onClick={handleStartAssign}
-              >
-                ✅ Assign Selected to {currentComputedSlot}
-              </button>
+            <span className="form-label" style={{ fontWeight: 600, marginTop: '0.3rem' }}>
+              On-Hand Working Batch ({onHandBatch.length})
+            </span>
+            <div className="table-container" style={{ flex: 1, maxHeight: '240px' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Product ID</th>
+                    <th>Product Name</th>
+                    <th style={{ width: '55px' }}>Qty</th>
+                    <th style={{ width: '45px' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {onHandBatch.map((item) => (
+                    <tr key={item.code}>
+                      <td className="font-mono">
+                        <strong>{item.code}</strong>
+                      </td>
+                      <td>{item.name}</td>
+                      <td>{item.on_hand}</td>
+                      <td>
+                        <button
+                          className="btn btn-danger btn-sm"
+                          onClick={() => handleRemoveFromHand(item.code)}
+                        >
+                          &times;
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {onHandBatch.length === 0 && (
+                    <tr>
+                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                        On-hand batch is empty.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* PANE 3: Loaded Address Contents (Matching Tkinter) */}
+        <div className="panel">
+          <div className="panel-header">
+            <span className="panel-title">Loaded Address Contents</span>
+            <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+              {slotContents.length} item(s)
+            </span>
+          </div>
+
+          <div className="panel-body">
+            <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+              Current products stored at <strong className="font-mono">{currentSlotName}</strong>:
             </div>
 
-            {/* Status log */}
-            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
-              Activity Log:
+            <div className="table-container" style={{ flex: 1, maxHeight: '260px' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Product ID</th>
+                    <th>Product Name</th>
+                    <th style={{ width: '55px' }}>Qty</th>
+                    <th style={{ width: '85px' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {slotContents.map((it) => (
+                    <tr key={it.product_id}>
+                      <td className="font-mono">
+                        <strong>{it.product_id}</strong>
+                      </td>
+                      <td>{it.product_name}</td>
+                      <td>{it.quantity}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '0.2rem' }}>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleSlotProductToHand(it)}
+                            title="Move product to on-hand"
+                          >
+                            + Hand
+                          </button>
+                          <button
+                            className="btn btn-danger btn-sm"
+                            onClick={() => handleRemoveSlotProduct(it.product_id)}
+                            title="Remove product from slot"
+                          >
+                            Del
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {slotContents.length === 0 && (
+                    <tr>
+                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                        Slot {currentSlotName} is empty.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
-            <div className="status-log">
-              {logs.map((log, i) => (
-                <div key={i}>{log}</div>
-              ))}
-              {logs.length === 0 && <div>Waiting for action...</div>}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              <span className="form-label" style={{ fontWeight: 600 }}>
+                Activity Log
+              </span>
+              <div className="status-log">
+                {logs.map((log, i) => (
+                  <div key={i}>{log}</div>
+                ))}
+                {logs.length === 0 && <div>Ready.</div>}
+              </div>
             </div>
           </div>
         </div>
@@ -624,7 +619,7 @@ export const LocationAssignmentView: React.FC = () => {
       {stockDialogProducts && (
         <StockQuantityDialog
           isOpen={true}
-          slotName={currentComputedSlot}
+          slotName={currentSlotName}
           products={stockDialogProducts}
           onConfirm={handleConfirmStockAssignment}
           onCancel={() => setStockDialogProducts(null)}
