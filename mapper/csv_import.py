@@ -10,8 +10,11 @@ import io
 from dataclasses import dataclass
 from pathlib import Path
 
-# Re-export for backward compatibility
-from .ui.csv_dialog import ColumnMappingDialog
+def __getattr__(name: str):
+    if name == "ColumnMappingDialog":
+        from mapper.ui.csv_dialog import ColumnMappingDialog
+        return ColumnMappingDialog
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @dataclass
