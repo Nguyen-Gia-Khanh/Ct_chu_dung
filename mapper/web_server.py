@@ -21,8 +21,11 @@ from .database import WarehouseDatabase
 
 
 def _get_database() -> WarehouseDatabase:
-    db_path = application_directory() / "warehouse.db"
-    return WarehouseDatabase(db_path)
+    for candidate in ("warehouse_locations.db", "warehouse.db"):
+        p = application_directory() / candidate
+        if p.exists():
+            return WarehouseDatabase(p)
+    return WarehouseDatabase(application_directory() / "warehouse_locations.db")
 
 
 class WarehouseApiHandler(BaseHTTPRequestHandler):

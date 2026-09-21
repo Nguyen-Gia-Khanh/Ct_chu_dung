@@ -36,29 +36,29 @@ __all__ = [
 
 # ==============================================================================
 # UI CONFIGURATION CONSTANT:
-# Set to "qt" (or "pyqt") to run the modern 100% offline native desktop UI (PyQt6).
+# Set to "ts" (or "vscode") to run the modern VS Code Light+ desktop app (smooth, fast, reliable).
 # Set to "tkinter" to run the classic Tkinter desktop UI.
-# Set to "ts" to run the TypeScript browser/webview UI.
+# Set to "qt" to run the PyQt6 desktop UI.
 # ==============================================================================
-UI_MODE = "qt"
+UI_MODE = "ts"
 
 
 def main() -> None:
     mode = UI_MODE.strip().lower()
 
-    if mode in ("qt", "pyqt", "desktop", "native"):
-        from mapper.qt_ui import run_qt_app
-        run_qt_app()
+    if mode in ("ts", "typescript", "vscode", "web", "app"):
+        from mapper.web_server import run_desktop_app
+        run_desktop_app(port=8000, title="Warehouse Shelf Mapper")
     elif mode == "tkinter":
         root = tk.Tk()
         root.state("zoomed")
         WarehouseMapperApp(root)
         root.mainloop()
-    elif mode in ("ts", "typescript", "web", "app"):
-        from mapper.web_server import run_desktop_app
-        run_desktop_app(port=8000, title="Warehouse Shelf Mapper")
+    elif mode in ("qt", "pyqt", "desktop", "native"):
+        from mapper.qt_ui import run_qt_app
+        run_qt_app()
     else:
-        print(f"Error: Unknown UI_MODE {UI_MODE!r}. Please set UI_MODE to 'qt' or 'tkinter'.", file=sys.stderr)
+        print(f"Error: Unknown UI_MODE {UI_MODE!r}. Please set UI_MODE to 'ts' or 'tkinter'.", file=sys.stderr)
         sys.exit(1)
 
 
