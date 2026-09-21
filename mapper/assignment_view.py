@@ -91,10 +91,15 @@ class StockQuantityDialog(tk.Toplevel):
         self.bind("<Return>", self.confirm)
         self.bind("<Escape>", lambda _event: self.destroy())
         self.protocol("WM_DELETE_WINDOW", self.destroy)
-        self.wait_visibility()
-        self.grab_set()
+        self.lift()
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
         if self.quantity_inputs:
             next(iter(self.quantity_inputs.values()))[1].focus_set()
+        else:
+            self.focus_force()
 
     def confirm(self, _event=None) -> None:
         quantities = {}
@@ -306,19 +311,19 @@ class AssignmentView(ttk.Frame):
             catalog_body.columnconfigure(0, weight=1)
             self.catalog_tree = ttk.Treeview(
                 catalog_body,
-                columns=("product_id", "product_name", "shortened_name"),
+                columns=("product_id", "product_name", "location_id"),
                 show="headings",
                 selectmode="extended",
                 height=8,
             )
             self.catalog_tree.heading("product_id", text="Product ID")
             self.catalog_tree.heading("product_name", text="Product name")
-            self.catalog_tree.heading("shortened_name", text="Shortened name")
+            self.catalog_tree.heading("location_id", text="Location ID")
             self.catalog_tree.column(
                 "product_id", width=105, minwidth=75, stretch=False
             )
             self.catalog_tree.column("product_name", width=180, minwidth=110)
-            self.catalog_tree.column("shortened_name", width=150, minwidth=100)
+            self.catalog_tree.column("location_id", width=120, minwidth=85, stretch=False)
             catalog_scroll = ttk.Scrollbar(
                 catalog_body,
                 orient="vertical",

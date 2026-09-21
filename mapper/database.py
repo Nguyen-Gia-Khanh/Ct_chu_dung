@@ -660,6 +660,79 @@ class WarehouseDatabase:
         returned_at = datetime.now().astimezone().isoformat(timespec="seconds")
         return self.dequeue_on_hand(product_ids, returned_at)
 
+    def force_pull_to_queue(
+        self,
+        product_ids: list[str] | tuple[str, ...],
+        returned_at: str,
+        *,
+        extra_stock: dict[str, int | None] | None = None,
+    ) -> tuple[int, int]:
+        """Force pull products back to the total queue from placements or on-hand.
+
+        Removes any placements for these products, removes any on-hand entries,
+        and saves their retained stock quantities in returned_queue_products.
+        Returns (pulled_from_placements_count, pulled_from_on_hand_count).
+        """
+        selected_ids = tuple(dict.fromkeys(product_ids))
+        if not selected_ids:
+            return 0, 0
+        if not returned_at or datetime.fromisoformat(returned_at).utcoffset() is None:
+            raise ValueError("The return time must include a timezone.")
+
+        placeholders = ",".join("?" for _ in selected_ids)
+        with closing(self.connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            placement_rows = connection.execute(
+                f"""
+                SELECT product_id, stock_qty
+                FROM placements
+                WHERE product_id IN ({placeholders})
+                """,
+                selected_ids,
+            ).fetchall()
+            on_hand_rows = connection.execute(
+                f"""
+                SELECT product_id, stock_qty
+                FROM on_hand_queue
+                WHERE product_id IN ({placeholders})
+                """,
+                selected_ids,
+            ).fetchall()
+
+            if placement_rows:
+                connection.execute(
+                    f"DELETE FROM placements WHERE product_id IN ({placeholders})",
+                    selected_ids,
+                )
+            if on_hand_rows:
+                connection.execute(
+                    f"DELETE FROM on_hand_queue WHERE product_id IN ({placeholders})",
+                    selected_ids,
+                )
+
+            to_return: dict[str, int | None] = {}
+            for row in placement_rows:
+                to_return[row["product_id"]] = row["stock_qty"]
+            for row in on_hand_rows:
+                to_return[row["product_id"]] = row["stock_qty"]
+            if extra_stock:
+                for product_id, stock_qty in extra_stock.items():
+                    if product_id in selected_ids and product_id not in to_return:
+                        to_return[product_id] = stock_qty
+
+            if to_return:
+                connection.executemany(
+                    """
+                    INSERT INTO returned_queue_products (product_id, stock_qty, returned_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(product_id) DO UPDATE SET
+                        stock_qty = excluded.stock_qty,
+                        returned_at = excluded.returned_at
+                    """,
+                    ((pid, qty, returned_at) for pid, qty in to_return.items()),
+                )
+        return len(placement_rows), len(on_hand_rows)
+
     def get_slot_address(
         self,
         floor: str,

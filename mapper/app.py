@@ -37,6 +37,7 @@ from .database import (
 from .designer import ShelfDesigner
 from .location_assignment_view import LocationAssignmentView
 from .lookup_view import ProductLookupView
+from .primal_queue_view import PrimalQueueView
 from .shelf_browser import ShelfBrowserView
 from .web_upload import LocationUpdate, UploadProduct, WebsiteUploader
 
@@ -80,7 +81,7 @@ class WarehouseMapperApp:
 
         self._configure_window()
         self._build_ui()
-        self.reload_database_state()
+        self.reload_database_state(reload_catalog=True)
         self.saved_editor_state = self._editor_state()
 
     def _configure_window(self) -> None:
@@ -118,7 +119,7 @@ class WarehouseMapperApp:
         ttk.Label(toolbar, text=APP_TITLE, style="Title.TLabel").pack(side="left")
         ttk.Label(
             toolbar,
-            text="Shelf design · address assignment · lookup · shelf browser · cell moves",
+            text="Shelf design · address assignment · primal queue · shelf browser · cell moves",
             foreground="#555555",
         ).pack(side="left", padx=(16, 0))
 
@@ -189,8 +190,9 @@ class WarehouseMapperApp:
         self.connect_chrome_button = self.assignments.connect_chrome_button
         self.notebook.add(self.designer_tab, text="1. Shelf Designer")
         self.notebook.add(self.assignments, text="2. Assign Locations")
-        self.lookup = ProductLookupView(self.notebook, self.database)
-        self.notebook.add(self.lookup, text="3. Find Product")
+        self.primal_view = PrimalQueueView(self.notebook, self.database)
+        self.lookup = self.primal_view
+        self.notebook.add(self.primal_view, text="3. Primal Queue / Shelves")
         self.shelf_browser = ShelfBrowserView(self.notebook, self.database)
         self.notebook.add(self.shelf_browser, text="4. Browse Shelves")
         self.cell_transfer = CellTransferView(
@@ -212,8 +214,8 @@ class WarehouseMapperApp:
         ).pack(fill="x", side="bottom")
 
     def on_tab_changed(self, _event=None) -> None:
-        if self.notebook.select() == str(self.lookup):
-            self.lookup.refresh()
+        if hasattr(self, "primal_view") and self.notebook.select() == str(self.primal_view):
+            self.primal_view.refresh()
         elif self.notebook.select() == str(self.shelf_browser):
             if self.shelf_browser.current_shelf_id is None:
                 self.shelf_browser.refresh()
@@ -1128,26 +1130,64 @@ class WarehouseMapperApp:
             return
 
         if hasattr(self.assignments, "on_hand_tree"):
-            assigned_count = sum(
-                product_id in self.committed_placements for product_id in product_ids
-            )
-            on_hand_count = sum(
-                product_id in self.on_hand_products for product_id in product_ids
-            )
+            staged_stock: dict[str, int | None] = {}
+            for product_id in product_ids:
+                staged = self.staged_assignments.pop(product_id, None)
+                if staged is not None:
+                    staged_stock[product_id] = staged.stock_qty
+                    if staged.stock_qty is not None:
+                        self.transferred_stock[product_id] = staged.stock_qty
+                self.pending_unassignments.discard(product_id)
+
+            # Sync transferred_stock for any products currently placed on a shelf
+            for product_id in product_ids:
+                saved = self.committed_placements.get(product_id)
+                if saved is not None and saved.stock_qty is not None:
+                    self.transferred_stock[product_id] = saved.stock_qty
+
+            returned_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            try:
+                pulled_placements, pulled_on_hand = self.database.force_pull_to_queue(
+                    product_ids,
+                    returned_at,
+                    extra_stock=staged_stock,
+                )
+            except Exception as error:
+                messagebox.showerror("Transfer failed", str(error), parent=self.root)
+                return
+
             new_products = sum(
                 product_id not in existing_products for product_id in product_ids
             )
-            self.reload_database_state()
-            self.refresh_all_views()
-            kept = assigned_count + on_hand_count
-            suffix = (
-                f" {kept} already assigned/on-hand product(s) stayed where they were."
-                if kept
-                else ""
+            already_waiting = (
+                len(product_ids)
+                - new_products
+                - pulled_placements
+                - pulled_on_hand
+                - len(staged_stock)
             )
+            if already_waiting < 0:
+                already_waiting = 0
+
+            self.reload_database_state(reload_catalog=True)
+            self.refresh_all_views()
+            if hasattr(self, "shelf_browser"):
+                self.shelf_browser.refresh()
+
+            summary: list[str] = []
+            if new_products:
+                summary.append(f"{new_products} added to queue")
+            if pulled_placements:
+                summary.append(f"{pulled_placements} pulled from shelf")
+            if pulled_on_hand:
+                summary.append(f"{pulled_on_hand} pulled from on-hand")
+            if staged_stock:
+                summary.append(f"{len(staged_stock)} pulled from staged slot")
+            if already_waiting:
+                summary.append(f"{already_waiting} already in queue")
+
             self.status_text.set(
-                f"Catalog transfer: {new_products} added to the total queue."
-                f" Catalog entries were kept.{suffix}"
+                f"Catalog transfer: {', '.join(summary) if summary else 'Done'}. Product(s) ready in total queue."
             )
             return
 
@@ -1694,7 +1734,12 @@ class WarehouseMapperApp:
                 product_name,
                 shortened_name,
             ) in self.catalog_products.items()
-            if not query or query in self.catalog_search[product_id]
+            if not query
+            or query in self.catalog_search[product_id]
+            or (
+                product_id in getattr(self, "committed_locations", {})
+                and query in normalize_search(self.committed_locations[product_id])
+            )
         ]
         matches.sort(
             key=lambda product: (
@@ -1705,12 +1750,21 @@ class WarehouseMapperApp:
 
         tree = self.assignments.catalog_tree
         tree.delete(*tree.get_children())
-        for product_id, product_name, shortened_name in matches[:MAX_VISIBLE_PRODUCTS]:
+        for product_id, product_name, _shortened_name in matches[:MAX_VISIBLE_PRODUCTS]:
+            placement = (
+                getattr(self, "staged_assignments", {}).get(product_id)
+                or getattr(self, "committed_placements", {}).get(product_id)
+            )
+            location_id = (
+                placement.slot_name
+                if placement is not None
+                else getattr(self, "committed_locations", {}).get(product_id, "")
+            )
             tree.insert(
                 "",
                 "end",
                 iid=f"catalog::{product_id}",
-                values=(product_id, product_name, shortened_name),
+                values=(product_id, product_name, location_id),
             )
 
         shown = min(len(matches), MAX_VISIBLE_PRODUCTS)
@@ -1805,7 +1859,7 @@ class WarehouseMapperApp:
         self.refresh_address_contents()
         self.refresh_change_summary()
 
-    def reload_database_state(self) -> None:
+    def reload_database_state(self, reload_catalog: bool = False) -> None:
         product_rows = self.database.get_product_records()
         self.products = {
             product_id: product_name
@@ -1821,17 +1875,18 @@ class WarehouseMapperApp:
             )
             for product_id, product_name, shortened_name in product_rows
         }
-        catalog_rows = self.database.get_catalog_products()
-        self.catalog_products = {
-            product_id: (product_name, shortened_name)
-            for product_id, product_name, shortened_name in catalog_rows
-        }
-        self.catalog_search = {
-            product_id: normalize_search(
-                f"{product_id} {product_name} {shortened_name}"
-            )
-            for product_id, product_name, shortened_name in catalog_rows
-        }
+        if reload_catalog or not hasattr(self, "catalog_products") or not self.catalog_products:
+            catalog_rows = self.database.get_catalog_products()
+            self.catalog_products = {
+                product_id: (product_name, shortened_name)
+                for product_id, product_name, shortened_name in catalog_rows
+            }
+            self.catalog_search = {
+                product_id: normalize_search(
+                    f"{product_id} {product_name} {shortened_name}"
+                )
+                for product_id, product_name, shortened_name in catalog_rows
+            }
         self.committed_placements = self.database.get_placement_details()
         self.on_hand_products = self.database.get_on_hand_products()
         self.returned_queue_products = self.database.get_returned_queue_products()
@@ -1871,6 +1926,8 @@ class WarehouseMapperApp:
             self.refresh_product_lists()
             self.refresh_on_hand_queue()
             self.refresh_address_contents()
+        if hasattr(self, "primal_view"):
+            self.primal_view.refresh(reload_catalog=reload_catalog)
 
     def refresh_shelf_selector(self) -> None:
         choices = self.database.list_shelves()
@@ -1939,7 +1996,7 @@ class WarehouseMapperApp:
             messagebox.showerror("Import failed", str(error))
             return
 
-        self.reload_database_state()
+        self.reload_database_state(reload_catalog=True)
         self.refresh_all_views()
         messagebox.showinfo(
             "Import complete",
@@ -2004,7 +2061,7 @@ class WarehouseMapperApp:
             messagebox.showerror("Catalog import failed", str(error))
             return
 
-        self.reload_database_state()
+        self.reload_database_state(reload_catalog=True)
         messagebox.showinfo(
             "Catalog import complete",
             f"New catalog products: {inserted:,}\n"

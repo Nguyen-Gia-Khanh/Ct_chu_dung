@@ -189,6 +189,70 @@ class OnHandQueueTests(unittest.TestCase):
         self.assertEqual(reopened.get_on_hand_products(), {})
         self.assertEqual(reopened.get_shelf(self.shelf_id), ("1", "1", "A", [2]))
 
+    def test_force_pull_moves_shelf_placement_to_returned_queue_with_stock(self) -> None:
+        self.database.commit_shelf(
+            "1",
+            "A",
+            [2],
+            {"P1": Placement(self.address.slot_name, 15, FIRST_TIME)},
+            set(),
+            side="1",
+            shelf_id=self.shelf_id,
+        )
+        self.assertIn("P1", self.database.get_placement_details())
+
+        pulled_placements, pulled_on_hand = self.database.force_pull_to_queue(
+            ["P1"], SECOND_TIME
+        )
+
+        self.assertEqual(pulled_placements, 1)
+        self.assertEqual(pulled_on_hand, 0)
+        self.assertNotIn("P1", self.database.get_placement_details())
+        self.assertEqual(
+            self.database.get_returned_queue_products(),
+            {"P1": ReturnedQueueProduct("P1", 15, SECOND_TIME)},
+        )
+
+    def test_force_pull_moves_on_hand_product_to_returned_queue_with_stock(self) -> None:
+        self.database.add_to_on_hand({"P2": 9}, FIRST_TIME)
+        self.assertIn("P2", self.database.get_on_hand_products())
+
+        pulled_placements, pulled_on_hand = self.database.force_pull_to_queue(
+            ["P2"], SECOND_TIME
+        )
+
+        self.assertEqual(pulled_placements, 0)
+        self.assertEqual(pulled_on_hand, 1)
+        self.assertNotIn("P2", self.database.get_on_hand_products())
+        self.assertEqual(
+            self.database.get_returned_queue_products(),
+            {"P2": ReturnedQueueProduct("P2", 9, SECOND_TIME)},
+        )
+
+    def test_force_pull_mixed_products_is_atomic(self) -> None:
+        self.database.commit_shelf(
+            "1",
+            "A",
+            [2],
+            {"P1": Placement(self.address.slot_name, 10, FIRST_TIME)},
+            set(),
+            side="1",
+            shelf_id=self.shelf_id,
+        )
+        self.database.add_to_on_hand({"P2": 20}, FIRST_TIME)
+
+        pulled_placements, pulled_on_hand = self.database.force_pull_to_queue(
+            ["P1", "P2", "NONEXISTENT"], SECOND_TIME
+        )
+
+        self.assertEqual(pulled_placements, 1)
+        self.assertEqual(pulled_on_hand, 1)
+        self.assertNotIn("P1", self.database.get_placement_details())
+        self.assertNotIn("P2", self.database.get_on_hand_products())
+        returned = self.database.get_returned_queue_products()
+        self.assertEqual(returned["P1"].stock_qty, 10)
+        self.assertEqual(returned["P2"].stock_qty, 20)
+
 
 if __name__ == "__main__":
     unittest.main()

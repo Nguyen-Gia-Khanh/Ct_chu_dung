@@ -130,7 +130,7 @@ assignment time.
 | `mapper/app.py` | Coordinates tabs, searches, assignment actions, and optional web upload. |
 | `mapper/designer.py` | Shelf metadata and irregular row editor. |
 | `mapper/location_assignment_view.py` | Tab 2 total queue, on-hand batch, address form, and address contents. |
-| `mapper/lookup_view.py` | Tab 3 product-to-location lookup. |
+| `mapper/primal_queue_view.py` | Tab 3 primal queue (hot sellers), catalog search, and shelf view. |
 | `mapper/shelf_browser.py` | Tab 4 read-only shelf selector and front view. |
 | `mapper/cell_transfer_view.py` | Tab 5 two-shelf cell switch/combine workspace. |
 | `mapper/assignment_view.py` | Shared shelf renderer plus stock quantity dialog. |

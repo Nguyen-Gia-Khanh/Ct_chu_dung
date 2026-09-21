@@ -263,6 +263,53 @@ class StockPlacementTests(unittest.TestCase):
         self.assertEqual(app.transferred_stock["P1"], 27)
         self.assertIn(("P1", "Bolts", "Bolt"), self.database.get_catalog_products())
 
+    def test_catalog_transfer_with_on_hand_tree_force_pulls_shelf_and_hand_products(self):
+        placement = Placement(CELL_ONE, 27, FIRST_TIME)
+        self.database.import_catalog_products({
+            "P1": ("Bolts", "Bolt"),
+            "P2": ("Washers", "Washer"),
+            "C1": ("New Nut", "Nut"),
+        })
+        self.database.commit_shelf("1", "A", [2], {"P1": placement}, set())
+        self.database.add_to_on_hand({"P2": 14}, FIRST_TIME)
+        app = self.make_app()
+        app.assignments.on_hand_tree = Mock()
+        app.assignments.search_var = Mock()
+        app.assignments.search_var.get.return_value = ""
+        app.assignments.queue_count_text = Mock()
+        app.assignments.on_hand_count_text = Mock()
+        app.assignments.catalog_count_text = Mock()
+        app.catalog_products = {
+            "P1": ("Bolts", "Bolt"),
+            "P2": ("Washers", "Washer"),
+            "C1": ("New Nut", "Nut"),
+        }
+        app.committed_placements = {"P1": placement}
+        app.committed_locations = {"P1": CELL_ONE}
+        app.assignments.catalog_tree = Mock()
+        app.assignments.catalog_tree.get_children.return_value = ()
+        app.assignments.on_hand_tree.get_children.return_value = ()
+        app.assignments.queue_tree.get_children.return_value = ()
+        app.assignments.catalog_tree.selection.return_value = (
+            "catalog::P1",
+            "catalog::P2",
+            "catalog::C1",
+        )
+
+        app.transfer_catalog_selection_to_queue()
+
+        self.assertNotIn("P1", self.database.get_placement_details())
+        self.assertNotIn("P2", self.database.get_on_hand_products())
+        returned = self.database.get_returned_queue_products()
+        self.assertEqual(returned["P1"].stock_qty, 27)
+        self.assertEqual(returned["P2"].stock_qty, 14)
+        self.assertEqual(app.transferred_stock.get("P1"), 27)
+        self.assertIn(("C1", "New Nut"), self.database.get_products())
+        status_msg = app.status_text.set.call_args[0][0]
+        self.assertIn("pulled from shelf", status_msg)
+        self.assertIn("pulled from on-hand", status_msg)
+        self.assertIn("added to queue", status_msg)
+
     def test_double_click_located_catalog_product_searches_without_transferring(self):
         app = self.make_app()
         placement = Placement(CELL_ONE, 27, FIRST_TIME)
@@ -356,9 +403,31 @@ class StockPlacementTests(unittest.TestCase):
         app.refresh_catalog()
 
         app.assignments.catalog_tree.insert.assert_called_once_with(
-            "", "end", iid="catalog::C1", values=("C1", "Catalog bolt", "C bolt")
+            "", "end", iid="catalog::C1", values=("C1", "Catalog bolt", "")
         )
         app.refresh_search_location.assert_called_once_with("C bolt")
+
+    def test_catalog_refresh_shows_assigned_location_id(self):
+        app = self.make_app()
+        app.catalog_products = {
+            "C1": ("Catalog bolt", "C bolt"),
+        }
+        app.catalog_search = {
+            "C1": "c1 catalog bolt c bolt",
+        }
+        app.committed_locations = {"C1": "L1-1A8-10"}
+        app.assignments.search_var = Mock()
+        app.assignments.search_var.get.return_value = ""
+        app.assignments.catalog_tree = Mock()
+        app.assignments.catalog_tree.get_children.return_value = ()
+        app.assignments.catalog_count_text = Mock()
+        app.refresh_search_location = Mock()
+
+        app.refresh_catalog()
+
+        app.assignments.catalog_tree.insert.assert_called_once_with(
+            "", "end", iid="catalog::C1", values=("C1", "Catalog bolt", "L1-1A8-10")
+        )
 
     def test_queue_search_index_includes_shortened_name(self):
         self.database.import_products({"P1": ("Bolts", "Fastener alias")})
@@ -536,6 +605,35 @@ class AssignmentViewInteractionTests(unittest.TestCase):
 
         self.assertEqual(view.copy_product_id(SimpleNamespace(x=120, y=20)), "break")
         view.clipboard_append.assert_called_once_with("P1")
+
+    def test_location_assignment_view_catalog_columns(self):
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            from mapper.location_assignment_view import LocationAssignmentView
+            view = LocationAssignmentView(
+                root,
+                on_search=Mock(),
+                on_queue_to_hand=Mock(),
+                on_catalog_to_queue=Mock(),
+                on_catalog_activate=Mock(),
+                on_load_address=Mock(),
+                on_assign_address=Mock(),
+                on_dequeue_hand=Mock(),
+                on_selected_to_hand=Mock(),
+                on_slot_to_hand=Mock(),
+                on_modify_hand_stock=Mock(),
+                on_modify_stock=Mock(),
+                on_upload=Mock(),
+                on_modify_location=Mock(),
+                on_connect_chrome=Mock(),
+            )
+            cols = view.catalog_tree["columns"]
+            self.assertEqual(tuple(cols), ("product_id", "product_name", "location_id"))
+            self.assertEqual(view.catalog_tree.heading("location_id")["text"], "Location ID")
+            view.destroy()
+        finally:
+            root.destroy()
 
 
 if __name__ == "__main__":
