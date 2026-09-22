@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import csv
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from .common import clean_location_segment, make_slot_name
+from utils.barcode_scanner import format_product_id
 
 
 class LayoutConflictError(ValueError):
@@ -145,12 +148,38 @@ class WarehouseDatabase:
                     returned_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS exception_placements (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_id   TEXT NOT NULL,
+                    slot_id      INTEGER NOT NULL REFERENCES slots(slot_id) ON DELETE RESTRICT,
+                    stock_qty    INTEGER CHECK (stock_qty IS NULL OR (stock_qty >= 0 AND typeof(stock_qty) = 'integer')),
+                    assigned_at  TEXT,
+                    committed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (product_id, slot_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS wait_to_update_csv (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_id   TEXT NOT NULL,
+                    product_name TEXT NOT NULL DEFAULT 'Exc - added later',
+                    slot_id      INTEGER REFERENCES slots(slot_id) ON DELETE SET NULL,
+                    slot_name    TEXT NOT NULL,
+                    created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (product_id, slot_name)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_products_name
                     ON products(product_name COLLATE NOCASE);
                 CREATE INDEX IF NOT EXISTS idx_catalog_products_name
                     ON catalog_products(product_name COLLATE NOCASE);
                 CREATE INDEX IF NOT EXISTS idx_placements_slot
                     ON placements(slot_id);
+                CREATE INDEX IF NOT EXISTS idx_exception_placements_product
+                    ON exception_placements(product_id);
+                CREATE INDEX IF NOT EXISTS idx_exception_placements_slot
+                    ON exception_placements(slot_id);
+                CREATE INDEX IF NOT EXISTS idx_wait_csv_product
+                    ON wait_to_update_csv(product_id);
                 CREATE INDEX IF NOT EXISTS idx_on_hand_queued_at
                     ON on_hand_queue(queued_at);
                 CREATE INDEX IF NOT EXISTS idx_returned_queue_returned_at
@@ -456,7 +485,7 @@ class WarehouseDatabase:
 
     def get_placement_details(self) -> dict[str, Placement]:
         with closing(self.connect()) as connection, connection:
-            rows = connection.execute(
+            p_rows = connection.execute(
                 """
                 SELECT placements.product_id, slots.slot_name,
                        placements.stock_qty, placements.assigned_at
@@ -464,12 +493,82 @@ class WarehouseDatabase:
                 JOIN slots ON slots.slot_id = placements.slot_id
                 """
             ).fetchall()
+            e_rows = connection.execute(
+                """
+                SELECT exception_placements.product_id, slots.slot_name,
+                       exception_placements.stock_qty, exception_placements.assigned_at
+                FROM exception_placements
+                JOIN slots ON slots.slot_id = exception_placements.slot_id
+                ORDER BY exception_placements.id ASC
+                """
+            ).fetchall()
+
+        details: dict[str, dict] = {}
+        for row in p_rows:
+            pid = row["product_id"]
+            if pid not in details:
+                details[pid] = {
+                    "slots": [],
+                    "stock_qty": row["stock_qty"],
+                    "assigned_at": row["assigned_at"],
+                }
+            if row["slot_name"] not in details[pid]["slots"]:
+                details[pid]["slots"].append(row["slot_name"])
+
+        for row in e_rows:
+            pid = row["product_id"]
+            if pid not in details:
+                details[pid] = {
+                    "slots": [],
+                    "stock_qty": row["stock_qty"],
+                    "assigned_at": row["assigned_at"],
+                }
+            else:
+                if row["stock_qty"] is not None:
+                    curr = details[pid]["stock_qty"]
+                    details[pid]["stock_qty"] = (curr or 0) + row["stock_qty"]
+                if row["assigned_at"] and (
+                    not details[pid]["assigned_at"]
+                    or row["assigned_at"] > details[pid]["assigned_at"]
+                ):
+                    details[pid]["assigned_at"] = row["assigned_at"]
+            if row["slot_name"] not in details[pid]["slots"]:
+                details[pid]["slots"].append(row["slot_name"])
+
         return {
-            row["product_id"]: Placement(
-                row["slot_name"], row["stock_qty"], row["assigned_at"]
+            pid: Placement(
+                ", ".join(info["slots"]),
+                info["stock_qty"],
+                info["assigned_at"],
             )
-            for row in rows
+            for pid, info in details.items()
         }
+
+    def get_all_placement_items(self) -> list[tuple[str, str, int | None, str | None]]:
+        """Return every individual placement (product_id, slot_name, stock_qty, assigned_at)
+        across both placements and exception_placements."""
+        with closing(self.connect()) as connection:
+            p_rows = connection.execute(
+                """
+                SELECT placements.product_id, slots.slot_name,
+                       placements.stock_qty, placements.assigned_at
+                FROM placements
+                JOIN slots ON slots.slot_id = placements.slot_id
+                """
+            ).fetchall()
+            e_rows = connection.execute(
+                """
+                SELECT exception_placements.product_id, slots.slot_name,
+                       exception_placements.stock_qty, exception_placements.assigned_at
+                FROM exception_placements
+                JOIN slots ON slots.slot_id = exception_placements.slot_id
+                ORDER BY exception_placements.id ASC
+                """
+            ).fetchall()
+        return [
+            (row["product_id"], row["slot_name"], row["stock_qty"], row["assigned_at"])
+            for row in p_rows + e_rows
+        ]
 
     def get_product_location(self, product_id: str) -> ProductLocation | None:
         """Locate a saved assignment through table relationships, not its ID format."""
@@ -485,14 +584,60 @@ class WarehouseDatabase:
                 """,
                 (product_id,),
             ).fetchone()
+            if row is None:
+                row = connection.execute(
+                    """
+                    SELECT shelf_rows.shelf_id, shelf_rows.row_number, slots.slot_number,
+                           slots.slot_name, exception_placements.stock_qty, exception_placements.assigned_at
+                    FROM exception_placements
+                    JOIN slots ON slots.slot_id = exception_placements.slot_id
+                    JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
+                    WHERE exception_placements.product_id = ?
+                    ORDER BY exception_placements.id ASC
+                    LIMIT 1
+                    """,
+                    (product_id,),
+                ).fetchone()
         if row is None:
             return None
+
+        all_locations = self.get_product_locations(product_id)
+        joined_slots = ", ".join(all_locations) if all_locations else row["slot_name"]
+
         return ProductLocation(
             row["shelf_id"],
             row["row_number"],
             row["slot_number"],
-            Placement(row["slot_name"], row["stock_qty"], row["assigned_at"]),
+            Placement(joined_slots, row["stock_qty"], row["assigned_at"]),
         )
+
+    def get_product_locations(self, product_id: str) -> list[str]:
+        """Return all distinct slot names assigned to this product across standard and exception placements."""
+        with closing(self.connect()) as connection:
+            p_rows = connection.execute(
+                """
+                SELECT slots.slot_name
+                FROM placements
+                JOIN slots ON slots.slot_id = placements.slot_id
+                WHERE placements.product_id = ?
+                """,
+                (product_id,),
+            ).fetchall()
+            e_rows = connection.execute(
+                """
+                SELECT slots.slot_name
+                FROM exception_placements
+                JOIN slots ON slots.slot_id = exception_placements.slot_id
+                WHERE exception_placements.product_id = ?
+                ORDER BY exception_placements.id ASC
+                """,
+                (product_id,),
+            ).fetchall()
+        locations: list[str] = []
+        for r in p_rows + e_rows:
+            if r["slot_name"] not in locations:
+                locations.append(r["slot_name"])
+        return locations
 
     def get_on_hand_products(self) -> dict[str, OnHandProduct]:
         with closing(self.connect()) as connection:
@@ -833,15 +978,25 @@ class WarehouseDatabase:
         with closing(self.connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT products.product_id, products.product_name, slots.slot_name,
-                       placements.stock_qty, placements.assigned_at
-                FROM placements
-                JOIN products ON products.product_id = placements.product_id
-                JOIN slots ON slots.slot_id = placements.slot_id
-                WHERE placements.slot_id = ?
-                ORDER BY placements.assigned_at, products.product_id COLLATE NOCASE
+                SELECT product_id, product_name, slot_name, stock_qty, assigned_at
+                FROM (
+                    SELECT products.product_id, products.product_name, slots.slot_name,
+                           placements.stock_qty, placements.assigned_at
+                    FROM placements
+                    JOIN products ON products.product_id = placements.product_id
+                    JOIN slots ON slots.slot_id = placements.slot_id
+                    WHERE placements.slot_id = ?
+                    UNION
+                    SELECT ep.product_id, COALESCE(products.product_name, 'Exc - added later') AS product_name, slots.slot_name,
+                           ep.stock_qty, ep.assigned_at
+                    FROM exception_placements ep
+                    LEFT JOIN products ON products.product_id = ep.product_id
+                    JOIN slots ON slots.slot_id = ep.slot_id
+                    WHERE ep.slot_id = ?
+                )
+                ORDER BY assigned_at, product_id COLLATE NOCASE
                 """,
-                (slot_id,),
+                (slot_id, slot_id),
             ).fetchall()
         return [
             (
@@ -1092,17 +1247,29 @@ class WarehouseDatabase:
         with closing(self.connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT products.product_id, products.product_name, slots.slot_name,
-                       placements.stock_qty, placements.assigned_at
-                FROM placements
-                JOIN products ON products.product_id = placements.product_id
-                JOIN slots ON slots.slot_id = placements.slot_id
-                JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
-                WHERE shelf_rows.shelf_id = ?
-                ORDER BY shelf_rows.row_number, slots.slot_number,
-                         products.product_id COLLATE NOCASE
+                SELECT product_id, product_name, slot_name, stock_qty, assigned_at, row_number, slot_number
+                FROM (
+                    SELECT products.product_id, products.product_name, slots.slot_name,
+                           placements.stock_qty, placements.assigned_at,
+                           shelf_rows.row_number, slots.slot_number
+                    FROM placements
+                    JOIN products ON products.product_id = placements.product_id
+                    JOIN slots ON slots.slot_id = placements.slot_id
+                    JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
+                    WHERE shelf_rows.shelf_id = ?
+                    UNION
+                    SELECT ep.product_id, COALESCE(products.product_name, 'Exc - added later') AS product_name, slots.slot_name,
+                           ep.stock_qty, ep.assigned_at,
+                           shelf_rows.row_number, slots.slot_number
+                    FROM exception_placements ep
+                    LEFT JOIN products ON products.product_id = ep.product_id
+                    JOIN slots ON slots.slot_id = ep.slot_id
+                    JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
+                    WHERE shelf_rows.shelf_id = ?
+                )
+                ORDER BY row_number, slot_number, product_id COLLATE NOCASE
                 """,
-                (shelf_id,),
+                (shelf_id, shelf_id),
             ).fetchall()
         return [
             (
@@ -1324,3 +1491,176 @@ class WarehouseDatabase:
                 ),
             )
         return shelf_id
+
+    def assign_exception(
+        self,
+        product_id: str,
+        slot_id: int,
+        assigned_at: str | None = None,
+        stock_qty: int | None = None,
+        product_name: str = "Exc - added later",
+    ) -> str:
+        """Assign an existing or unregistered product to an exception slot.
+        Records into exception_placements and wait_to_update_csv.
+        Returns the slot_name.
+        """
+        if stock_qty is not None:
+            validate_stock_quantity(stock_qty)
+        clean_pid = format_product_id(product_id.strip())
+        if not clean_pid:
+            raise ValueError("Product ID cannot be empty.")
+        if assigned_at is None:
+            assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
+
+        with closing(self.connect()) as connection, connection:
+            slot_row = connection.execute(
+                "SELECT slot_name FROM slots WHERE slot_id = ?", (slot_id,)
+            ).fetchone()
+            if not slot_row:
+                raise ValueError(f"Slot ID {slot_id} does not exist.")
+            slot_name = slot_row["slot_name"]
+
+            # Ensure product exists in products and catalog_products
+            connection.execute(
+                """
+                INSERT INTO products (product_id, product_name, shortened_name)
+                VALUES (?, ?, ?)
+                ON CONFLICT (product_id) DO NOTHING
+                """,
+                (clean_pid, product_name, product_name),
+            )
+            connection.execute(
+                """
+                INSERT INTO catalog_products (product_id, product_name, shortened_name)
+                VALUES (?, ?, ?)
+                ON CONFLICT (product_id) DO NOTHING
+                """,
+                (clean_pid, product_name, product_name),
+            )
+
+            # Insert or update into exception_placements
+            connection.execute(
+                """
+                INSERT INTO exception_placements (product_id, slot_id, stock_qty, assigned_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (product_id, slot_id) DO UPDATE SET
+                    stock_qty = excluded.stock_qty,
+                    assigned_at = excluded.assigned_at
+                """,
+                (clean_pid, slot_id, stock_qty, assigned_at),
+            )
+
+            # Insert into wait_to_update_csv
+            connection.execute(
+                """
+                INSERT INTO wait_to_update_csv (product_id, product_name, slot_id, slot_name)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (product_id, slot_name) DO UPDATE SET
+                    product_name = excluded.product_name
+                """,
+                (clean_pid, "Exc - added later", slot_id, slot_name),
+            )
+
+        return slot_name
+
+    def get_pending_csv_updates(self) -> list[dict[str, Any]]:
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, product_id, product_name, slot_id, slot_name, created_at
+                FROM wait_to_update_csv
+                ORDER BY id ASC
+                """
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "product_id": row["product_id"],
+                "product_name": row["product_name"],
+                "slot_id": row["slot_id"],
+                "slot_name": row["slot_name"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def clear_pending_csv_updates(self, ids: list[int] | None = None) -> int:
+        with closing(self.connect()) as connection, connection:
+            if ids is not None:
+                if not ids:
+                    return 0
+                placeholders = ",".join("?" for _ in ids)
+                cursor = connection.execute(
+                    f"DELETE FROM wait_to_update_csv WHERE id IN ({placeholders})",
+                    ids,
+                )
+            else:
+                cursor = connection.execute("DELETE FROM wait_to_update_csv")
+            return cursor.rowcount
+
+    def append_pending_to_csv(self, csv_path: str | Path) -> int:
+        """Append all pending exception records to the specified CSV file.
+        All appended rows are named 'Exc - added later'.
+        Clears the pending records upon successful write and returns the count appended.
+        """
+        pending = self.get_pending_csv_updates()
+        if not pending:
+            return 0
+
+        path = Path(csv_path)
+        delimiter = ";"
+        header_cols: list[str] = []
+
+        if path.exists():
+            raw_bytes = path.read_bytes()
+            for enc in ("utf-8-sig", "utf-8", "cp1258", "cp1252"):
+                try:
+                    text_content = raw_bytes.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                text_content = raw_bytes.decode("utf-8", errors="replace")
+
+            first_line = text_content.splitlines()[0] if text_content.splitlines() else ""
+            if first_line:
+                for cand in (";", ",", "\t", "|"):
+                    if cand in first_line:
+                        delimiter = cand
+                        break
+                header_cols = [c.strip() for c in first_line.split(delimiter)]
+        else:
+            header_cols = ["product_id", "product_name", "shortened_name"]
+
+        id_idx = 0
+        name_idx = 1
+        for idx, col in enumerate(header_cols):
+            low = col.lower()
+            if any(k in low for k in ("id", "mã", "ma", "code", "barcode")):
+                id_idx = idx
+            elif any(k in low for k in ("name", "tên", "ten", "title")):
+                name_idx = idx
+
+        total_cols = max(len(header_cols), 2)
+        new_lines: list[str] = []
+
+        needs_leading_newline = False
+        if path.exists():
+            raw = path.read_bytes()
+            if raw and not raw.endswith(b"\n") and not raw.endswith(b"\r"):
+                needs_leading_newline = True
+        else:
+            new_lines.append(delimiter.join(header_cols))
+
+        for item in pending:
+            row = [""] * total_cols
+            row[id_idx] = item["product_id"]
+            row[name_idx] = "Exc - added later"
+            new_lines.append(delimiter.join(row))
+
+        content_to_append = ("\n" if needs_leading_newline else "") + "\n".join(new_lines) + "\n"
+        with open(path, "a", encoding="utf-8", errors="replace") as f:
+            f.write(content_to_append)
+
+        self.clear_pending_csv_updates([item["id"] for item in pending])
+        return len(pending)
