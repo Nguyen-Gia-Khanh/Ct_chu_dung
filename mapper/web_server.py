@@ -133,7 +133,7 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
         match_shelf_cells = re.match(r"^/api/shelves/([^/]+)/cells$", path)
         if match_shelf_cells:
             shelf_code_raw = urllib.parse.unquote(match_shelf_cells.group(1))
-            placements = db.get_placement_details()
+            placement_items = db.get_all_placement_items()
             products_map = {p[0]: p[1] for p in db.get_products()}
             # Also catalog names
             for cid, cname, _ in db.get_catalog_products():
@@ -142,9 +142,8 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
 
             cells: dict[str, dict] = {}
             prefix = shelf_code_raw.strip().upper()
-            for prod_id, pl in placements.items():
-                if pl.slot_name.upper().startswith(prefix):
-                    loc_id = pl.slot_name
+            for prod_id, loc_id, qty, assigned_at in placement_items:
+                if loc_id.upper().startswith(prefix):
                     if loc_id not in cells:
                         match_slot = re.search(r"(\d+)-(\d+)$", loc_id)
                         row = int(match_slot.group(1)) if match_slot else 1
@@ -158,13 +157,12 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
                             "is_occupied": True,
                         }
                     pname = products_map.get(prod_id, prod_id)
-                    qty = pl.stock_qty
                     cells[loc_id]["items"].append({
                         "product_id": prod_id,
                         "product_name": pname,
                         "barcode": prod_id.replace("-", ""),
                         "quantity": qty,
-                        "placed_at": pl.assigned_at,
+                        "placed_at": assigned_at,
                     })
                     if qty is not None:
                         cells[loc_id]["total_quantity"] += qty
@@ -315,6 +313,15 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
                 },
                 "contents": contents,
                 "message": f"Loaded {slot.slot_name} · {len(contents)} product(s)"
+            })
+            return
+
+        if path == "/api/exceptions/pending":
+            pending = db.get_pending_csv_updates()
+            self._send_json({
+                "success": True,
+                "count": len(pending),
+                "items": pending,
             })
             return
 
@@ -661,6 +668,62 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
                 "message": f"Updated web location for {len(updates)} product(s){uploader_note}.",
                 "count": len(updates)
             })
+            return
+
+        if path == "/api/exceptions/assign":
+            prod_id = payload.get("product_id", "").strip()
+            if not prod_id:
+                self._send_error_json("Product ID is required.", 400)
+                return
+            floor = clean_location_segment(str(payload.get("floor", "1")))
+            side = clean_location_segment(str(payload.get("side", "1")))
+            shelf = clean_location_segment(str(payload.get("shelf", "A")))
+            try:
+                row = int(payload.get("row", 1))
+                col = int(payload.get("col", 1))
+            except (ValueError, TypeError):
+                self._send_error_json("Row and cell must be whole numbers.", 400)
+                return
+
+            slot_name = make_slot_name(floor, shelf, row, col, side=side)
+            slot_obj = db.get_slot_by_name(slot_name)
+            if not slot_obj:
+                self._send_error_json(f"Slot {slot_name} does not exist.", 404)
+                return
+
+            raw_qty = payload.get("quantity")
+            qty = int(raw_qty) if raw_qty is not None and str(raw_qty).strip() != "" else None
+
+            try:
+                res_slot = db.assign_exception(prod_id, slot_obj.slot_id, stock_qty=qty)
+                self._send_json({
+                    "success": True,
+                    "slot_name": res_slot,
+                    "message": f"Assigned exception {prod_id} to {res_slot} (Qty: {qty if qty is not None else 'null'}). Staged for CSV update."
+                })
+            except Exception as e:
+                self._send_error_json(str(e))
+            return
+
+        if path == "/api/exceptions/append-csv":
+            csv_path = payload.get("csv_path", "").strip()
+            if not csv_path:
+                for candidate in ("full_catalogue.csv", "product_id_n_name.csv"):
+                    if Path(candidate).exists():
+                        csv_path = candidate
+                        break
+                else:
+                    csv_path = "full_catalogue.csv"
+
+            try:
+                count = db.append_pending_to_csv(csv_path)
+                self._send_json({
+                    "success": True,
+                    "count": count,
+                    "message": f"Successfully appended {count} exception(s) to {Path(csv_path).name}.",
+                })
+            except Exception as e:
+                self._send_error_json(str(e))
             return
 
         self._send_error_json(f"Unknown POST endpoint: {path}", 404)
