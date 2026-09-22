@@ -195,25 +195,34 @@ class CellTransferPane(ttk.LabelFrame):
         self.shelf_selector.configure(values=list(self.shelf_choices.keys()))
 
         if self.current_shelf_id is None:
-            self._clear_all_selectors()
+            if self.shelves:
+                self.load_shelf(self.shelves[0][0])
+            else:
+                self._clear_all_selectors()
             return
         if self.current_shelf_id not in self.shelf_id_to_label:
-            self.current_shelf_id = None
-            self.selected_address = None
-            self.current_layout = []
-            self.current_contents = []
-            self._clear_all_selectors()
-            self._render_empty("The previously selected shelf no longer exists.")
+            if self.shelves:
+                self.load_shelf(self.shelves[0][0])
+            else:
+                self.current_shelf_id = None
+                self.selected_address = None
+                self.current_layout = []
+                self.current_contents = []
+                self._clear_all_selectors()
+                self._render_empty("The previously selected shelf no longer exists.")
             return
         try:
             self.load_shelf(self.current_shelf_id, select_slot_id=selected_slot_id)
         except KeyError:
-            self.current_shelf_id = None
-            self.selected_address = None
-            self.current_layout = []
-            self.current_contents = []
-            self._clear_all_selectors()
-            self._render_empty("The previously selected shelf no longer exists.")
+            if self.shelves:
+                self.load_shelf(self.shelves[0][0])
+            else:
+                self.current_shelf_id = None
+                self.selected_address = None
+                self.current_layout = []
+                self.current_contents = []
+                self._clear_all_selectors()
+                self._render_empty("The previously selected shelf no longer exists.")
 
     @staticmethod
     def _select_search_entry(entry: ttk.Entry) -> None:

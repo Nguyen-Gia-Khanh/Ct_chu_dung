@@ -72,12 +72,20 @@ const ApiService = {
   },
 
   async saveShelf(shelf) {
-    const res = await fetch(`${API_BASE}/shelves`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(shelf),
-    });
-    return await res.json();
+    try {
+      const res = await fetch(`${API_BASE}/shelves`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(shelf),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { error: data.error || `HTTP ${res.status}` };
+      }
+      return data;
+    } catch (e) {
+      return { error: String(e) };
+    }
   },
 
   async deleteShelf(shelfId) {
@@ -820,12 +828,16 @@ function ShelfDesignerView() {
         default_cols: defaultCols,
         custom_row_cols: rowCols,
       };
-      await ApiService.saveShelf(shelfPayload);
+      const res = await ApiService.saveShelf(shelfPayload);
+      if (res && res.error) {
+        setStatusMsg({ text: `Error saving shelf: ${res.error}`, type: 'error' });
+        return;
+      }
       setStatusMsg({
         text: `Successfully saved Shelf ${getShelfCode(floor, side, shelfLetter)} (${rowsCount} rows)`,
         type: 'success',
       });
-      loadShelves();
+      await loadShelves();
     } catch (err) {
       setStatusMsg({ text: `Error saving shelf: ${String(err)}`, type: 'error' });
     }
@@ -834,8 +846,12 @@ function ShelfDesignerView() {
   const handleDeleteShelf = async (id) => {
     if (!id) return;
     if (confirm('Are you sure you want to delete this shelf definition?')) {
-      await ApiService.deleteShelf(id);
-      loadShelves();
+      const res = await ApiService.deleteShelf(id);
+      if (res && res.error) {
+        setStatusMsg({ text: `Error deleting shelf: ${res.error}`, type: 'error' });
+        return;
+      }
+      await loadShelves();
       setStatusMsg({ text: 'Shelf deleted.', type: 'info' });
     }
   };
@@ -2551,8 +2567,12 @@ function CellTransferView() {
     const list = await ApiService.getShelves();
     setShelves(list);
     if (list.length > 0) {
-      await handleSelectShelfA(list[0]);
-      await handleSelectShelfB(list.length > 1 ? list[1] : list[0]);
+      if (!shelfA || !list.some((s) => s.id === shelfA.id)) {
+        await handleSelectShelfA(list[0]);
+      }
+      if (!shelfB || !list.some((s) => s.id === shelfB.id)) {
+        await handleSelectShelfB(list.length > 1 ? list[1] : list[0]);
+      }
     }
   };
 
@@ -2835,6 +2855,7 @@ function CellTransferView() {
   };
 
   const handleRefreshBoth = async () => {
+    await loadShelves();
     await reloadBoth();
     setStatusText('Refreshed both shelves.');
   };

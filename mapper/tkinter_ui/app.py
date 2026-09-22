@@ -1984,6 +1984,8 @@ class WarehouseMapperApp:
                     break
         if hasattr(self, "shelf_browser"):
             self.shelf_browser.refresh()
+        if hasattr(self, "cell_transfer"):
+            self.cell_transfer.refresh()
 
     def import_csv(self) -> None:
         selected = filedialog.askopenfilename(

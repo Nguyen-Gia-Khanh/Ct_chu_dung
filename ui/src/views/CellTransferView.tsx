@@ -327,8 +327,12 @@ export const CellTransferView: React.FC = () => {
     const list = await ApiService.getShelves();
     setShelves(list);
     if (list.length > 0) {
-      await handleSelectShelfA(list[0]);
-      await handleSelectShelfB(list.length > 1 ? list[1] : list[0]);
+      if (!shelfA || !list.some((s) => s.id === shelfA.id)) {
+        await handleSelectShelfA(list[0]);
+      }
+      if (!shelfB || !list.some((s) => s.id === shelfB.id)) {
+        await handleSelectShelfB(list.length > 1 ? list[1] : list[0]);
+      }
     }
   };
 
@@ -611,6 +615,7 @@ export const CellTransferView: React.FC = () => {
   };
 
   const handleRefreshBoth = async () => {
+    await loadShelves();
     await reloadBoth();
     setStatusText('Refreshed both shelves.');
   };

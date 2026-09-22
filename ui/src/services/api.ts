@@ -372,27 +372,34 @@ export const ApiService = {
     return localBackend.getShelves();
   },
 
-  async saveShelf(shelf: Shelf): Promise<Shelf> {
+  async saveShelf(shelf: Shelf): Promise<Shelf & { error?: string }> {
     try {
       const res = await fetch(`${API_BASE_URL}/shelves`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(shelf),
       });
-      if (res.ok) return await res.json();
-    } catch {
-      // Fallback
+      const data = await res.json();
+      if (!res.ok) {
+        return { ...shelf, error: data.error || `HTTP ${res.status}` };
+      }
+      return data;
+    } catch (e) {
+      return { ...shelf, error: String(e) };
     }
-    return localBackend.saveShelf(shelf);
   },
 
-  async deleteShelf(shelfId: number): Promise<void> {
+  async deleteShelf(shelfId: number): Promise<{ success?: boolean; error?: string }> {
     try {
-      await fetch(`${API_BASE_URL}/shelves/${shelfId}`, { method: 'DELETE' });
-    } catch {
-      // Fallback
+      const res = await fetch(`${API_BASE_URL}/shelves/${shelfId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) {
+        return { error: data.error || `HTTP ${res.status}` };
+      }
+      return data;
+    } catch (e) {
+      return { error: String(e) };
     }
-    return localBackend.deleteShelf(shelfId);
   },
 
   async getCatalog(): Promise<Product[]> {

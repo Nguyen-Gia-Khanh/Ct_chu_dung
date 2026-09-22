@@ -81,12 +81,16 @@ export const ShelfDesignerView: React.FC = () => {
         default_cols: defaultCols,
         custom_row_cols: rowCols,
       };
-      await ApiService.saveShelf(shelfPayload);
+      const res = await ApiService.saveShelf(shelfPayload);
+      if (res && res.error) {
+        setStatusMsg({ text: `Error saving shelf: ${res.error}`, type: 'error' });
+        return;
+      }
       setStatusMsg({
         text: `Successfully saved Shelf ${getShelfCode(floor, side, shelfLetter)} (${rowsCount} rows)`,
         type: 'success',
       });
-      loadShelves();
+      await loadShelves();
     } catch (err: unknown) {
       setStatusMsg({ text: `Error saving shelf: ${String(err)}`, type: 'error' });
     }
@@ -95,8 +99,12 @@ export const ShelfDesignerView: React.FC = () => {
   const handleDeleteShelf = async (id?: number) => {
     if (!id) return;
     if (confirm('Are you sure you want to delete this shelf definition?')) {
-      await ApiService.deleteShelf(id);
-      loadShelves();
+      const res = await ApiService.deleteShelf(id);
+      if (res && res.error) {
+        setStatusMsg({ text: `Error deleting shelf: ${res.error}`, type: 'error' });
+        return;
+      }
+      await loadShelves();
       setStatusMsg({ text: 'Shelf deleted.', type: 'info' });
     }
   };
