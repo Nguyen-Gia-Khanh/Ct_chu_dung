@@ -628,4 +628,40 @@ export const ApiService = {
     });
     return await res.json();
   },
+
+  async getPendingExceptions(): Promise<{ success: boolean; count: number; items: any[] }> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/exceptions/pending`);
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('API getPendingExceptions error:', e);
+    }
+    return { success: true, count: 0, items: [] };
+  },
+
+  async assignException(payload: {
+    product_id: string;
+    floor: string | number;
+    side: string | number;
+    shelf: string;
+    row: number;
+    col: number;
+    quantity?: number | null;
+  }): Promise<ApiResponse> {
+    const res = await fetch(`${API_BASE_URL}/exceptions/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return await res.json();
+  },
+
+  async appendExceptionsToCSV(csvPath?: string): Promise<ApiResponse<{ count: number }>> {
+    const res = await fetch(`${API_BASE_URL}/exceptions/append-csv`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ csv_path: csvPath }),
+    });
+    return await res.json();
+  },
 };

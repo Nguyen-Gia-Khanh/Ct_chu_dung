@@ -85,7 +85,7 @@ export interface CSVColumnMapping {
   loc_col?: string;
 }
 
-export type ActiveTab = 'designer' | 'assignment' | 'primal_queue' | 'browser' | 'cell_transfer';
+export type ActiveTab = 'designer' | 'assignment' | 'primal_queue' | 'browser' | 'cell_transfer' | 'exceptions';
 
 export interface AssignLocationPayload {
   product_id: string;

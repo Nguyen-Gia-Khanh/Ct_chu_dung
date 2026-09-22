@@ -36,6 +36,7 @@ from mapper.database import (
     validate_stock_quantity,
 )
 from .designer import ShelfDesigner
+from .exceptions_view import ExceptionsView
 from .location_assignment_view import LocationAssignmentView
 from .lookup_view import ProductLookupView
 from .primal_queue_view import PrimalQueueView
@@ -204,9 +205,19 @@ class WarehouseMapperApp:
             on_modify_web=self.modify_cell_transfer_locations,
         )
         self.notebook.add(self.cell_transfer, text="5. Switch / Combine Cells")
+
+        self.exceptions_view = ExceptionsView(
+            self.notebook,
+            self.database,
+            status_text=getattr(self, "status_text", None),
+            on_refresh_callback=self.refresh_all_views,
+        )
+        self.notebook.add(self.exceptions_view, text="6. Special Exceptions")
+
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
         self.status_text = tk.StringVar(value="Ready")
+        self.exceptions_view.status_text = self.status_text
         ttk.Label(
             self.root,
             textvariable=self.status_text,
@@ -225,6 +236,8 @@ class WarehouseMapperApp:
                 self.shelf_browser.show_saved_shelf(self.shelf_browser.current_shelf_id)
         elif self.notebook.select() == str(self.cell_transfer):
             self.cell_transfer.refresh()
+        elif hasattr(self, "exceptions_view") and self.notebook.select() == str(self.exceptions_view):
+            self.exceptions_view.refresh()
 
     def on_cell_transfer_changed(self, message: str) -> None:
         """Synchronize every other tab after an immediate cell operation."""
@@ -1884,6 +1897,8 @@ class WarehouseMapperApp:
         self.refresh_on_hand_queue()
         self.refresh_address_contents()
         self.refresh_change_summary()
+        if hasattr(self, "exceptions_view"):
+            self.exceptions_view.refresh()
 
     def reload_database_state(self, reload_catalog: bool = False) -> None:
         product_rows = self.database.get_product_records()

@@ -5,6 +5,7 @@ import { LocationAssignmentView } from './views/LocationAssignmentView';
 import { PrimalQueueView } from './views/PrimalQueueView';
 import { ShelfBrowserView } from './views/ShelfBrowserView';
 import { CellTransferView } from './views/CellTransferView';
+import { ExceptionsView } from './views/ExceptionsView';
 import { ApiService } from './services/api';
 
 export const App: React.FC = () => {
@@ -73,6 +74,14 @@ export const App: React.FC = () => {
         >
           <span>5. Switch / Combine Cells</span>
         </div>
+
+        <div
+          className={`vscode-tab ${activeTab === 'exceptions' ? 'active' : ''}`}
+          onClick={() => setActiveTab('exceptions')}
+          role="tab"
+        >
+          <span>6. Special Exceptions</span>
+        </div>
       </div>
 
       {/* Editor Workspace View */}
@@ -82,6 +91,7 @@ export const App: React.FC = () => {
         {activeTab === 'primal_queue' && <PrimalQueueView />}
         {activeTab === 'browser' && <ShelfBrowserView />}
         {activeTab === 'cell_transfer' && <CellTransferView />}
+        {activeTab === 'exceptions' && <ExceptionsView />}
       </main>
 
       {/* Bottom Status Bar */}
