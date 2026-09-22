@@ -9,6 +9,7 @@ from tkinter import messagebox, ttk
 
 from mapper.common import clean_location_segment, make_slot_name, normalize_search
 from mapper.database import Placement, SlotAddress, WarehouseDatabase
+from mapper.web_upload import LocationUpdate
 from .widgets import ScrollableFrame
 from utils.barcode_scanner import BarcodeScanner, format_product_id
 
@@ -583,11 +584,14 @@ class CellTransferView(ttk.Frame):
         database: WarehouseDatabase,
         on_changed: Callable[[str], object],
         can_change: Callable[[], bool],
+        on_modify_web: Callable[[list[LocationUpdate]], object] | None = None,
     ) -> None:
         super().__init__(parent, padding=10)
         self.database = database
         self.on_changed = on_changed
         self.can_change = can_change
+        self.on_modify_web = on_modify_web
+        self.last_changed_updates: list[LocationUpdate] = []
 
         ttk.Label(
             self,
@@ -626,7 +630,14 @@ class CellTransferView(ttk.Frame):
             text="Combine right → left",
             command=lambda: self.combine_cells(self.right, self.left),
         ).pack(fill="x", pady=2)
-        ttk.Separator(actions).pack(fill="x", pady=10)
+        ttk.Separator(actions).pack(fill="x", pady=8)
+        self.modify_location_button = ttk.Button(
+            actions,
+            text="Modify location ID on web",
+            command=self.modify_location_on_web,
+        )
+        self.modify_location_button.pack(fill="x", pady=2)
+        ttk.Separator(actions).pack(fill="x", pady=8)
         ttk.Button(actions, text="Refresh both", command=self.refresh).pack(fill="x")
         ttk.Label(
             actions,
@@ -698,10 +709,29 @@ class CellTransferView(ttk.Frame):
             parent=self,
         ):
             return
+        left_products: list[str] = []
+        right_products: list[str] = []
+        try:
+            raw_left = self.database.get_slot_contents(left.slot_id)
+            if isinstance(raw_left, (list, tuple)):
+                left_products = [pid for pid, _, _ in raw_left]
+        except Exception:
+            pass
+        try:
+            raw_right = self.database.get_slot_contents(right.slot_id)
+            if isinstance(raw_right, (list, tuple)):
+                right_products = [pid for pid, _, _ in raw_right]
+        except Exception:
+            pass
+
         try:
             left_count, right_count = self.database.swap_slot_contents(
                 left.slot_id,
                 right.slot_id,
+            )
+            self.last_changed_updates = (
+                [LocationUpdate(pid, right.slot_name) for pid in left_products] +
+                [LocationUpdate(pid, left.slot_name) for pid in right_products]
             )
         except Exception as error:
             messagebox.showerror("Cells could not be switched", str(error), parent=self)
@@ -740,11 +770,21 @@ class CellTransferView(ttk.Frame):
             parent=self,
         ):
             return
+        source_products: list[str] = []
+        try:
+            raw_source = self.database.get_slot_contents(source_address.slot_id)
+            if isinstance(raw_source, (list, tuple)):
+                source_products = [pid for pid, _, _ in raw_source]
+        except Exception:
+            pass
         try:
             moved = self.database.combine_slot_contents(
                 source_address.slot_id,
                 target_address.slot_id,
             )
+            self.last_changed_updates = [
+                LocationUpdate(pid, target_address.slot_name) for pid in source_products
+            ]
         except Exception as error:
             messagebox.showerror("Cells could not be combined", str(error), parent=self)
             return
@@ -755,3 +795,21 @@ class CellTransferView(ttk.Frame):
         self.on_changed(message)
         self.refresh()
         self.status_text.set(message)
+
+    def modify_location_on_web(self) -> None:
+        if not self.last_changed_updates:
+            messagebox.showinfo(
+                "No changed products",
+                "No recent cell changes to modify on web. Please switch or combine cells first.",
+                parent=self,
+            )
+            return
+        if self.on_modify_web is not None:
+            self.on_modify_web(self.last_changed_updates)
+        else:
+            messagebox.showinfo(
+                "Web sync unavailable",
+                "Web modification handler is not configured.",
+                parent=self,
+            )
+

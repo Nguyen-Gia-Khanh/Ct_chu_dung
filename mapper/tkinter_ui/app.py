@@ -201,6 +201,7 @@ class WarehouseMapperApp:
             self.database,
             self.on_cell_transfer_changed,
             self.can_change_cells,
+            on_modify_web=self.modify_cell_transfer_locations,
         )
         self.notebook.add(self.cell_transfer, text="5. Switch / Combine Cells")
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
@@ -1462,6 +1463,18 @@ class WarehouseMapperApp:
             return
         self._start_web_update(products, location_only=True)
 
+    def modify_cell_transfer_locations(self, updates: list[LocationUpdate]) -> None:
+        if not self._can_start_web_update():
+            return
+        if not updates:
+            messagebox.showinfo(
+                "No changed products",
+                "No recent cell changes to modify on web. Please switch or combine cells first.",
+                parent=self.root,
+            )
+            return
+        self._start_web_update(updates, location_only=True)
+
     def _start_web_update(
         self,
         products: list[UploadProduct] | list[LocationUpdate],
@@ -1479,6 +1492,8 @@ class WarehouseMapperApp:
         self.assignments.upload_button.configure(state="disabled")
         self.assignments.modify_location_button.configure(state="disabled")
         self.assignments.web_batch_mode_check.configure(state="disabled")
+        if hasattr(self, "cell_transfer") and hasattr(self.cell_transfer, "modify_location_button"):
+            self.cell_transfer.modify_location_button.configure(state="disabled")
         if len(products) == 1:
             product = products[0]
             action = "Updating location" if location_only else "Uploading"
@@ -1489,6 +1504,8 @@ class WarehouseMapperApp:
                 f"{action} {len(products)} products → {products[0].location_id}…"
             )
         self.assignments.upload_status_text.set(status)
+        if hasattr(self, "cell_transfer") and hasattr(self.cell_transfer, "status_text"):
+            self.cell_transfer.status_text.set(status)
         self.status_text.set(
             f"{status} Leave the website tab untouched until it finishes."
         )
@@ -1583,11 +1600,15 @@ class WarehouseMapperApp:
             event, text, *metadata = event_data
             if event == "progress":
                 self.assignments.upload_status_text.set(text)
+                if hasattr(self, "cell_transfer") and hasattr(self.cell_transfer, "status_text"):
+                    self.cell_transfer.status_text.set(text)
                 continue
             self.web_upload_busy = False
             self.assignments.upload_button.configure(state="normal")
             self.assignments.modify_location_button.configure(state="normal")
             self.assignments.web_batch_mode_check.configure(state="normal")
+            if hasattr(self, "cell_transfer") and hasattr(self.cell_transfer, "modify_location_button"):
+                self.cell_transfer.modify_location_button.configure(state="normal")
             action_title = (
                 "Modify location"
                 if self.web_upload_action == "location"
@@ -1600,12 +1621,16 @@ class WarehouseMapperApp:
                 self.assignments.upload_status_text.set(
                     f"{action_title} needs attention. See the message and check Chrome."
                 )
+                if hasattr(self, "cell_transfer") and hasattr(self.cell_transfer, "status_text"):
+                    self.cell_transfer.status_text.set(f"{action_title} failed: {text}")
                 self.status_text.set(
                     f"{action_title} was not verified. Local SQLite data is unchanged."
                 )
                 messagebox.showerror(action_title, text, parent=self.root)
             else:
                 self.assignments.upload_status_text.set(text)
+                if hasattr(self, "cell_transfer") and hasattr(self.cell_transfer, "status_text"):
+                    self.cell_transfer.status_text.set(text)
                 self.status_text.set(text)
             return
         if self.web_upload_busy:

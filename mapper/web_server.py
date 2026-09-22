@@ -717,7 +717,13 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
                 mime_type = "application/octet-stream"
 
         try:
-            content = target_file.read_bytes()
+            if target_file.name == "index.html":
+                text = target_file.read_text(encoding="utf-8")
+                ts = int(time.time())
+                text = re.sub(r'(\?v=)[0-9]+', rf'\g<1>{ts}', text)
+                content = text.encode("utf-8")
+            else:
+                content = target_file.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", mime_type)
             self.send_header("Content-Length", str(len(content)))
