@@ -28,6 +28,21 @@ def _get_database() -> WarehouseDatabase:
     return WarehouseDatabase(application_directory() / "warehouse_locations.db")
 
 
+_uploader = None
+
+
+def _get_uploader():
+    global _uploader
+    if _uploader is None:
+        try:
+            from .web_upload import WebsiteUploader
+            _uploader = WebsiteUploader()
+        except Exception:
+            _uploader = None
+    return _uploader
+
+
+
 class WarehouseApiHandler(BaseHTTPRequestHandler):
     server_version = "WarehouseMapperServer/1.0"
 
@@ -143,7 +158,7 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
                             "is_occupied": True,
                         }
                     pname = products_map.get(prod_id, prod_id)
-                    qty = pl.stock_qty if pl.stock_qty is not None else 1
+                    qty = pl.stock_qty
                     cells[loc_id]["items"].append({
                         "product_id": prod_id,
                         "product_name": pname,
@@ -151,7 +166,8 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
                         "quantity": qty,
                         "placed_at": pl.assigned_at,
                     })
-                    cells[loc_id]["total_quantity"] += qty
+                    if qty is not None:
+                        cells[loc_id]["total_quantity"] += qty
 
             self._send_json(cells)
             return
@@ -164,7 +180,7 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
             for pid, pname, _ in catalog_rows:
                 loc = placements.get(pid)
                 p_detail = placement_details.get(pid)
-                qty = p_detail.stock_qty if p_detail and p_detail.stock_qty is not None else 1
+                qty = p_detail.stock_qty if p_detail else None
                 result.append({
                     "product_id": pid,
                     "product_name": pname,
@@ -183,7 +199,7 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
             for pid, pname in products:
                 loc = placements.get(pid)
                 if not loc:
-                    qty = on_hand[pid].stock_qty if pid in on_hand and on_hand[pid].stock_qty is not None else 1
+                    qty = on_hand[pid].stock_qty if pid in on_hand else None
                     result.append({
                         "code": pid,
                         "name": pname,
@@ -201,7 +217,7 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
             for pid, pname in products:
                 loc = placements.get(pid)
                 p_detail = placement_details.get(pid)
-                qty = p_detail.stock_qty if p_detail and p_detail.stock_qty is not None else 1
+                qty = p_detail.stock_qty if p_detail else None
                 result.append({
                     "barcode": pid.replace("-", ""),
                     "product_name": pname,
@@ -221,6 +237,7 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
             term = normalize_search(format_product_id(q))
             placements = db.get_placements()
             catalog = db.get_catalog_products()
+            placement_details = db.get_placement_details()
             found = None
             for pid, pname, _ in catalog:
                 if (
@@ -228,11 +245,12 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
                     or normalize_search(pid.replace("-", "")) == term.replace("-", "")
                     or normalize_search(pname).find(term) != -1
                 ):
+                    p_detail = placement_details.get(pid)
                     found = {
                         "product_id": pid,
                         "product_name": pname,
                         "barcode": pid.replace("-", ""),
-                        "on_hand": 1,
+                        "on_hand": p_detail.stock_qty if p_detail else None,
                         "loc_id": placements.get(pid),
                     }
                     break
@@ -249,7 +267,7 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
                 result.append({
                     "product_id": pid,
                     "product_name": name,
-                    "stock_qty": item.stock_qty if item.stock_qty is not None else 1,
+                    "stock_qty": item.stock_qty,
                     "queued_at": item.queued_at,
                 })
             self._send_json(result)
@@ -281,7 +299,7 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
                 contents.append({
                     "product_id": pid,
                     "product_name": pname,
-                    "stock_qty": pl.stock_qty if pl.stock_qty is not None else 1,
+                    "stock_qty": pl.stock_qty,
                     "assigned_at": pl.assigned_at.replace("T", " ") if pl.assigned_at else "Unknown",
                 })
             self._send_json({
@@ -410,31 +428,56 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/assignments/transfer":
-            src_shelf = payload.get("source_shelf", "")
-            src_row = int(payload.get("source_row", 1))
-            src_col = int(payload.get("source_col", 1))
-            dst_shelf = payload.get("target_shelf", "")
-            dst_row = int(payload.get("target_row", 1))
-            dst_col = int(payload.get("target_col", 1))
+            src_slot_id = payload.get("source_slot_id")
+            dst_slot_id = payload.get("target_slot_id")
             action = payload.get("action", "switch")
 
-            slot_a_name = f"{src_shelf}{src_row}-{src_col}"
-            slot_b_name = f"{dst_shelf}{dst_row}-{dst_col}"
-
-            slot_a = db.get_slot_by_name(slot_a_name)
-            slot_b = db.get_slot_by_name(slot_b_name)
+            if src_slot_id and dst_slot_id:
+                slot_a = db.get_slot_by_id(int(src_slot_id))
+                slot_b = db.get_slot_by_id(int(dst_slot_id))
+            else:
+                src_shelf = payload.get("source_shelf", "")
+                src_row = int(payload.get("source_row", 1))
+                src_col = int(payload.get("source_col", 1))
+                dst_shelf = payload.get("target_shelf", "")
+                dst_row = int(payload.get("target_row", 1))
+                dst_col = int(payload.get("target_col", 1))
+                slot_a_name = f"{src_shelf}{src_row}-{src_col}"
+                slot_b_name = f"{dst_shelf}{dst_row}-{dst_col}"
+                slot_a = db.get_slot_by_name(slot_a_name)
+                slot_b = db.get_slot_by_name(slot_b_name)
 
             if not slot_a or not slot_b:
                 self._send_error_json("One or both slots not found in database.", 404)
                 return
 
+            slot_a_name = slot_a.slot_name
+            slot_b_name = slot_b.slot_name
+
+            # Pre-fetch product lists to compute exact location changes
+            contents_a = [pid for pid, _, _ in db.get_slot_contents(slot_a.slot_id)]
+            contents_b = [pid for pid, _, _ in db.get_slot_contents(slot_b.slot_id)]
+
             try:
                 if action == "switch":
                     db.swap_slot_contents(slot_a.slot_id, slot_b.slot_id)
-                    self._send_json({"success": True, "message": f"Swapped contents between {slot_a_name} and {slot_b_name}"})
+                    changed_products = (
+                        [{"product_id": pid, "slot_name": slot_b_name} for pid in contents_a] +
+                        [{"product_id": pid, "slot_name": slot_a_name} for pid in contents_b]
+                    )
+                    self._send_json({
+                        "success": True,
+                        "message": f"Switched {slot_a_name} ({len(contents_a)}) with {slot_b_name} ({len(contents_b)}).",
+                        "changed_products": changed_products,
+                    })
                 elif action == "combine":
                     count = db.combine_slot_contents(slot_a.slot_id, slot_b.slot_id)
-                    self._send_json({"success": True, "message": f"Combined {count} products from {slot_a_name} into {slot_b_name}"})
+                    changed_products = [{"product_id": pid, "slot_name": slot_b_name} for pid in contents_a]
+                    self._send_json({
+                        "success": True,
+                        "message": f"Combined {count} product(s) from {slot_a_name} into {slot_b_name}.",
+                        "changed_products": changed_products,
+                    })
                 else:
                     self._send_error_json(f"Unknown action: {action}")
             except Exception as e:
@@ -479,8 +522,20 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
         if path == "/api/on-hand/add":
             items = payload.get("items", [])
             if not items and "product_ids" in payload:
-                items = [{"product_id": pid, "quantity": 1} for pid in payload["product_ids"]]
-            quantities = {format_product_id(it["product_id"]): int(it.get("quantity") or 1) for it in items if it.get("product_id")}
+                items = [{"product_id": pid, "quantity": None} for pid in payload["product_ids"]]
+            quantities = {}
+            for it in items:
+                pid = format_product_id(it.get("product_id", ""))
+                if not pid:
+                    continue
+                q = it.get("quantity")
+                if q is not None and str(q).strip() != "":
+                    try:
+                        quantities[pid] = int(q)
+                    except (ValueError, TypeError):
+                        quantities[pid] = None
+                else:
+                    quantities[pid] = None
             try:
                 count = db.add_to_on_hand(quantities, now_iso)
                 self._send_json({"success": True, "message": f"Moved {count} product(s) to on-hand. Saved immediately.", "count": count})
@@ -499,7 +554,8 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
 
         if path == "/api/on-hand/update-stock":
             product_id = format_product_id(payload.get("product_id", ""))
-            quantity = int(payload.get("quantity", 1))
+            raw_q = payload.get("quantity")
+            quantity = int(raw_q) if raw_q is not None and str(raw_q).strip() != "" else 0
             try:
                 db.update_on_hand_stock(product_id, quantity)
                 self._send_json({"success": True, "message": f"Updated on-hand stock for {product_id} to {quantity}."})
@@ -537,7 +593,8 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
         if path == "/api/slot-contents/update-stock":
             slot_id = int(payload.get("slot_id", 0))
             product_id = format_product_id(payload.get("product_id", ""))
-            quantity = int(payload.get("quantity", 1))
+            raw_q = payload.get("quantity")
+            quantity = int(raw_q) if raw_q is not None and str(raw_q).strip() != "" else 0
             try:
                 db.update_placement_stock(product_id, quantity, expected_slot_id=slot_id)
                 self._send_json({"success": True, "message": f"Updated stock for {product_id} to {quantity}."})
@@ -558,13 +615,52 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/web/connect-chrome":
-            self._send_json({"success": True, "message": "Chrome connection initiated."})
+            uploader_msg = "Chrome connection initiated."
+            try:
+                uploader = _get_uploader()
+                if uploader:
+                    connected = uploader.connect()
+                    uploader_msg = connected or "Connected to Chrome successfully."
+            except Exception as e:
+                uploader_msg = f"Chrome connection note: {e}"
+            self._send_json({"success": True, "message": uploader_msg})
             return
 
         if path == "/api/web/modify-location":
+            items = payload.get("items")
             product_ids = payload.get("product_ids", [])
             slot_name = payload.get("slot_name", "")
-            self._send_json({"success": True, "message": f"Updated web location for {len(product_ids)} product(s) to {slot_name}."})
+
+            updates = []
+            if items:
+                for it in items:
+                    pid = format_product_id(it.get("product_id", ""))
+                    loc = clean_location_segment(it.get("slot_name", ""))
+                    if pid and loc:
+                        updates.append((pid, loc))
+            elif product_ids and slot_name:
+                clean_loc = clean_location_segment(slot_name)
+                for pid in product_ids:
+                    clean_pid = format_product_id(pid)
+                    if clean_pid and clean_loc:
+                        updates.append((clean_pid, clean_loc))
+
+            uploader_note = ""
+            try:
+                uploader = _get_uploader()
+                if uploader and uploader.is_connected():
+                    from .web_upload import LocationUpdate
+                    for pid, loc in updates:
+                        uploader.modify_location(LocationUpdate(pid, loc))
+                    uploader_note = " and synced to website via Chrome"
+            except Exception as ex:
+                uploader_note = f" (Chrome note: {ex})"
+
+            self._send_json({
+                "success": True,
+                "message": f"Updated web location for {len(updates)} product(s){uploader_note}.",
+                "count": len(updates)
+            })
             return
 
         self._send_error_json(f"Unknown POST endpoint: {path}", 404)

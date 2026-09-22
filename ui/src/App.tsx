@@ -31,14 +31,6 @@ export const App: React.FC = () => {
 
   return (
     <div className="vscode-workbench">
-      {/* Top App Header matching Tkinter */}
-      <header className="app-header-toolbar">
-        <div className="app-header-title">Warehouse Shelf Mapper</div>
-        <div className="app-header-subtitle">
-          Shelf design · address assignment · primal queue · shelf browser · cell moves
-        </div>
-      </header>
-
       {/* Top Navigation Tabs */}
       <div className="vscode-tab-bar" role="tablist">
         <div
@@ -92,7 +84,7 @@ export const App: React.FC = () => {
         {activeTab === 'cell_transfer' && <CellTransferView />}
       </main>
 
-      {/* VS Code Bottom Status Bar (#007acc) */}
+      {/* Bottom Status Bar */}
       <footer className="vscode-status-bar">
         <div className="status-left">
           <div className="status-item">
@@ -110,15 +102,6 @@ export const App: React.FC = () => {
           </div>
           <div className="status-item">
             <span>Queue: <strong>{pendingCount}</strong> pending</span>
-          </div>
-          <div className="status-item">
-            <span>UTF-8</span>
-          </div>
-          <div className="status-item">
-            <span>CRLF</span>
-          </div>
-          <div className="status-item">
-            <span>VS Code Light+</span>
           </div>
         </div>
       </footer>

@@ -532,7 +532,7 @@ export const ApiService = {
   async addToOnHand(productIds: string[], quantities: Record<string, number> = {}): Promise<ApiResponse> {
     const items = productIds.map((pid) => ({
       product_id: pid,
-      quantity: quantities[pid] || 1,
+      quantity: quantities[pid] !== undefined ? quantities[pid] : null,
     }));
     const res = await fetch(`${API_BASE_URL}/on-hand/add`, {
       method: 'POST',
@@ -551,7 +551,7 @@ export const ApiService = {
     return await res.json();
   },
 
-  async updateOnHandStock(productId: string, quantity: number): Promise<ApiResponse> {
+  async updateOnHandStock(productId: string, quantity: number | null): Promise<ApiResponse> {
     const res = await fetch(`${API_BASE_URL}/on-hand/update-stock`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -590,7 +590,7 @@ export const ApiService = {
     return await res.json();
   },
 
-  async updateSlotStock(slotId: number, productId: string, quantity: number): Promise<ApiResponse> {
+  async updateSlotStock(slotId: number, productId: string, quantity: number | null): Promise<ApiResponse> {
     const res = await fetch(`${API_BASE_URL}/slot-contents/update-stock`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -613,13 +613,19 @@ export const ApiService = {
     return await res.json();
   },
 
-  async modifyLocationWeb(productIds: string[], slotName: string): Promise<ApiResponse> {
+  async modifyLocationWeb(
+    target: string[] | { product_id: string; slot_name: string }[],
+    slotName?: string
+  ): Promise<ApiResponse> {
+    const body =
+      Array.isArray(target) && target.length > 0 && typeof target[0] === 'object'
+        ? { items: target }
+        : { product_ids: target, slot_name: slotName };
     const res = await fetch(`${API_BASE_URL}/web/modify-location`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ product_ids: productIds, slot_name: slotName }),
+      body: JSON.stringify(body),
     });
     return await res.json();
   },
 };
-

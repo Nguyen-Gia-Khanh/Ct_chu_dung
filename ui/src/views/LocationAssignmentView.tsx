@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Product, ApiResponse } from '../types';
 import { ApiService } from '../services/api';
 import { normalizeSearch } from '../utils/coordinates';
@@ -44,6 +44,12 @@ export const LocationAssignmentView: React.FC = () => {
   const [selectedCatalogIds, setSelectedCatalogIds] = useState<string[]>([]);
   const [selectedOnHandIds, setSelectedOnHandIds] = useState<string[]>([]);
   const [selectedContentIds, setSelectedContentIds] = useState<string[]>([]);
+
+  // Refs to track anchor row for Shift-click range selection
+  const lastQueueIdRef = useRef<string | null>(null);
+  const lastCatIdRef = useRef<string | null>(null);
+  const lastHandIdRef = useRef<string | null>(null);
+  const lastContentIdRef = useRef<string | null>(null);
 
   // Search & dynamic location indicator
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -118,13 +124,27 @@ export const LocationAssignmentView: React.FC = () => {
     setSearchLocationText('');
   }, [searchQuery, catalog, pendingQueue, onHandProducts]);
 
-  const handleToggleSelect = (
+  const handleTableSelect = (
+    id: string,
+    allIds: string[],
     selectedList: string[],
     setSelectedList: React.Dispatch<React.SetStateAction<string[]>>,
-    id: string,
+    lastRef: React.MutableRefObject<string | null>,
     e?: React.MouseEvent
   ) => {
-    if (e && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+    if (e && e.shiftKey && lastRef.current && allIds.includes(lastRef.current)) {
+      const startIdx = allIds.indexOf(lastRef.current);
+      const endIdx = allIds.indexOf(id);
+      if (startIdx !== -1 && endIdx !== -1) {
+        const [low, high] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+        const range = allIds.slice(low, high + 1);
+        const combined = Array.from(new Set([...selectedList, ...range]));
+        setSelectedList(combined);
+        return;
+      }
+    }
+    lastRef.current = id;
+    if (e && (e.ctrlKey || e.metaKey)) {
       setSelectedList((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
     } else {
       setSelectedList((prev) => (prev.length === 1 && prev[0] === id ? [] : [id]));
@@ -157,10 +177,10 @@ export const LocationAssignmentView: React.FC = () => {
     if (selectedOnHandIds.length !== 1) return;
     const pid = selectedOnHandIds[0];
     const item = onHandProducts.find((p) => p.product_id === pid);
-    const curr = item && item.stock_qty != null ? item.stock_qty : 1;
-    const val = window.prompt(`Product: ${pid}\nCurrent stock: ${curr}\n\nEnter the new whole-number quantity:`, String(curr));
+    const curr = item && item.stock_qty != null ? item.stock_qty : '';
+    const val = window.prompt(`Product: ${pid}\nCurrent stock: ${curr !== '' ? curr : '(null)'}\n\nEnter the new whole-number quantity (or empty for null):`, String(curr));
     if (val === null) return;
-    const newQty = parseInt(val, 10);
+    const newQty = val.trim() === '' ? 0 : parseInt(val, 10);
     if (!isNaN(newQty) && newQty >= 0) {
       await ApiService.updateOnHandStock(pid, newQty);
       await refreshData();
@@ -233,13 +253,13 @@ export const LocationAssignmentView: React.FC = () => {
     if (selectedContentIds.length !== 1 || !loadedSlot) return;
     const pid = selectedContentIds[0];
     const item = loadedContents.find((p) => p.product_id === pid);
-    const curr = item && item.stock_qty != null ? item.stock_qty : 1;
+    const curr = item && item.stock_qty != null ? item.stock_qty : '';
     const val = window.prompt(
-      `Product: ${pid}\nLocation: ${loadedSlot.slot_name}\nCurrent stock: ${curr}\n\nEnter the new whole-number quantity:`,
+      `Product: ${pid}\nLocation: ${loadedSlot.slot_name}\nCurrent stock: ${curr !== '' ? curr : '(null)'}\n\nEnter the new whole-number quantity (or empty for null):`,
       String(curr)
     );
     if (val === null) return;
-    const newQty = parseInt(val, 10);
+    const newQty = val.trim() === '' ? 0 : parseInt(val, 10);
     if (!isNaN(newQty) && newQty >= 0) {
       await ApiService.updateSlotStock(loadedSlot.slot_id, pid, newQty);
       await handleLoadAddressDirect(loadedSlot.floor, loadedSlot.side, loadedSlot.shelf, loadedSlot.row, loadedSlot.col);
@@ -355,13 +375,13 @@ export const LocationAssignmentView: React.FC = () => {
                         className={`${selectedQueueIds.includes(item.code) ? 'selected-row' : ''} ${
                           item.returned ? 'returned-row' : ''
                         }`}
-                        onClick={(e) => handleToggleSelect(selectedQueueIds, setSelectedQueueIds, item.code, e)}
+                        onClick={(e) => handleTableSelect(item.code, filteredPending.slice(0, 100).map(x => x.code), selectedQueueIds, setSelectedQueueIds, lastQueueIdRef, e)}
                       >
                         <td className="font-mono">
                           <strong>{item.code}</strong>
                         </td>
                         <td>{item.name}</td>
-                        <td style={{ textAlign: 'right' }}>{item.on_hand}</td>
+                        <td style={{ textAlign: 'right' }}>{item.on_hand != null ? item.on_hand : ''}</td>
                       </tr>
                     ))}
                     {filteredPending.length === 0 && (
@@ -406,7 +426,7 @@ export const LocationAssignmentView: React.FC = () => {
                       <tr
                         key={prod.product_id}
                         className={selectedCatalogIds.includes(prod.product_id) ? 'selected-row' : ''}
-                        onClick={(e) => handleToggleSelect(selectedCatalogIds, setSelectedCatalogIds, prod.product_id, e)}
+                        onClick={(e) => handleTableSelect(prod.product_id, filteredCatalog.slice(0, 100).map(x => x.product_id), selectedCatalogIds, setSelectedCatalogIds, lastCatIdRef, e)}
                         onDoubleClick={() => handleCatalogDoubleClick(prod.product_id)}
                       >
                         <td className="font-mono">
@@ -469,13 +489,13 @@ export const LocationAssignmentView: React.FC = () => {
                     <tr
                       key={item.product_id}
                       className={selectedOnHandIds.includes(item.product_id) ? 'selected-row' : ''}
-                      onClick={(e) => handleToggleSelect(selectedOnHandIds, setSelectedOnHandIds, item.product_id, e)}
+                      onClick={(e) => handleTableSelect(item.product_id, onHandProducts.map(x => x.product_id), selectedOnHandIds, setSelectedOnHandIds, lastHandIdRef, e)}
                     >
                       <td className="font-mono">
                         <strong>{item.product_id}</strong>
                       </td>
                       <td>{item.product_name}</td>
-                      <td style={{ textAlign: 'right' }}>{item.stock_qty}</td>
+                      <td style={{ textAlign: 'right' }}>{item.stock_qty != null ? item.stock_qty : ''}</td>
                     </tr>
                   ))}
                   {onHandProducts.length === 0 && (
@@ -617,7 +637,7 @@ export const LocationAssignmentView: React.FC = () => {
                     <tr
                       key={it.product_id}
                       className={selectedContentIds.includes(it.product_id) ? 'selected-row' : ''}
-                      onClick={(e) => handleToggleSelect(selectedContentIds, setSelectedContentIds, it.product_id, e)}
+                      onClick={(e) => handleTableSelect(it.product_id, loadedContents.map(x => x.product_id), selectedContentIds, setSelectedContentIds, lastContentIdRef, e)}
                       onDoubleClick={() => handleCopyProductId(it.product_id)}
                       title="Double-click to copy Product ID"
                     >
@@ -625,7 +645,7 @@ export const LocationAssignmentView: React.FC = () => {
                         <strong>{it.product_id}</strong>
                       </td>
                       <td>{it.product_name}</td>
-                      <td style={{ textAlign: 'right' }}>{it.stock_qty}</td>
+                      <td style={{ textAlign: 'right' }}>{it.stock_qty != null ? it.stock_qty : ''}</td>
                       <td>{it.assigned_at}</td>
                     </tr>
                   ))}

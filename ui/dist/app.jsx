@@ -193,7 +193,7 @@ const ApiService = {
   async addToOnHand(productIds, quantities = {}) {
     const items = productIds.map((pid) => ({
       product_id: pid,
-      quantity: quantities[pid] || 1,
+      quantity: quantities[pid] !== undefined ? quantities[pid] : null,
     }));
     const res = await fetch(`${API_BASE}/on-hand/add`, {
       method: 'POST',
@@ -274,11 +274,15 @@ const ApiService = {
     return await res.json();
   },
 
-  async modifyLocationWeb(productIds, slotName) {
+  async modifyLocationWeb(target, slotName) {
+    const body =
+      Array.isArray(target) && target.length > 0 && typeof target[0] === 'object'
+        ? { items: target }
+        : { product_ids: target, slot_name: slotName };
     const res = await fetch(`${API_BASE}/web/modify-location`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ product_ids: productIds, slot_name: slotName }),
+      body: JSON.stringify(body),
     });
     return await res.json();
   },
@@ -1103,11 +1107,28 @@ function LocationAssignmentView() {
     setSearchLocationText('');
   }, [searchQuery, catalog, pendingQueue, onHandProducts]);
 
-  const handleToggleSelect = (list, setList, id, e) => {
-    if (e && (e.ctrlKey || e.metaKey || e.shiftKey)) {
-      setList((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const lastQueueIdRef = useRef(null);
+  const lastCatIdRef = useRef(null);
+  const lastHandIdRef = useRef(null);
+  const lastContentIdRef = useRef(null);
+
+  const handleTableSelect = (id, allIds, selectedList, setSelectedList, lastRef, e) => {
+    if (e && e.shiftKey && lastRef.current && allIds.includes(lastRef.current)) {
+      const startIdx = allIds.indexOf(lastRef.current);
+      const endIdx = allIds.indexOf(id);
+      if (startIdx !== -1 && endIdx !== -1) {
+        const [low, high] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+        const range = allIds.slice(low, high + 1);
+        const combined = Array.from(new Set([...selectedList, ...range]));
+        setSelectedList(combined);
+        return;
+      }
+    }
+    lastRef.current = id;
+    if (e && (e.ctrlKey || e.metaKey)) {
+      setSelectedList(selectedList.includes(id) ? selectedList.filter((x) => x !== id) : [...selectedList, id]);
     } else {
-      setList((prev) => (prev.length === 1 && prev[0] === id ? [] : [id]));
+      setSelectedList(selectedList.length === 1 && selectedList[0] === id ? [] : [id]);
     }
   };
 
@@ -1137,10 +1158,10 @@ function LocationAssignmentView() {
     if (selectedOnHandIds.length !== 1) return;
     const pid = selectedOnHandIds[0];
     const item = onHandProducts.find((p) => p.product_id === pid);
-    const curr = item && item.stock_qty != null ? item.stock_qty : 1;
-    const val = window.prompt(`Product: ${pid}\nCurrent stock: ${curr}\n\nEnter the new whole-number quantity:`, String(curr));
+    const curr = item && item.stock_qty != null ? item.stock_qty : '';
+    const val = window.prompt(`Product: ${pid}\nCurrent stock: ${curr !== '' ? curr : '(null)'}\n\nEnter the new whole-number quantity (or empty for null):`, String(curr));
     if (val === null) return;
-    const newQty = parseInt(val, 10);
+    const newQty = val.trim() === '' ? 0 : parseInt(val, 10);
     if (!isNaN(newQty) && newQty >= 0) {
       await ApiService.updateOnHandStock(pid, newQty);
       await refreshData();
@@ -1204,13 +1225,13 @@ function LocationAssignmentView() {
     if (selectedContentIds.length !== 1 || !loadedSlot) return;
     const pid = selectedContentIds[0];
     const item = loadedContents.find((p) => p.product_id === pid);
-    const curr = item && item.stock_qty != null ? item.stock_qty : 1;
+    const curr = item && item.stock_qty != null ? item.stock_qty : '';
     const val = window.prompt(
-      `Product: ${pid}\nLocation: ${loadedSlot.slot_name}\nCurrent stock: ${curr}\n\nEnter the new whole-number quantity:`,
+      `Product: ${pid}\nLocation: ${loadedSlot.slot_name}\nCurrent stock: ${curr !== '' ? curr : '(null)'}\n\nEnter the new whole-number quantity (or empty for null):`,
       String(curr)
     );
     if (val === null) return;
-    const newQty = parseInt(val, 10);
+    const newQty = val.trim() === '' ? 0 : parseInt(val, 10);
     if (!isNaN(newQty) && newQty >= 0) {
       await ApiService.updateSlotStock(loadedSlot.slot_id, pid, newQty);
       await handleLoadAddressDirect(loadedSlot.floor, loadedSlot.side, loadedSlot.shelf, loadedSlot.row, loadedSlot.col);
@@ -1326,13 +1347,13 @@ function LocationAssignmentView() {
                         className={`${selectedQueueIds.includes(item.code) ? 'selected-row' : ''} ${
                           item.returned ? 'returned-row' : ''
                         }`}
-                        onClick={(e) => handleToggleSelect(selectedQueueIds, setSelectedQueueIds, item.code, e)}
+                        onClick={(e) => handleTableSelect(item.code, filteredPending.slice(0, 100).map(x => x.code), selectedQueueIds, setSelectedQueueIds, lastQueueIdRef, e)}
                       >
                         <td className="font-mono">
                           <strong>{item.code}</strong>
                         </td>
                         <td>{item.name}</td>
-                        <td style={{ textAlign: 'right' }}>{item.on_hand}</td>
+                        <td style={{ textAlign: 'right' }}>{item.on_hand != null ? item.on_hand : ''}</td>
                       </tr>
                     ))}
                     {filteredPending.length === 0 && (
@@ -1377,7 +1398,7 @@ function LocationAssignmentView() {
                       <tr
                         key={prod.product_id}
                         className={selectedCatalogIds.includes(prod.product_id) ? 'selected-row' : ''}
-                        onClick={(e) => handleToggleSelect(selectedCatalogIds, setSelectedCatalogIds, prod.product_id, e)}
+                        onClick={(e) => handleTableSelect(prod.product_id, filteredCatalog.slice(0, 100).map(x => x.product_id), selectedCatalogIds, setSelectedCatalogIds, lastCatIdRef, e)}
                         onDoubleClick={() => handleCatalogDoubleClick(prod.product_id)}
                       >
                         <td className="font-mono">
@@ -1440,13 +1461,13 @@ function LocationAssignmentView() {
                     <tr
                       key={item.product_id}
                       className={selectedOnHandIds.includes(item.product_id) ? 'selected-row' : ''}
-                      onClick={(e) => handleToggleSelect(selectedOnHandIds, setSelectedOnHandIds, item.product_id, e)}
+                      onClick={(e) => handleTableSelect(item.product_id, onHandProducts.map(x => x.product_id), selectedOnHandIds, setSelectedOnHandIds, lastHandIdRef, e)}
                     >
                       <td className="font-mono">
                         <strong>{item.product_id}</strong>
                       </td>
                       <td>{item.product_name}</td>
-                      <td style={{ textAlign: 'right' }}>{item.stock_qty}</td>
+                      <td style={{ textAlign: 'right' }}>{item.stock_qty != null ? item.stock_qty : ''}</td>
                     </tr>
                   ))}
                   {onHandProducts.length === 0 && (
@@ -1588,7 +1609,7 @@ function LocationAssignmentView() {
                     <tr
                       key={it.product_id}
                       className={selectedContentIds.includes(it.product_id) ? 'selected-row' : ''}
-                      onClick={(e) => handleToggleSelect(selectedContentIds, setSelectedContentIds, it.product_id, e)}
+                      onClick={(e) => handleTableSelect(it.product_id, loadedContents.map(x => x.product_id), selectedContentIds, setSelectedContentIds, lastContentIdRef, e)}
                       onDoubleClick={() => handleCopyProductId(it.product_id)}
                       title="Double-click to copy Product ID"
                     >
@@ -1596,7 +1617,7 @@ function LocationAssignmentView() {
                         <strong>{it.product_id}</strong>
                       </td>
                       <td>{it.product_name}</td>
-                      <td style={{ textAlign: 'right' }}>{it.stock_qty}</td>
+                      <td style={{ textAlign: 'right' }}>{it.stock_qty != null ? it.stock_qty : ''}</td>
                       <td>{it.assigned_at}</td>
                     </tr>
                   ))}
@@ -2197,20 +2218,295 @@ function ShelfBrowserView() {
   );
 }
 
+function CellTransferPane({
+  sideLabel,
+  shelves,
+  currentShelf,
+  onChangeShelf,
+  currentRow,
+  onChangeRow,
+  currentCol,
+  onChangeCol,
+  cellsData,
+  onSelectCell,
+  searchVal,
+  setSearchVal,
+  onFind,
+  selectedProductIds,
+  setSelectedProductIds,
+  onDoubleClickProduct,
+}) {
+  const lastClickedPidRef = useRef(null);
+
+  const slotName = currentShelf
+    ? makeSlotName(currentShelf.floor, currentShelf.shelf, currentRow, currentCol, currentShelf.side)
+    : '';
+
+  const cell = slotName && cellsData ? cellsData[slotName] : null;
+  const currentItems = cell?.items || [];
+  const shelfLabel = currentShelf ? cleanLocationSegment(currentShelf.shelf) : '';
+  const rowsCount = currentShelf?.rows_count || 1;
+
+  const handleTableClick = (e, pid) => {
+    const allPids = currentItems.map((it) => it.product_id);
+    if (e.shiftKey && lastClickedPidRef.current) {
+      const startIdx = allPids.indexOf(lastClickedPidRef.current);
+      const endIdx = allPids.indexOf(pid);
+      if (startIdx !== -1 && endIdx !== -1) {
+        const min = Math.min(startIdx, endIdx);
+        const max = Math.max(startIdx, endIdx);
+        const range = allPids.slice(min, max + 1);
+        const newSel = Array.from(new Set([...selectedProductIds, ...range]));
+        setSelectedProductIds(newSel);
+      }
+    } else if (e.ctrlKey || e.metaKey) {
+      if (selectedProductIds.includes(pid)) {
+        setSelectedProductIds(selectedProductIds.filter((x) => x !== pid));
+      } else {
+        setSelectedProductIds([...selectedProductIds, pid]);
+      }
+      lastClickedPidRef.current = pid;
+    } else {
+      setSelectedProductIds([pid]);
+      lastClickedPidRef.current = pid;
+    }
+  };
+
+  const rows = [];
+  for (let r = rowsCount; r >= 1; r--) {
+    const colsCount =
+      (currentShelf?.custom_row_cols && currentShelf.custom_row_cols[r]) || currentShelf?.default_cols || 10;
+    const cells = [];
+    for (let c = 1; c <= colsCount; c++) {
+      const cSlotName = currentShelf ? makeSlotName(currentShelf.floor, currentShelf.shelf, r, c, currentShelf.side) : '';
+      const pCount = cSlotName && cellsData[cSlotName] ? cellsData[cSlotName].items?.length || 0 : 0;
+      const isSelected = currentRow === r && currentCol === c;
+      cells.push(
+        <button
+          key={c}
+          type="button"
+          className={`shelf-cell-btn ${pCount > 0 ? 'has-products' : ''} ${isSelected ? 'selected' : ''}`}
+          onClick={() => onSelectCell(r, c)}
+          title={cSlotName}
+        >
+          <div>
+            R{r}-C{String(c).padStart(2, '0')} ({shelfLabel}{r}-{c})
+          </div>
+          <div>
+            {pCount} product{pCount !== 1 ? 's' : ''}
+          </div>
+        </button>
+      );
+    }
+    rows.push(
+      <div key={r} className="matrix-row">
+        <div className="matrix-row-label">
+          R{r}
+          {r === 1 ? ' · ground' : ''}
+        </div>
+        <div className="matrix-cells-container">{cells}</div>
+      </div>
+    );
+  }
+
+  const colsForCurrentRow =
+    (currentShelf?.custom_row_cols && currentShelf.custom_row_cols[currentRow]) || currentShelf?.default_cols || 10;
+
+  return (
+    <div
+      className="panel"
+      style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, padding: '8px' }}
+    >
+      <div style={{ fontWeight: 700, fontSize: '12px', marginBottom: '6px', color: 'var(--vscode-text-primary)' }}>
+        {sideLabel}
+      </div>
+
+      {/* Cascade Dropdowns: Shelf, Row, Cell */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+        <label className="form-label" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+          Shelf:
+        </label>
+        <select
+          className="input-select"
+          style={{ flex: 1, minWidth: 0, height: '26px' }}
+          value={currentShelf ? currentShelf.id : ''}
+          onChange={(e) => {
+            const found = shelves.find((s) => s.id === parseInt(e.target.value, 10));
+            if (found) onChangeShelf(found);
+          }}
+        >
+          {shelves.map((s) => (
+            <option key={s.id} value={s.id}>
+              Floor {s.floor} — Side {s.side} — Shelf {s.shelf}
+            </option>
+          ))}
+        </select>
+
+        <label className="form-label" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+          Row:
+        </label>
+        <select
+          className="input-select"
+          style={{ width: '48px', height: '26px' }}
+          value={currentRow}
+          onChange={(e) => onChangeRow(parseInt(e.target.value, 10))}
+        >
+          {Array.from({ length: rowsCount }, (_, i) => i + 1).map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+
+        <label className="form-label" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+          Cell:
+        </label>
+        <select
+          className="input-select"
+          style={{ width: '48px', height: '26px' }}
+          value={currentCol}
+          onChange={(e) => onChangeCol(parseInt(e.target.value, 10))}
+        >
+          {Array.from({ length: colsForCurrentRow }, (_, i) => i + 1).map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Find product ID */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+        <label className="form-label" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+          Find product ID:
+        </label>
+        <input
+          type="text"
+          className="input-text font-mono"
+          style={{ flex: 1, height: '26px' }}
+          value={searchVal}
+          onChange={(e) => setSearchVal(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onFind(searchVal);
+          }}
+          onFocus={(e) => e.target.select()}
+          placeholder="Product ID or cell..."
+        />
+        <button
+          className="btn btn-secondary btn-sm"
+          style={{ height: '26px', padding: '0 10px' }}
+          onClick={() => onFind(searchVal)}
+        >
+          Find
+        </button>
+      </div>
+
+      {/* Visual Shelf Grid */}
+      <div
+        style={{
+          border: '1px solid var(--vscode-border)',
+          borderRadius: '3px',
+          padding: '6px',
+          marginBottom: '6px',
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: '170px',
+          maxHeight: '230px',
+        }}
+      >
+        <div
+          style={{
+            textAlign: 'center',
+            fontWeight: 600,
+            fontSize: '11px',
+            marginBottom: '4px',
+            color: 'var(--vscode-text-secondary)',
+          }}
+        >
+          {currentShelf
+            ? `FLOOR ${String(currentShelf.floor).toUpperCase()} · SIDE ${String(currentShelf.side).toUpperCase()} · SHELF ${String(currentShelf.shelf).toUpperCase()}`
+            : 'Shelf — click a cell'}
+        </div>
+        <div className="shelf-matrix-scroll" style={{ flex: 1, overflow: 'auto', border: 'none', padding: 0 }}>
+          {rows}
+        </div>
+      </div>
+
+      {/* Selected cell heading */}
+      <div style={{ fontWeight: 600, fontSize: '12px', margin: '4px 0', color: 'var(--vscode-text-primary)' }}>
+        {slotName
+          ? `${slotName} (R${currentRow}-C${String(currentCol).padStart(2, '0')}) · ${currentItems.length} product${currentItems.length !== 1 ? 's' : ''}`
+          : 'No cell selected'}
+      </div>
+
+      {/* Contents Table */}
+      <div className="table-container" style={{ flex: 1, minHeight: '140px', overflow: 'auto' }}>
+        <table className="data-table selectable">
+          <thead>
+            <tr>
+              <th style={{ width: '110px' }}>Product ID</th>
+              <th>Product name</th>
+              <th style={{ width: '65px', textAlign: 'right' }}>Stock</th>
+            </tr>
+          </thead>
+          <tbody>
+            {currentItems.map((it) => {
+              const isSel = selectedProductIds.includes(it.product_id);
+              const stockVal = it.stock_qty != null ? it.stock_qty : it.quantity != null ? it.quantity : '';
+              return (
+                <tr
+                  key={it.product_id}
+                  className={isSel ? 'selected' : ''}
+                  onClick={(e) => handleTableClick(e, it.product_id)}
+                  onDoubleClick={() => onDoubleClickProduct(it.product_id)}
+                  title="Double click to find product"
+                >
+                  <td className="font-mono">
+                    <strong>{it.product_id}</strong>
+                  </td>
+                  <td>{it.product_name}</td>
+                  <td style={{ textAlign: 'right' }}>{stockVal}</td>
+                </tr>
+              );
+            })}
+            {currentItems.length === 0 && (
+              <tr>
+                <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '1.5rem' }}>
+                  Cell is empty.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function CellTransferView() {
   const [shelves, setShelves] = useState([]);
+
+  // Pane A (Left)
   const [shelfA, setShelfA] = useState(null);
   const [rowA, setRowA] = useState(1);
   const [colA, setColA] = useState(1);
   const [cellsDataA, setCellsDataA] = useState({});
+  const [searchA, setSearchA] = useState('');
+  const [selectedIdsA, setSelectedIdsA] = useState([]);
 
+  // Pane B (Right)
   const [shelfB, setShelfB] = useState(null);
   const [rowB, setRowB] = useState(1);
   const [colB, setColB] = useState(1);
   const [cellsDataB, setCellsDataB] = useState({});
+  const [searchB, setSearchB] = useState('');
+  const [selectedIdsB, setSelectedIdsB] = useState([]);
 
-  const [jumpQuery, setJumpQuery] = useState('');
-  const [logs, setLogs] = useState([]);
+  // Center & Global Actions
+  const [lastChangedProducts, setLastChangedProducts] = useState([]);
+  const [statusText, setStatusText] = useState('Choose two cells.');
+  const [webStatusText, setWebStatusText] = useState('');
+  const [isModifyingWeb, setIsModifyingWeb] = useState(false);
 
   useEffect(() => {
     loadShelves();
@@ -2220,14 +2516,9 @@ function CellTransferView() {
     const list = await ApiService.getShelves();
     setShelves(list);
     if (list.length > 0) {
-      handleSelectShelfA(list[0]);
-      handleSelectShelfB(list.length > 1 ? list[1] : list[0]);
+      await handleSelectShelfA(list[0]);
+      await handleSelectShelfB(list.length > 1 ? list[1] : list[0]);
     }
-  };
-
-  const addLog = (msg) => {
-    const time = new Date().toLocaleTimeString();
-    setLogs((prev) => [`[${time}] ${msg}`, ...prev.slice(0, 40)]);
   };
 
   const handleSelectShelfA = async (s) => {
@@ -2237,6 +2528,7 @@ function CellTransferView() {
     setCellsDataA(cells);
     setRowA(1);
     setColA(1);
+    setSelectedIdsA([]);
   };
 
   const handleSelectShelfB = async (s) => {
@@ -2246,6 +2538,7 @@ function CellTransferView() {
     setCellsDataB(cells);
     setRowB(1);
     setColB(1);
+    setSelectedIdsB([]);
   };
 
   const reloadBoth = async () => {
@@ -2261,357 +2554,381 @@ function CellTransferView() {
     }
   };
 
-  const handleQuickJump = async (val) => {
-    const formatted = formatProductId(val);
-    setJumpQuery(formatted);
-    if (!formatted.trim()) return;
-
-    const res = await ApiService.findProductLocation(formatted);
-    if (res.product && res.location) {
-      const parsed = parseSlotName(res.location);
-      if (parsed) {
-        const foundShelf = shelves.find(
-          (s) => s.floor === parsed.floor && s.side === parsed.side && s.shelf.toUpperCase() === parsed.shelf.toUpperCase()
-        );
-        if (foundShelf) {
-          await handleSelectShelfA(foundShelf);
-          setRowA(parsed.row);
-          setColA(parsed.col);
-          addLog(`Found product ${res.product.product_id} at ${res.location}`);
-        }
-      }
-    }
-  };
-
   const slotLocA = shelfA ? makeSlotName(shelfA.floor, shelfA.shelf, rowA, colA, shelfA.side) : '';
   const slotLocB = shelfB ? makeSlotName(shelfB.floor, shelfB.shelf, rowB, colB, shelfB.side) : '';
 
   const cellA = slotLocA ? cellsDataA[slotLocA] : null;
   const cellB = slotLocB ? cellsDataB[slotLocB] : null;
 
-  const itemsA = cellA ? cellA.items : [];
-  const itemsB = cellB ? cellB.items : [];
+  const itemsA = cellA?.items || [];
+  const itemsB = cellB?.items || [];
+
+  const handleFindA = async (query) => {
+    await executeFind(query, 'A');
+  };
+
+  const handleFindB = async (query) => {
+    await executeFind(query, 'B');
+  };
+
+  const executeFind = async (rawQuery, targetSide) => {
+    const q = rawQuery.trim();
+    if (!q) return;
+    const formatted = formatProductId(q);
+
+    // 1. Try product search
+    let res = await ApiService.findProductLocation(formatted);
+    if ((!res.product || !res.location) && formatted !== q) {
+      res = await ApiService.findProductLocation(q);
+    }
+
+    if (res.product && res.location) {
+      const parsed = parseSlotName(res.location);
+      if (parsed) {
+        const foundShelf = shelves.find(
+          (s) =>
+            String(s.floor) === String(parsed.floor) &&
+            String(s.side).toUpperCase() === String(parsed.side).toUpperCase() &&
+            String(s.shelf).toUpperCase() === String(parsed.shelf).toUpperCase()
+        );
+        if (foundShelf) {
+          if (targetSide === 'A') {
+            await handleSelectShelfA(foundShelf);
+            setRowA(parsed.row);
+            setColA(parsed.col);
+            setSelectedIdsA([res.product.product_id]);
+            setSearchA(formatted);
+          } else {
+            await handleSelectShelfB(foundShelf);
+            setRowB(parsed.row);
+            setColB(parsed.col);
+            setSelectedIdsB([res.product.product_id]);
+            setSearchB(formatted);
+          }
+          return;
+        }
+      }
+    }
+
+    // 2. Try slot address
+    const parsedSlot = parseSlotName(q);
+    if (parsedSlot) {
+      const foundShelf = shelves.find(
+        (s) =>
+          String(s.floor) === String(parsedSlot.floor) &&
+          String(s.side).toUpperCase() === String(parsedSlot.side).toUpperCase() &&
+          String(s.shelf).toUpperCase() === String(parsedSlot.shelf).toUpperCase()
+      );
+      if (foundShelf) {
+        if (targetSide === 'A') {
+          await handleSelectShelfA(foundShelf);
+          setRowA(parsedSlot.row);
+          setColA(parsedSlot.col);
+        } else {
+          await handleSelectShelfB(foundShelf);
+          setRowB(parsedSlot.row);
+          setColB(parsedSlot.col);
+        }
+        return;
+      }
+    }
+
+    // 3. Try shelf name
+    const norm = normalizeSearch(q);
+    const matchedShelves = shelves.filter((s) => {
+      const desc = normalizeSearch(`floor ${s.floor} side ${s.side} shelf ${s.shelf} ${s.floor}${s.side}${s.shelf}`);
+      return desc.includes(norm);
+    });
+    if (matchedShelves.length === 1) {
+      if (targetSide === 'A') {
+        await handleSelectShelfA(matchedShelves[0]);
+      } else {
+        await handleSelectShelfB(matchedShelves[0]);
+      }
+      return;
+    } else if (matchedShelves.length > 1) {
+      alert('More than one shelf found. Use the Shelf dropdown to select the exact shelf.');
+      return;
+    }
+
+    alert(`Product ID or location '${q}' was not found on any shelf.`);
+  };
 
   const handleSwitchCells = async () => {
     if (!shelfA || !shelfB) return;
     if (slotLocA === slotLocB) {
-      alert('Choose two different cells to switch.');
+      alert('The left and right selections point to the same shelf cell.');
       return;
     }
 
-    const res = await ApiService.transferCells({
-      source_shelf: getShelfCode(shelfA.floor, shelfA.side, shelfA.shelf),
-      source_row: rowA,
-      source_col: colA,
-      target_shelf: getShelfCode(shelfB.floor, shelfB.side, shelfB.shelf),
-      target_row: rowB,
-      target_col: colB,
-      action: 'switch',
-    });
+    const countA = itemsA.length;
+    const countB = itemsB.length;
+    const ok = window.confirm(
+      `Switch complete cell contents?\n\n` +
+        `Exchange all products in ${slotLocA} and ${slotLocB}?\n\n` +
+        `${slotLocA}: ${countA} product(s)\n` +
+        `${slotLocB}: ${countB} product(s)`
+    );
+    if (!ok) return;
 
-    if (res.success) {
-      addLog(`Swapped: ${slotLocA} <-> ${slotLocB}`);
-      await reloadBoth();
-    } else {
-      addLog(`Error: ${res.error}`);
+    try {
+      const res = await ApiService.transferCells({
+        source_shelf: getShelfCode(shelfA.floor, shelfA.side, shelfA.shelf),
+        source_row: rowA,
+        source_col: colA,
+        target_shelf: getShelfCode(shelfB.floor, shelfB.side, shelfB.shelf),
+        target_row: rowB,
+        target_col: colB,
+        action: 'switch',
+      });
+
+      if (res.success) {
+        setLastChangedProducts(res.changed_products || []);
+        setStatusText(res.message || `Switched ${slotLocA} (${countA}) with ${slotLocB} (${countB}).`);
+        setWebStatusText('');
+        await reloadBoth();
+      } else {
+        setStatusText(`Error: ${res.error || 'Cells could not be switched.'}`);
+      }
+    } catch (err) {
+      setStatusText(`Error: ${err.message || err}`);
     }
   };
 
-  const handleCombineCells = async () => {
+  const handleCombineLeftRight = async () => {
     if (!shelfA || !shelfB) return;
     if (slotLocA === slotLocB) {
-      alert('Choose two different cells to combine.');
+      alert('The left and right selections point to the same shelf cell.');
       return;
     }
-    if (itemsA.length === 0) {
-      alert('Source cell is empty. Nothing to combine.');
+    const countA = itemsA.length;
+    const countB = itemsB.length;
+    if (countA === 0) {
+      setStatusText(`${slotLocA} is already empty.`);
       return;
     }
 
-    const res = await ApiService.transferCells({
-      source_shelf: getShelfCode(shelfA.floor, shelfA.side, shelfA.shelf),
-      source_row: rowA,
-      source_col: colA,
-      target_shelf: getShelfCode(shelfB.floor, shelfB.side, shelfB.shelf),
-      target_row: rowB,
-      target_col: colB,
-      action: 'combine',
-    });
+    const ok = window.confirm(
+      `Combine complete cell contents?\n\n` +
+        `Move all ${countA} product(s) from ${slotLocA} into ${slotLocB}?\n\n` +
+        `The target's ${countB} current product(s) will remain.`
+    );
+    if (!ok) return;
 
-    if (res.success) {
-      addLog(`Combined: ${slotLocA} -> ${slotLocB}`);
-      await reloadBoth();
-    } else {
-      addLog(`Error: ${res.error}`);
+    try {
+      const res = await ApiService.transferCells({
+        source_shelf: getShelfCode(shelfA.floor, shelfA.side, shelfA.shelf),
+        source_row: rowA,
+        source_col: colA,
+        target_shelf: getShelfCode(shelfB.floor, shelfB.side, shelfB.shelf),
+        target_row: rowB,
+        target_col: colB,
+        action: 'combine',
+      });
+
+      if (res.success) {
+        setLastChangedProducts(res.changed_products || []);
+        setStatusText(res.message || `Combined ${countA} product(s) from ${slotLocA} into ${slotLocB}.`);
+        setWebStatusText('');
+        await reloadBoth();
+      } else {
+        setStatusText(`Error: ${res.error || 'Cells could not be combined.'}`);
+      }
+    } catch (err) {
+      setStatusText(`Error: ${err.message || err}`);
     }
+  };
+
+  const handleCombineRightLeft = async () => {
+    if (!shelfA || !shelfB) return;
+    if (slotLocA === slotLocB) {
+      alert('The left and right selections point to the same shelf cell.');
+      return;
+    }
+    const countA = itemsA.length;
+    const countB = itemsB.length;
+    if (countB === 0) {
+      setStatusText(`${slotLocB} is already empty.`);
+      return;
+    }
+
+    const ok = window.confirm(
+      `Combine complete cell contents?\n\n` +
+        `Move all ${countB} product(s) from ${slotLocB} into ${slotLocA}?\n\n` +
+        `The target's ${countA} current product(s) will remain.`
+    );
+    if (!ok) return;
+
+    try {
+      const res = await ApiService.transferCells({
+        source_shelf: getShelfCode(shelfB.floor, shelfB.side, shelfB.shelf),
+        source_row: rowB,
+        source_col: colB,
+        target_shelf: getShelfCode(shelfA.floor, shelfA.side, shelfA.shelf),
+        target_row: rowA,
+        target_col: colA,
+        action: 'combine',
+      });
+
+      if (res.success) {
+        setLastChangedProducts(res.changed_products || []);
+        setStatusText(res.message || `Combined ${countB} product(s) from ${slotLocB} into ${slotLocA}.`);
+        setWebStatusText('');
+        await reloadBoth();
+      } else {
+        setStatusText(`Error: ${res.error || 'Cells could not be combined.'}`);
+      }
+    } catch (err) {
+      setStatusText(`Error: ${err.message || err}`);
+    }
+  };
+
+  const handleModifyLocationWeb = async () => {
+    if (!lastChangedProducts || lastChangedProducts.length === 0) {
+      alert('No recent cell changes to modify on web. Please switch or combine cells first.');
+      return;
+    }
+    setIsModifyingWeb(true);
+    try {
+      const res = await ApiService.modifyLocationWeb(lastChangedProducts);
+      setWebStatusText(res.message || `Updated web location for ${lastChangedProducts.length} product(s).`);
+    } catch (err) {
+      setWebStatusText(`Error modifying web location: ${err.message || err}`);
+    } finally {
+      setIsModifyingWeb(false);
+    }
+  };
+
+  const handleRefreshBoth = async () => {
+    await reloadBoth();
+    setStatusText('Refreshed both shelves.');
   };
 
   return (
-    <div className="view-container">
-      <div className="panel" style={{ padding: '0.45rem 0.75rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <label className="form-label" style={{ margin: 0, whiteSpace: 'nowrap' }}>
-            Find product ID:
-          </label>
-          <div className="input-search-wrapper" style={{ maxWidth: '400px' }}>
-            <input
-              type="text"
-              className="input-text font-mono"
-              placeholder="Enter product ID to locate in Shelf A (clears on focus)..."
-              value={jumpQuery}
-              onChange={(e) => handleQuickJump(e.target.value)}
-              onFocus={(e) => e.target.select()}
-            />
-            {jumpQuery && (
-              <button className="search-clear-btn" onClick={() => setJumpQuery('')}>
-                &times;
-              </button>
-            )}
-          </div>
-        </div>
+    <div className="view-container" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Subheaders matching Tkinter */}
+      <div
+        className="tab-sub-header"
+        style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '3px', padding: '6px 12px' }}
+      >
+        <span className="tab-heading" style={{ fontSize: '12px', fontWeight: 600 }}>
+          Select one cell on each side, then switch or combine their committed products.
+        </span>
+        <span style={{ color: '#8a6d1d', fontSize: '11.5px' }}>
+          Local SQLite locations are updated immediately; KiotViet is not changed by this tab.
+        </span>
       </div>
 
-      <div className="split-pane">
-        <div className="panel">
-          <div className="panel-header">
-            <span className="panel-title">Source Cell (Shelf A) — {slotLocA}</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              <label className="form-label" style={{ margin: 0 }}>Shelf:</label>
-              <select
-                className="input-select"
-                style={{ height: '24px', padding: '0 0.3rem' }}
-                value={shelfA ? shelfA.id : ''}
-                onChange={(e) => {
-                  const found = shelves.find((s) => s.id === parseInt(e.target.value, 10));
-                  if (found) handleSelectShelfA(found);
-                }}
-              >
-                {shelves.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {getShelfCode(s.floor, s.side, s.shelf)}
-                  </option>
-                ))}
-              </select>
+      {/* 3-Column Workspace */}
+      <div className="transfer-workspace" style={{ padding: '0 10px 10px 10px' }}>
+        {/* Left Cell */}
+        <CellTransferPane
+          sideLabel="Left cell"
+          shelves={shelves}
+          currentShelf={shelfA}
+          onChangeShelf={handleSelectShelfA}
+          currentRow={rowA}
+          onChangeRow={(r) => setRowA(r)}
+          currentCol={colA}
+          onChangeCol={(c) => setColA(c)}
+          cellsData={cellsDataA}
+          onSelectCell={(r, c) => {
+            setRowA(r);
+            setColA(c);
+          }}
+          searchVal={searchA}
+          setSearchVal={setSearchA}
+          onFind={handleFindA}
+          selectedProductIds={selectedIdsA}
+          setSelectedProductIds={setSelectedIdsA}
+          onDoubleClickProduct={(pid) => {
+            setSearchA(pid);
+            handleFindA(pid);
+          }}
+        />
 
-              <label className="form-label" style={{ margin: 0, marginLeft: '0.2rem' }}>Row:</label>
-              <select
-                className="input-select"
-                style={{ height: '24px', width: '50px', padding: '0 0.2rem' }}
-                value={rowA}
-                onChange={(e) => setRowA(parseInt(e.target.value, 10))}
-              >
-                {Array.from({ length: shelfA?.rows_count || 1 }, (_, i) => i + 1).map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-
-              <label className="form-label" style={{ margin: 0, marginLeft: '0.2rem' }}>Col:</label>
-              <select
-                className="input-select"
-                style={{ height: '24px', width: '50px', padding: '0 0.2rem' }}
-                value={colA}
-                onChange={(e) => setColA(parseInt(e.target.value, 10))}
-              >
-                {Array.from(
-                  { length: (shelfA?.custom_row_cols?.[rowA] || shelfA?.default_cols || 10) },
-                  (_, i) => i + 1
-                ).map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="panel-body">
-            {shelfA && (
-              <ShelfCanvas
-                floor={shelfA.floor}
-                side={shelfA.side}
-                shelf={shelfA.shelf}
-                rowsCount={shelfA.rows_count}
-                colsCount={shelfA.default_cols}
-                rowColsMap={shelfA.custom_row_cols}
-                cellsData={cellsDataA}
-                selectedRow={rowA}
-                selectedCol={colA}
-                onCellClick={(r, c) => {
-                  setRowA(r);
-                  setColA(c);
-                }}
-              />
-            )}
-
-            <div style={{ marginTop: '0.3rem' }}>
-              <span className="form-label" style={{ fontWeight: 600, display: 'block', marginBottom: '0.2rem' }}>
-                Contents in Slot A ({itemsA.length} items)
-              </span>
-              <div className="table-container" style={{ maxHeight: '130px' }}>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Product ID</th>
-                      <th>Product Name</th>
-                      <th style={{ width: '55px' }}>Qty</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {itemsA.map((it) => (
-                      <tr key={it.product_id}>
-                        <td className="font-mono">
-                          <strong>{it.product_id}</strong>
-                        </td>
-                        <td>{it.product_name}</td>
-                        <td>{it.quantity}</td>
-                      </tr>
-                    ))}
-                    {itemsA.length === 0 && (
-                      <tr>
-                        <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                          Cell A is empty.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="panel">
-          <div className="panel-header">
-            <span className="panel-title">Destination Cell (Shelf B) — {slotLocB}</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              <label className="form-label" style={{ margin: 0 }}>Shelf:</label>
-              <select
-                className="input-select"
-                style={{ height: '24px', padding: '0 0.3rem' }}
-                value={shelfB ? shelfB.id : ''}
-                onChange={(e) => {
-                  const found = shelves.find((s) => s.id === parseInt(e.target.value, 10));
-                  if (found) handleSelectShelfB(found);
-                }}
-              >
-                {shelves.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {getShelfCode(s.floor, s.side, s.shelf)}
-                  </option>
-                ))}
-              </select>
-
-              <label className="form-label" style={{ margin: 0, marginLeft: '0.2rem' }}>Row:</label>
-              <select
-                className="input-select"
-                style={{ height: '24px', width: '50px', padding: '0 0.2rem' }}
-                value={rowB}
-                onChange={(e) => setRowB(parseInt(e.target.value, 10))}
-              >
-                {Array.from({ length: shelfB?.rows_count || 1 }, (_, i) => i + 1).map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-
-              <label className="form-label" style={{ margin: 0, marginLeft: '0.2rem' }}>Col:</label>
-              <select
-                className="input-select"
-                style={{ height: '24px', width: '50px', padding: '0 0.2rem' }}
-                value={colB}
-                onChange={(e) => setColB(parseInt(e.target.value, 10))}
-              >
-                {Array.from(
-                  { length: (shelfB?.custom_row_cols?.[rowB] || shelfB?.default_cols || 10) },
-                  (_, i) => i + 1
-                ).map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="panel-body">
-            {shelfB && (
-              <ShelfCanvas
-                floor={shelfB.floor}
-                side={shelfB.side}
-                shelf={shelfB.shelf}
-                rowsCount={shelfB.rows_count}
-                colsCount={shelfB.default_cols}
-                rowColsMap={shelfB.custom_row_cols}
-                cellsData={cellsDataB}
-                selectedRow={rowB}
-                selectedCol={colB}
-                onCellClick={(r, c) => {
-                  setRowB(r);
-                  setColB(c);
-                }}
-              />
-            )}
-
-            <div style={{ marginTop: '0.3rem' }}>
-              <span className="form-label" style={{ fontWeight: 600, display: 'block', marginBottom: '0.2rem' }}>
-                Contents in Slot B ({itemsB.length} items)
-              </span>
-              <div className="table-container" style={{ maxHeight: '130px' }}>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Product ID</th>
-                      <th>Product Name</th>
-                      <th style={{ width: '55px' }}>Qty</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {itemsB.map((it) => (
-                      <tr key={it.product_id}>
-                        <td className="font-mono">
-                          <strong>{it.product_id}</strong>
-                        </td>
-                        <td>{it.product_name}</td>
-                        <td>{it.quantity}</td>
-                      </tr>
-                    ))}
-                    {itemsB.length === 0 && (
-                      <tr>
-                        <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                          Cell B is empty.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="panel" style={{ padding: '0.6rem 0.75rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
-          <button className="btn btn-primary" onClick={handleSwitchCells}>
-            Switch cells ({slotLocA} &lt;-&gt; {slotLocB})
+        {/* Center: Cell actions */}
+        <div className="cell-actions-card">
+          <div className="cell-actions-title">Cell actions</div>
+          <button
+            className="btn btn-secondary"
+            style={{ width: '100%', marginBottom: '4px' }}
+            onClick={handleSwitchCells}
+          >
+            Switch cells ↔
           </button>
-          <button className="btn btn-secondary" onClick={handleCombineCells}>
-            Combine cell A into cell B ({slotLocA} -&gt; {slotLocB})
+          <button
+            className="btn btn-secondary"
+            style={{ width: '100%', marginBottom: '4px' }}
+            onClick={handleCombineLeftRight}
+          >
+            Combine left → right
           </button>
-          <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
-            Both operations are executed atomically.
-          </span>
+          <button
+            className="btn btn-secondary"
+            style={{ width: '100%', marginBottom: '6px' }}
+            onClick={handleCombineRightLeft}
+          >
+            Combine right → left
+          </button>
+
+          <div className="cell-actions-separator" />
+
+          <button
+            className="btn btn-secondary"
+            style={{ width: '100%', marginTop: '4px', marginBottom: '4px' }}
+            onClick={handleModifyLocationWeb}
+            disabled={isModifyingWeb}
+          >
+            Modify location ID on web
+          </button>
+
+          <div className="cell-actions-separator" />
+
+          <button
+            className="btn btn-secondary"
+            style={{ width: '100%', marginTop: '4px' }}
+            onClick={handleRefreshBoth}
+          >
+            Refresh both
+          </button>
+
+          <div className="cell-actions-desc">
+            Switch exchanges both cells.
+            <br />
+            <br />
+            Combine empties the source into the target and keeps the target's current products.
+          </div>
+
+          <div className="cell-actions-status">{statusText}</div>
+          {webStatusText && <div className="upload-status-label" style={{ marginTop: '6px' }}>{webStatusText}</div>}
         </div>
 
-        <div className="status-log" style={{ height: '60px' }}>
-          {logs.map((log, i) => (
-            <div key={i}>{log}</div>
-          ))}
-          {logs.length === 0 && <div>Ready to switch or combine cells.</div>}
-        </div>
+        {/* Right Cell */}
+        <CellTransferPane
+          sideLabel="Right cell"
+          shelves={shelves}
+          currentShelf={shelfB}
+          onChangeShelf={handleSelectShelfB}
+          currentRow={rowB}
+          onChangeRow={(r) => setRowB(r)}
+          currentCol={colB}
+          onChangeCol={(c) => setColB(c)}
+          cellsData={cellsDataB}
+          onSelectCell={(r, c) => {
+            setRowB(r);
+            setColB(c);
+          }}
+          searchVal={searchB}
+          setSearchVal={setSearchB}
+          onFind={handleFindB}
+          selectedProductIds={selectedIdsB}
+          setSelectedProductIds={setSelectedIdsB}
+          onDoubleClickProduct={(pid) => {
+            setSearchB(pid);
+            handleFindB(pid);
+          }}
+        />
       </div>
     </div>
   );
@@ -2640,14 +2957,6 @@ function App() {
 
   return (
     <div className="vscode-workbench">
-      {/* Top App Header matching Tkinter */}
-      <header className="app-header-toolbar">
-        <div className="app-header-title">Warehouse Shelf Mapper</div>
-        <div className="app-header-subtitle">
-          Shelf design · address assignment · primal queue · shelf browser · cell moves
-        </div>
-      </header>
-
       {/* Top Navigation Tabs */}
       <div className="vscode-tab-bar" role="tablist">
         <div
@@ -2701,7 +3010,7 @@ function App() {
         {activeTab === 'cell_transfer' && <CellTransferView />}
       </main>
 
-      {/* VS Code Bottom Status Bar (#007acc) */}
+      {/* Bottom Status Bar */}
       <footer className="vscode-status-bar">
         <div className="status-left">
           <div className="status-item">
@@ -2719,15 +3028,6 @@ function App() {
           </div>
           <div className="status-item">
             <span>Queue: <strong>{pendingCount}</strong> pending</span>
-          </div>
-          <div className="status-item">
-            <span>UTF-8</span>
-          </div>
-          <div className="status-item">
-            <span>CRLF</span>
-          </div>
-          <div className="status-item">
-            <span>VS Code Light+</span>
           </div>
         </div>
       </footer>

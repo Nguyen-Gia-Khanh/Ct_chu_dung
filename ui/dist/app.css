@@ -31,9 +31,10 @@
   --vscode-tab-hover-bg: #f3f3f3;
   --vscode-tab-border: #e5e5e5;
 
-  --vscode-statusBar-bg: #007acc;
-  --vscode-statusBar-fg: #ffffff;
-  --vscode-statusBarItem-hover: rgba(255, 255, 255, 0.15);
+  --vscode-statusBar-bg: #f0f2f5;
+  --vscode-statusBar-fg: #24292f;
+  --vscode-statusBar-border: #d0d7de;
+  --vscode-statusBarItem-hover: rgba(0, 0, 0, 0.06);
 
   --vscode-button-bg: #005fb8;
   --vscode-button-fg: #ffffff;
@@ -243,9 +244,10 @@ button, input, select, textarea {
 
 /* Status Bar (22px Bottom Rail) */
 .vscode-status-bar {
-  height: 22px;
+  height: 24px;
   background: var(--vscode-statusBar-bg);
   color: var(--vscode-statusBar-fg);
+  border-top: 1px solid var(--vscode-statusBar-border);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -278,7 +280,7 @@ button, input, select, textarea {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #4ec9b0;
+  background: #2da44e;
   display: inline-block;
 }
 
@@ -892,4 +894,120 @@ button, input, select, textarea {
 .btn.commit-btn:hover {
   background: #004c99;
 }
+
+/* Tab 5: Cell Transfer Workspace */
+.transfer-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px minmax(0, 1fr);
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.cell-actions-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--vscode-border);
+  border-radius: 4px;
+  background: var(--vscode-editor-bg);
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.cell-actions-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--vscode-text-primary);
+  margin-bottom: 4px;
+}
+
+.cell-actions-separator {
+  height: 1px;
+  background: var(--vscode-border);
+  margin: 6px 0;
+}
+
+.cell-actions-desc {
+  font-size: 11px;
+  color: var(--vscode-text-secondary);
+  line-height: 1.4;
+  margin-top: 8px;
+}
+
+.cell-actions-status {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--vscode-text-primary);
+  margin-top: 10px;
+  word-break: break-word;
+}
+
+.shelf-matrix-scroll {
+  flex: 1;
+  overflow: auto;
+  background: #fdfdfd;
+  border: 1px solid var(--vscode-border);
+  border-radius: 3px;
+  padding: 6px;
+  min-height: 170px;
+  max-height: 240px;
+}
+
+.matrix-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.matrix-row-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  width: 65px;
+  flex-shrink: 0;
+  text-align: right;
+  color: var(--vscode-text-secondary);
+}
+
+.matrix-cells-container {
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.shelf-cell-btn {
+  padding: 3px 5px;
+  min-width: 72px;
+  text-align: center;
+  border: 1px solid #d0d0d0;
+  border-radius: 2px;
+  font-size: 9.5px;
+  line-height: 1.25;
+  cursor: pointer;
+  background: #f7f7f7;
+  color: var(--vscode-text-primary);
+  transition: all 0.1s;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.shelf-cell-btn.has-products {
+  background: #d9ead3;
+  border-color: #b6d7a8;
+}
+
+.shelf-cell-btn.selected {
+  border: 2px solid #005fb8 !important;
+  outline: 1px solid #005fb8;
+  font-weight: 700;
+}
+
+.shelf-cell-btn:hover {
+  background: #e8f0fe;
+}
+
 
