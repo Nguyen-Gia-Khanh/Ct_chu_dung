@@ -334,24 +334,46 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
         now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
 
         if path == "/api/shelves":
-            floor = str(payload.get("floor", 1))
-            side = str(payload.get("side", 1))
-            shelf = str(payload.get("shelf", "A")).upper().strip()
+            floor = clean_location_segment(str(payload.get("floor", "1")))
+            side = clean_location_segment(str(payload.get("side", "1")))
+            shelf = clean_location_segment(str(payload.get("shelf", "A")).upper())
             rows_count = int(payload.get("rows_count", 8))
             default_cols = int(payload.get("default_cols", 10))
-            custom_map = payload.get("custom_row_cols", {})
+            custom_map = payload.get("custom_row_cols", {}) or {}
+            raw_id = payload.get("id")
+            shelf_id = None
+            if raw_id is not None:
+                try:
+                    shelf_id = int(raw_id)
+                except (ValueError, TypeError):
+                    shelf_id = None
 
             row_counts = []
             for r in range(1, rows_count + 1):
                 c = custom_map.get(str(r)) or custom_map.get(r) or default_cols
-                row_counts.append(int(c))
+                try:
+                    row_counts.append(max(1, min(200, int(c))))
+                except (ValueError, TypeError):
+                    row_counts.append(default_cols)
 
             try:
-                shelf_id = db.save_shelf(floor=floor, shelf_code=shelf, row_counts=row_counts, side=side)
+                new_shelf_id = db.save_shelf(
+                    floor=floor,
+                    shelf_code=shelf,
+                    row_counts=row_counts,
+                    side=side,
+                    shelf_id=shelf_id,
+                )
                 self._send_json({
                     "success": True,
-                    "id": shelf_id,
-                    "message": f"Saved shelf L{floor}-{side}{shelf}",
+                    "id": new_shelf_id,
+                    "floor": int(floor) if floor.isdigit() else floor,
+                    "side": int(side) if side.isdigit() else side,
+                    "shelf": shelf,
+                    "rows_count": len(row_counts),
+                    "default_cols": max(row_counts) if row_counts else default_cols,
+                    "custom_row_cols": {r: count for r, count in enumerate(row_counts, start=1)},
+                    "message": f"Saved shelf L{floor}-{side}{shelf} ({len(row_counts)} rows)",
                 })
             except Exception as e:
                 self._send_error_json(str(e))

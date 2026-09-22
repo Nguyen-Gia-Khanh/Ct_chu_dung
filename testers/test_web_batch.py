@@ -189,5 +189,77 @@ class WebBatchTests(unittest.TestCase):
         self.assertTrue(error[2])
 
 
+class WebServerShelvesTests(unittest.TestCase):
+    def setUp(self) -> None:
+        import http.server
+        import os
+        import tempfile
+        import threading
+        from mapper.database import WarehouseDatabase
+        from mapper.web_server import WarehouseApiHandler
+        import mapper.web_server
+
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = f"{self.temp_dir.name}/test_shelves.db"
+        self.db = WarehouseDatabase(self.db_path)
+        self.orig_get_db = mapper.web_server._get_database
+        mapper.web_server._get_database = lambda: WarehouseDatabase(self.db_path)
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), WarehouseApiHandler)
+        self.port = self.server.server_port
+        self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.server_thread.start()
+
+    def tearDown(self) -> None:
+        import mapper.web_server
+        self.server.shutdown()
+        mapper.web_server._get_database = self.orig_get_db
+        self.temp_dir.cleanup()
+
+    def test_post_shelves_creates_shelf_and_appears_in_get(self) -> None:
+        import json
+        import urllib.request
+
+        payload = {
+            "floor": "1",
+            "side": "1",
+            "shelf": "K",
+            "rows_count": 3,
+            "default_cols": 6,
+            "custom_row_cols": {"1": 4, "2": 5, "3": 6},
+        }
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/shelves",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(data["success"])
+            self.assertEqual(data["shelf"], "K")
+            self.assertEqual(data["rows_count"], 3)
+            shelf_id = data["id"]
+
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/shelves") as resp:
+            shelves = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(len(shelves), 1)
+            self.assertEqual(shelves[0]["shelf"], "K")
+            self.assertEqual(shelves[0]["id"], shelf_id)
+
+        # Test DELETE
+        del_req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/shelves/{shelf_id}",
+            method="DELETE",
+        )
+        with urllib.request.urlopen(del_req) as resp:
+            self.assertEqual(resp.status, 200)
+
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/shelves") as resp:
+            shelves = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(len(shelves), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

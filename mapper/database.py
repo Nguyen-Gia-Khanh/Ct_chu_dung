@@ -1492,6 +1492,64 @@ class WarehouseDatabase:
             )
         return shelf_id
 
+    def save_shelf(
+        self,
+        floor: str,
+        shelf_code: str,
+        row_counts: list[int],
+        *,
+        side: str = "1",
+        shelf_id: int | None = None,
+    ) -> int:
+        """Create or update a shelf layout with a list of cell counts per row.
+
+        Index 0 in row_counts corresponds to physical Row 1.
+        """
+        return self.commit_shelf(
+            floor=floor,
+            shelf_code=shelf_code,
+            layout=row_counts,
+            staged_assignments={},
+            pending_unassignments=set(),
+            side=side,
+            shelf_id=shelf_id,
+        )
+
+    def delete_shelf(self, shelf_id: int) -> None:
+        """Delete an empty shelf definition and its associated rows and slots."""
+        with closing(self.connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            shelf = connection.execute(
+                "SELECT shelf_id, floor, side, shelf_code FROM shelves WHERE shelf_id = ?",
+                (shelf_id,),
+            ).fetchone()
+            if not shelf:
+                raise KeyError(f"Shelf {shelf_id} not found.")
+
+            occupied = connection.execute(
+                """
+                SELECT COUNT(*) as count FROM placements p
+                JOIN slots s ON p.slot_id = s.slot_id
+                JOIN shelf_rows r ON s.row_id = r.row_id
+                WHERE r.shelf_id = ?
+                """,
+                (shelf_id,),
+            ).fetchone()["count"]
+            exc_occupied = connection.execute(
+                """
+                SELECT COUNT(*) as count FROM exception_placements ep
+                JOIN slots s ON ep.slot_id = s.slot_id
+                JOIN shelf_rows r ON s.row_id = r.row_id
+                WHERE r.shelf_id = ?
+                """,
+                (shelf_id,),
+            ).fetchone()["count"]
+            if occupied > 0 or exc_occupied > 0:
+                raise ValueError(
+                    f"Cannot delete Shelf {shelf['shelf_code']}: {occupied + exc_occupied} product(s) are stored on this shelf."
+                )
+            connection.execute("DELETE FROM shelves WHERE shelf_id = ?", (shelf_id,))
+
     def assign_exception(
         self,
         product_id: str,
