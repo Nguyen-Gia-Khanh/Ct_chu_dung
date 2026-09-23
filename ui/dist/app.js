@@ -114,59 +114,86 @@ var _react = _interopRequireDefault(require("react"));
 function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
 const tabs = [{
   id: 'designer',
-  label: '1. Shelf Designer'
+  label: 'Shelf Designer',
+  description: 'Build, review, and commit shelf layouts.'
 }, {
   id: 'assignment',
-  label: '2. Assign Locations'
+  label: 'Assign Locations',
+  description: 'Prepare products and assign them to a shelf address.'
 }, {
   id: 'primal_queue',
-  label: '3. Primal Queue / Shelves'
+  label: 'Primal Queue / Shelves',
+  description: 'Search the queue and inspect committed shelf contents.'
 }, {
   id: 'browser',
-  label: '4. Browse Shelves'
+  label: 'Browse Shelves',
+  description: 'Explore saved shelves and their locations.'
 }, {
   id: 'cell_transfer',
-  label: '5. Switch / Combine Cells'
+  label: 'Switch / Combine Cells',
+  description: 'Move or combine the contents of committed cells.'
 }, {
   id: 'exceptions',
-  label: '6. Special Exceptions'
+  label: 'Special Exceptions',
+  description: 'Manage multi-location stock and pending CSV updates.'
 }];
 const WorkbenchChrome = ({
   activeTab,
   onSelectTab,
   backendStatus,
   children
-}) => _react.default.createElement("div", {
-  className: "vscode-workbench"
-}, _react.default.createElement("header", {
-  className: "app-header-toolbar"
-}, _react.default.createElement("strong", {
-  className: "app-header-title"
-}, "Warehouse Shelf Mapper"), _react.default.createElement("span", {
-  className: "app-header-subtitle"
-}, "Shelf design \xB7 address assignment \xB7 primal queue \xB7 shelf browser \xB7 cell moves")), _react.default.createElement("nav", {
-  className: "vscode-tab-bar",
-  role: "tablist",
-  "aria-label": "Warehouse workflows"
-}, tabs.map(({
-  id,
-  label
-}) => _react.default.createElement("button", {
-  key: id,
-  type: "button",
-  role: "tab",
-  "aria-selected": activeTab === id,
-  "aria-controls": `panel-${id}`,
-  className: `vscode-tab ${activeTab === id ? 'active' : ''}`,
-  onClick: () => onSelectTab(id)
-}, label))), _react.default.createElement("main", {
-  className: "vscode-content-view"
-}, children), _react.default.createElement("footer", {
-  className: "vscode-status-bar",
-  role: "status"
-}, _react.default.createElement("span", {
-  className: `backend-indicator ${backendStatus}`
-}), backendStatus === 'ready' ? 'Ready' : backendStatus === 'connecting' ? 'Connecting to local database…' : 'Local backend unavailable'));
+}) => {
+  const current = tabs.find(tab => tab.id === activeTab);
+  return _react.default.createElement("div", {
+    className: "vscode-workbench"
+  }, _react.default.createElement("header", {
+    className: "app-header-toolbar"
+  }, _react.default.createElement("div", {
+    className: "app-brand-mark",
+    "aria-hidden": "true"
+  }, "W"), _react.default.createElement("div", {
+    className: "app-brand-copy"
+  }, _react.default.createElement("span", {
+    className: "app-header-eyebrow"
+  }, "Warehouse operations"), _react.default.createElement("strong", {
+    className: "app-header-title"
+  }, "Shelf Mapper")), _react.default.createElement("div", {
+    className: "app-header-meta"
+  }, "Local workspace")), _react.default.createElement("nav", {
+    className: "vscode-tab-bar",
+    role: "tablist",
+    "aria-label": "Warehouse workflows"
+  }, tabs.map(({
+    id,
+    label
+  }, index) => _react.default.createElement("button", {
+    key: id,
+    type: "button",
+    role: "tab",
+    "aria-selected": activeTab === id,
+    "aria-controls": `panel-${id}`,
+    className: `vscode-tab ${activeTab === id ? 'active' : ''}`,
+    onClick: () => onSelectTab(id)
+  }, _react.default.createElement("span", {
+    className: "tab-index",
+    "aria-hidden": "true"
+  }, String(index + 1).padStart(2, '0')), _react.default.createElement("span", null, label)))), _react.default.createElement("main", {
+    className: "vscode-content-view"
+  }, _react.default.createElement("div", {
+    className: "workspace-heading"
+  }, _react.default.createElement("div", null, _react.default.createElement("span", {
+    className: "workspace-kicker"
+  }, "WORKSPACE / ", String(tabs.indexOf(current) + 1).padStart(2, '0')), _react.default.createElement("h1", null, current.label), _react.default.createElement("p", null, current.description))), children), _react.default.createElement("footer", {
+    className: "vscode-status-bar",
+    role: "status"
+  }, _react.default.createElement("span", {
+    className: "status-context"
+  }, "Warehouse Shelf Mapper"), _react.default.createElement("span", {
+    className: "status-connection"
+  }, _react.default.createElement("span", {
+    className: `backend-indicator ${backendStatus}`
+  }), backendStatus === 'ready' ? 'Local database connected' : backendStatus === 'connecting' ? 'Connecting to local database…' : 'Local backend unavailable')));
+};
 exports.WorkbenchChrome = WorkbenchChrome;
 },
 "views/ShelfDesignerView.tsx": function(module, exports, require) {
@@ -1198,9 +1225,7 @@ const ApiService = exports.ApiService = {
     try {
       const res = await (0, _backendStatus.backendFetch)(`${API_BASE_URL}/products/on-hand`);
       if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn('API getOnHandProducts error:', e);
-    }
+    } catch {}
     return [];
   },
   async addToOnHand(productIds, quantities = {}) {
@@ -1333,9 +1358,7 @@ const ApiService = exports.ApiService = {
     try {
       const res = await (0, _backendStatus.backendFetch)(`${API_BASE_URL}/exceptions/pending`);
       if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn('API getPendingExceptions error:', e);
-    }
+    } catch {}
     return {
       success: true,
       count: 0,
@@ -2178,20 +2201,21 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.PrimalQueueView = void 0;
-var _react = _interopRequireDefault(require("react"));
+var _react = _interopRequireWildcard(require("react"));
 var _ShelfCanvas = require("../components/ShelfCanvas");
 var _coordinates = require("../utils/coordinates");
 var _usePrimalQueueController = require("../controllers/usePrimalQueueController");
-function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+function _interopRequireWildcard(e, t) { if ("function" == typeof WeakMap) var r = new WeakMap(), n = new WeakMap(); return (_interopRequireWildcard = function (e, t) { if (!t && e && e.__esModule) return e; var o, i, f = { __proto__: null, default: e }; if (null === e || "object" != typeof e && "function" != typeof e) return f; if (o = t ? n : r) { if (o.has(e)) return o.get(e); o.set(e, f); } for (const t in e) "default" !== t && {}.hasOwnProperty.call(e, t) && ((i = (o = Object.defineProperty) && Object.getOwnPropertyDescriptor(e, t)) && (i.get || i.set) ? o(f, t, i) : f[t] = e[t]); return f; })(e, t); }
 const PrimalQueueView = exports.PrimalQueueView = _react.default.memo(({
   active
 }) => {
+  const queueScrollRef = (0, _react.useRef)(null);
+  const catalogScrollRef = (0, _react.useRef)(null);
   const {
     shelves,
     currentShelf,
     cellsData,
     searchQuery,
-    setSearchQuery,
     selectedCellLoc,
     selectedRow,
     selectedCol,
@@ -2201,6 +2225,17 @@ const PrimalQueueView = exports.PrimalQueueView = _react.default.memo(({
     handleCellClick,
     handleRemoveProduct,
     filteredQueue,
+    queueLoading,
+    filteredCatalog,
+    catalogLoading,
+    visibleQueue,
+    topSpacerHeight,
+    bottomSpacerHeight,
+    handleQueueScroll,
+    visibleCatalog,
+    catalogTopSpacerHeight,
+    catalogBottomSpacerHeight,
+    handleCatalogScroll,
     activeCellItems
   } = (0, _usePrimalQueueController.usePrimalQueueController)(active);
   return _react.default.createElement("div", {
@@ -2218,34 +2253,65 @@ const PrimalQueueView = exports.PrimalQueueView = _react.default.memo(({
       fontSize: '11.5px',
       color: 'var(--text-secondary)'
     }
-  }, filteredQueue.length, " items")), _react.default.createElement("div", {
-    className: "panel-body"
+  }, "Search both lists")), _react.default.createElement("div", {
+    className: "panel-body primal-products-body"
   }, _react.default.createElement("div", {
     className: "form-group"
   }, _react.default.createElement("label", {
     className: "form-label"
-  }, "Search barcode or product ID (auto-formats 5-3-3)"), _react.default.createElement("div", {
+  }, "Search barcode, product ID, or name"), _react.default.createElement("div", {
     className: "input-search-wrapper"
   }, _react.default.createElement("input", {
     type: "text",
     className: "input-text font-mono",
     placeholder: "Scan or type barcode (selects text on focus)...",
     value: searchQuery,
-    onChange: e => handleSearchChange(e.target.value),
+    onChange: e => {
+      if (queueScrollRef.current) queueScrollRef.current.scrollTop = 0;
+      if (catalogScrollRef.current) catalogScrollRef.current.scrollTop = 0;
+      handleSearchChange(e.target.value);
+    },
     onFocus: e => e.target.select(),
     autoFocus: true
   }), searchQuery && _react.default.createElement("button", {
     className: "search-clear-btn",
-    onClick: () => setSearchQuery('')
-  }, "\xD7"))), _react.default.createElement("div", {
-    className: "table-container",
-    style: {
-      flex: 1,
-      maxHeight: '520px'
+    onClick: () => {
+      if (queueScrollRef.current) queueScrollRef.current.scrollTop = 0;
+      if (catalogScrollRef.current) catalogScrollRef.current.scrollTop = 0;
+      handleSearchChange('');
     }
+  }, "\xD7"))), _react.default.createElement("section", {
+    className: "primal-list-section"
+  }, _react.default.createElement("div", {
+    className: "list-section-heading"
+  }, _react.default.createElement("strong", null, "Primal Product Queue"), _react.default.createElement("span", null, filteredQueue.length, " products")), _react.default.createElement("div", {
+    ref: queueScrollRef,
+    className: "table-container queue-table-container",
+    onScroll: e => handleQueueScroll(e.currentTarget.scrollTop, e.currentTarget.clientHeight)
   }, _react.default.createElement("table", {
-    className: "data-table"
-  }, _react.default.createElement("thead", null, _react.default.createElement("tr", null, _react.default.createElement("th", null, "Barcode / ID"), _react.default.createElement("th", null, "Product Name"), _react.default.createElement("th", {
+    className: "data-table primal-queue-table",
+    "aria-label": "Primal product queue"
+  }, _react.default.createElement("colgroup", null, _react.default.createElement("col", {
+    style: {
+      width: '23%'
+    }
+  }), _react.default.createElement("col", {
+    style: {
+      width: '39%'
+    }
+  }), _react.default.createElement("col", {
+    style: {
+      width: '9%'
+    }
+  }), _react.default.createElement("col", {
+    style: {
+      width: '19%'
+    }
+  }), _react.default.createElement("col", {
+    style: {
+      width: '10%'
+    }
+  })), _react.default.createElement("thead", null, _react.default.createElement("tr", null, _react.default.createElement("th", null, "Barcode / ID"), _react.default.createElement("th", null, "Product Name"), _react.default.createElement("th", {
     style: {
       width: '50px'
     }
@@ -2253,7 +2319,15 @@ const PrimalQueueView = exports.PrimalQueueView = _react.default.memo(({
     style: {
       width: '80px'
     }
-  }, "Action"))), _react.default.createElement("tbody", null, filteredQueue.map(item => _react.default.createElement("tr", {
+  }, "Action"))), _react.default.createElement("tbody", null, topSpacerHeight > 0 && _react.default.createElement("tr", {
+    "aria-hidden": "true",
+    className: "queue-spacer"
+  }, _react.default.createElement("td", {
+    colSpan: 5,
+    style: {
+      height: topSpacerHeight
+    }
+  })), visibleQueue.map(item => _react.default.createElement("tr", {
     key: item.barcode,
     style: {
       cursor: 'pointer'
@@ -2262,7 +2336,9 @@ const PrimalQueueView = exports.PrimalQueueView = _react.default.memo(({
     onClick: () => handleSelectProduct(item.target_location)
   }, _react.default.createElement("td", {
     className: "font-mono"
-  }, _react.default.createElement("strong", null, formatProductId(item.barcode))), _react.default.createElement("td", null, item.product_name), _react.default.createElement("td", null, item.quantity), _react.default.createElement("td", null, item.target_location ? _react.default.createElement("span", {
+  }, _react.default.createElement("strong", null, (0, _coordinates.formatProductId)(item.barcode))), _react.default.createElement("td", {
+    title: item.product_name
+  }, item.product_name), _react.default.createElement("td", null, item.quantity), _react.default.createElement("td", null, item.target_location ? _react.default.createElement("span", {
     className: "loc-pill assigned"
   }, item.target_location) : _react.default.createElement("span", {
     className: "loc-pill"
@@ -2272,13 +2348,78 @@ const PrimalQueueView = exports.PrimalQueueView = _react.default.memo(({
       e.stopPropagation();
       handleSelectProduct(item.target_location);
     }
-  }, "View")))), filteredQueue.length === 0 && _react.default.createElement("tr", null, _react.default.createElement("td", {
+  }, "View")))), bottomSpacerHeight > 0 && _react.default.createElement("tr", {
+    "aria-hidden": "true",
+    className: "queue-spacer"
+  }, _react.default.createElement("td", {
+    colSpan: 5,
+    style: {
+      height: bottomSpacerHeight
+    }
+  })), filteredQueue.length === 0 && _react.default.createElement("tr", null, _react.default.createElement("td", {
     colSpan: 5,
     style: {
       textAlign: 'center',
       color: 'var(--text-muted)'
     }
-  }, "No items found."))))))), _react.default.createElement("div", {
+  }, queueLoading ? 'Loading queue…' : 'No items found.')))))), _react.default.createElement("section", {
+    className: "primal-list-section"
+  }, _react.default.createElement("div", {
+    className: "list-section-heading"
+  }, _react.default.createElement("strong", null, "Full Product Catalog"), _react.default.createElement("span", null, filteredCatalog.length, " products")), _react.default.createElement("div", {
+    ref: catalogScrollRef,
+    className: "table-container queue-table-container",
+    onScroll: e => handleCatalogScroll(e.currentTarget.scrollTop, e.currentTarget.clientHeight)
+  }, _react.default.createElement("table", {
+    className: "data-table primal-queue-table",
+    "aria-label": "Full product catalog"
+  }, _react.default.createElement("colgroup", null, _react.default.createElement("col", {
+    style: {
+      width: '26%'
+    }
+  }), _react.default.createElement("col", {
+    style: {
+      width: '55%'
+    }
+  }), _react.default.createElement("col", {
+    style: {
+      width: '19%'
+    }
+  })), _react.default.createElement("thead", null, _react.default.createElement("tr", null, _react.default.createElement("th", null, "Product ID"), _react.default.createElement("th", null, "Product Name"), _react.default.createElement("th", null, "Location"))), _react.default.createElement("tbody", null, catalogTopSpacerHeight > 0 && _react.default.createElement("tr", {
+    "aria-hidden": "true",
+    className: "queue-spacer"
+  }, _react.default.createElement("td", {
+    colSpan: 3,
+    style: {
+      height: catalogTopSpacerHeight
+    }
+  })), visibleCatalog.map(item => _react.default.createElement("tr", {
+    key: item.product_id,
+    onClick: () => handleSelectProduct(item.loc_id || undefined),
+    className: selectedCellLoc && item.loc_id === selectedCellLoc ? 'selected' : ''
+  }, _react.default.createElement("td", {
+    className: "font-mono"
+  }, _react.default.createElement("strong", null, item.product_id)), _react.default.createElement("td", {
+    title: item.product_name
+  }, item.product_name), _react.default.createElement("td", null, item.loc_id ? _react.default.createElement("span", {
+    className: "loc-pill assigned"
+  }, item.loc_id) : _react.default.createElement("span", {
+    className: "loc-pill"
+  }, "Unassigned")))), catalogBottomSpacerHeight > 0 && _react.default.createElement("tr", {
+    "aria-hidden": "true",
+    className: "queue-spacer"
+  }, _react.default.createElement("td", {
+    colSpan: 3,
+    style: {
+      height: catalogBottomSpacerHeight
+    }
+  })), filteredCatalog.length === 0 && _react.default.createElement("tr", null, _react.default.createElement("td", {
+    colSpan: 3,
+    style: {
+      textAlign: 'center',
+      color: 'var(--text-muted)'
+    }
+  }, catalogLoading ? 'Loading catalog…' : 'No catalog products found.')))))))), _react.default.createElement("div", {
     className: "panel"
   }, _react.default.createElement("div", {
     className: "panel-header"
@@ -2293,8 +2434,8 @@ const PrimalQueueView = exports.PrimalQueueView = _react.default.memo(({
   }, "Shelf View:"), _react.default.createElement("select", {
     className: "input-select",
     style: {
-      height: '24px',
-      padding: '0 0.4rem',
+      width: 'auto',
+      minWidth: '180px',
       fontWeight: 600
     },
     value: currentShelf ? currentShelf.id : '',
@@ -2326,7 +2467,7 @@ const PrimalQueueView = exports.PrimalQueueView = _react.default.memo(({
       color: 'var(--text-muted)',
       padding: '2rem'
     }
-  }, "No shelves created."), _react.default.createElement("div", {
+  }, queueLoading ? 'Loading shelves…' : 'No shelves created.'), _react.default.createElement("div", {
     style: {
       marginTop: '0.4rem'
     }
@@ -2383,11 +2524,19 @@ var _react = require("react");
 var _api = require("../services/api");
 var _coordinates = require("../utils/coordinates");
 function usePrimalQueueController(active) {
+  const rowHeight = 34;
   const [shelves, setShelves] = (0, _react.useState)([]);
   const [currentShelf, setCurrentShelf] = (0, _react.useState)(null);
   const [cellsData, setCellsData] = (0, _react.useState)({});
   const [primalQueue, setPrimalQueue] = (0, _react.useState)([]);
+  const [queueLoading, setQueueLoading] = (0, _react.useState)(true);
   const [catalog, setCatalog] = (0, _react.useState)([]);
+  const [catalogLoading, setCatalogLoading] = (0, _react.useState)(true);
+  const [queueScrollTop, setQueueScrollTop] = (0, _react.useState)(0);
+  const [queueViewportHeight, setQueueViewportHeight] = (0, _react.useState)(520);
+  const [catalogScrollTop, setCatalogScrollTop] = (0, _react.useState)(0);
+  const [catalogViewportHeight, setCatalogViewportHeight] = (0, _react.useState)(250);
+  const shelfRequest = (0, _react.useRef)(0);
   const [searchQuery, setSearchQuery] = (0, _react.useState)('');
   const [selectedCellLoc, setSelectedCellLoc] = (0, _react.useState)(null);
   const [selectedRow, setSelectedRow] = (0, _react.useState)(null);
@@ -2397,54 +2546,73 @@ function usePrimalQueueController(active) {
     loadInitialData();
   }, [active]);
   const loadInitialData = async () => {
-    const [shelfList, queue, cats] = await Promise.all([_api.ApiService.getShelves(), _api.ApiService.getPrimalQueue(), _api.ApiService.getCatalog()]);
+    setQueueLoading(true);
+    const [shelfList, queue] = await Promise.all([_api.ApiService.getShelves(), _api.ApiService.getPrimalQueue()]);
     setShelves(shelfList);
     setPrimalQueue(queue);
-    setCatalog(cats);
+    setQueueLoading(false);
+    if (catalog.length === 0) {
+      setCatalogLoading(true);
+      void _api.ApiService.getCatalog().then(setCatalog).finally(() => setCatalogLoading(false));
+    }
     if (shelfList.length > 0) {
-      selectShelf(shelfList[0]);
+      const shelfToShow = shelfList.find(shelf => shelf.id === currentShelf?.id) || shelfList[0];
+      void selectShelf(shelfToShow, shelfToShow.id === currentShelf?.id ? selectedCellLoc || undefined : undefined);
     }
   };
-  const selectShelf = async shelf => {
+  const selectShelf = async (shelf, selectedLocation) => {
+    const request = ++shelfRequest.current;
     setCurrentShelf(shelf);
     const code = (0, _coordinates.getShelfCode)(shelf.floor, shelf.side, shelf.shelf);
     const cells = await _api.ApiService.getShelfCells(code);
+    if (request !== shelfRequest.current) return;
     setCellsData(cells);
-    setSelectedCellLoc(null);
-    setSelectedRow(null);
-    setSelectedCol(null);
+    const parsed = selectedLocation ? (0, _coordinates.parseSlotName)(selectedLocation) : null;
+    setSelectedCellLoc(parsed ? selectedLocation : null);
+    setSelectedRow(parsed?.row ?? null);
+    setSelectedCol(parsed?.col ?? null);
   };
-  const handleSearchChange = val => {
-    const formatted = (0, _coordinates.formatProductId)(val);
-    setSearchQuery(formatted);
-    const term = (0, _coordinates.normalizeSearch)(formatted);
-    const found = catalog.find(p => (0, _coordinates.normalizeSearch)(p.product_id) === term || (0, _coordinates.normalizeSearch)(p.barcode) === term || p.product_id.replace(/-/g, '').toLowerCase() === term.replace(/-/g, ''));
-    if (found && found.loc_id) {
-      const parsed = (0, _coordinates.parseSlotName)(found.loc_id);
-      if (parsed) {
-        const matchShelf = shelves.find(s => s.floor === parsed.floor && s.side === parsed.side && s.shelf.toUpperCase() === parsed.shelf.toUpperCase());
-        if (matchShelf && matchShelf.id !== currentShelf?.id) {
-          selectShelf(matchShelf);
-        }
-        setSelectedCellLoc(found.loc_id);
-        setSelectedRow(parsed.row);
-        setSelectedCol(parsed.col);
-      }
-    }
-  };
-  const handleSelectProduct = locId => {
+  const selectLocation = locId => {
     if (!locId) return;
     const parsed = (0, _coordinates.parseSlotName)(locId);
     if (!parsed) return;
     const matchShelf = shelves.find(s => s.floor === parsed.floor && s.side === parsed.side && s.shelf.toUpperCase() === parsed.shelf.toUpperCase());
-    if (matchShelf) {
-      if (matchShelf.id !== currentShelf?.id) {
-        selectShelf(matchShelf);
-      }
+    if (!matchShelf) return;
+    if (matchShelf.id !== currentShelf?.id) {
+      void selectShelf(matchShelf, locId);
+    } else {
       setSelectedCellLoc(locId);
       setSelectedRow(parsed.row);
       setSelectedCol(parsed.col);
     }
+  };
+  const handleSearchChange = val => {
+    const formatted = (0, _coordinates.formatProductId)(val);
+    setSearchQuery(formatted);
+    setQueueScrollTop(0);
+    setCatalogScrollTop(0);
+    const term = (0, _coordinates.normalizeSearch)(formatted);
+    const compact = term.replace(/-/g, '');
+    const found = compact.length >= 9 ? primalQueue.find(item => (0, _coordinates.normalizeSearch)(item.barcode).replace(/-/g, '') === compact) : undefined;
+    const catalogHit = compact.length >= 9 ? catalog.find(item => (0, _coordinates.normalizeSearch)(item.product_id).replace(/-/g, '') === compact) : undefined;
+    selectLocation(found?.target_location || catalogHit?.loc_id);
+  };
+  (0, _react.useEffect)(() => {
+    if (!active) return;
+    const term = (0, _coordinates.normalizeSearch)(searchQuery).replace(/-/g, '');
+    if (term.length < 9 || primalQueue.some(item => (0, _coordinates.normalizeSearch)(item.barcode).replace(/-/g, '') === term) || catalog.some(item => (0, _coordinates.normalizeSearch)(item.product_id).replace(/-/g, '') === term)) return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      const result = await _api.ApiService.findProductLocation(searchQuery);
+      if (!cancelled && result.location) selectLocation(result.location);
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [active, searchQuery, primalQueue, catalog, shelves]);
+  const handleSelectProduct = locId => {
+    selectLocation(locId);
   };
   const handleCellClick = (row, col, locId) => {
     setSelectedRow(row);
@@ -2460,16 +2628,41 @@ function usePrimalQueueController(active) {
         const cells = await _api.ApiService.getShelfCells(code);
         setCellsData(cells);
       }
-      const updatedCats = await _api.ApiService.getCatalog();
-      setCatalog(updatedCats);
+      setPrimalQueue(await _api.ApiService.getPrimalQueue());
+      setCatalog(await _api.ApiService.getCatalog());
     }
   };
   const deferredSearch = (0, _react.useDeferredValue)(searchQuery);
   const filteredQueue = (0, _react.useMemo)(() => {
     const term = (0, _coordinates.normalizeSearch)(deferredSearch);
     if (!term) return primalQueue;
-    return primalQueue.filter(item => (0, _coordinates.normalizeSearch)(item.barcode).includes(term) || (0, _coordinates.normalizeSearch)(item.product_name).includes(term) || Boolean(item.target_location && (0, _coordinates.normalizeSearch)(item.target_location).includes(term)));
+    const compact = term.replace(/-/g, '');
+    return primalQueue.filter(item => (0, _coordinates.normalizeSearch)(item.barcode).replace(/-/g, '').includes(compact) || (0, _coordinates.normalizeSearch)(item.product_name).includes(term) || Boolean(item.target_location && (0, _coordinates.normalizeSearch)(item.target_location).includes(term)));
   }, [primalQueue, deferredSearch]);
+  const filteredCatalog = (0, _react.useMemo)(() => {
+    const term = (0, _coordinates.normalizeSearch)(deferredSearch);
+    if (!term) return catalog;
+    const compact = term.replace(/-/g, '');
+    return catalog.filter(item => (0, _coordinates.normalizeSearch)(item.product_id).replace(/-/g, '').includes(compact) || (0, _coordinates.normalizeSearch)(item.product_name).includes(term) || Boolean(item.loc_id && (0, _coordinates.normalizeSearch)(item.loc_id).includes(term)));
+  }, [catalog, deferredSearch]);
+  const firstVisibleRow = Math.max(0, Math.floor(queueScrollTop / rowHeight) - 8);
+  const visibleRowCount = Math.ceil(queueViewportHeight / rowHeight) + 16;
+  const visibleQueue = filteredQueue.slice(firstVisibleRow, firstVisibleRow + visibleRowCount);
+  const topSpacerHeight = firstVisibleRow * rowHeight;
+  const bottomSpacerHeight = Math.max(0, (filteredQueue.length - firstVisibleRow - visibleQueue.length) * rowHeight);
+  const handleQueueScroll = (scrollTop, viewportHeight) => {
+    setQueueScrollTop(scrollTop);
+    setQueueViewportHeight(viewportHeight);
+  };
+  const firstVisibleCatalogRow = Math.max(0, Math.floor(catalogScrollTop / rowHeight) - 8);
+  const catalogVisibleCount = Math.ceil(catalogViewportHeight / rowHeight) + 16;
+  const visibleCatalog = filteredCatalog.slice(firstVisibleCatalogRow, firstVisibleCatalogRow + catalogVisibleCount);
+  const catalogTopSpacerHeight = firstVisibleCatalogRow * rowHeight;
+  const catalogBottomSpacerHeight = Math.max(0, (filteredCatalog.length - firstVisibleCatalogRow - visibleCatalog.length) * rowHeight);
+  const handleCatalogScroll = (scrollTop, viewportHeight) => {
+    setCatalogScrollTop(scrollTop);
+    setCatalogViewportHeight(viewportHeight);
+  };
   const activeCellItems = selectedCellLoc && cellsData[selectedCellLoc] ? cellsData[selectedCellLoc].items : [];
   return {
     shelves,
@@ -2486,6 +2679,17 @@ function usePrimalQueueController(active) {
     handleCellClick,
     handleRemoveProduct,
     filteredQueue,
+    queueLoading,
+    filteredCatalog,
+    catalogLoading,
+    visibleQueue,
+    topSpacerHeight,
+    bottomSpacerHeight,
+    handleQueueScroll,
+    visibleCatalog,
+    catalogTopSpacerHeight,
+    catalogBottomSpacerHeight,
+    handleCatalogScroll,
     activeCellItems
   };
 }

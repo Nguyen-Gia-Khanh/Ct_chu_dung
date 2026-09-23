@@ -2,13 +2,13 @@ import React from 'react';
 import { ActiveTab } from '../types';
 import { BackendStatus } from '../services/backendStatus';
 
-const tabs: { id: ActiveTab; label: string }[] = [
-  { id: 'designer', label: '1. Shelf Designer' },
-  { id: 'assignment', label: '2. Assign Locations' },
-  { id: 'primal_queue', label: '3. Primal Queue / Shelves' },
-  { id: 'browser', label: '4. Browse Shelves' },
-  { id: 'cell_transfer', label: '5. Switch / Combine Cells' },
-  { id: 'exceptions', label: '6. Special Exceptions' },
+const tabs: { id: ActiveTab; label: string; description: string }[] = [
+  { id: 'designer', label: 'Shelf Designer', description: 'Build, review, and commit shelf layouts.' },
+  { id: 'assignment', label: 'Assign Locations', description: 'Prepare products and assign them to a shelf address.' },
+  { id: 'primal_queue', label: 'Primal Queue / Shelves', description: 'Search the queue and inspect committed shelf contents.' },
+  { id: 'browser', label: 'Browse Shelves', description: 'Explore saved shelves and their locations.' },
+  { id: 'cell_transfer', label: 'Switch / Combine Cells', description: 'Move or combine the contents of committed cells.' },
+  { id: 'exceptions', label: 'Special Exceptions', description: 'Manage multi-location stock and pending CSV updates.' },
 ];
 
 interface WorkbenchChromeProps {
@@ -18,16 +18,19 @@ interface WorkbenchChromeProps {
   children: React.ReactNode;
 }
 
-export const WorkbenchChrome: React.FC<WorkbenchChromeProps> = ({ activeTab, onSelectTab, backendStatus, children }) => (
-  <div className="vscode-workbench">
+export const WorkbenchChrome: React.FC<WorkbenchChromeProps> = ({ activeTab, onSelectTab, backendStatus, children }) => {
+  const current = tabs.find((tab) => tab.id === activeTab)!;
+  return <div className="vscode-workbench">
     <header className="app-header-toolbar">
-      <strong className="app-header-title">Warehouse Shelf Mapper</strong>
-      <span className="app-header-subtitle">
-        Shelf design · address assignment · primal queue · shelf browser · cell moves
-      </span>
+      <div className="app-brand-mark" aria-hidden="true">W</div>
+      <div className="app-brand-copy">
+        <span className="app-header-eyebrow">Warehouse operations</span>
+        <strong className="app-header-title">Shelf Mapper</strong>
+      </div>
+      <div className="app-header-meta">Local workspace</div>
     </header>
     <nav className="vscode-tab-bar" role="tablist" aria-label="Warehouse workflows">
-      {tabs.map(({ id, label }) => (
+      {tabs.map(({ id, label }, index) => (
         <button
           key={id}
           type="button"
@@ -37,14 +40,27 @@ export const WorkbenchChrome: React.FC<WorkbenchChromeProps> = ({ activeTab, onS
           className={`vscode-tab ${activeTab === id ? 'active' : ''}`}
           onClick={() => onSelectTab(id)}
         >
-          {label}
+          <span className="tab-index" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+          <span>{label}</span>
         </button>
       ))}
     </nav>
-    <main className="vscode-content-view">{children}</main>
+    <main className="vscode-content-view">
+      <div className="workspace-heading">
+        <div>
+          <span className="workspace-kicker">WORKSPACE / {String(tabs.indexOf(current) + 1).padStart(2, '0')}</span>
+          <h1>{current.label}</h1>
+          <p>{current.description}</p>
+        </div>
+      </div>
+      {children}
+    </main>
     <footer className="vscode-status-bar" role="status">
-      <span className={`backend-indicator ${backendStatus}`} />
-      {backendStatus === 'ready' ? 'Ready' : backendStatus === 'connecting' ? 'Connecting to local database…' : 'Local backend unavailable'}
+      <span className="status-context">Warehouse Shelf Mapper</span>
+      <span className="status-connection">
+        <span className={`backend-indicator ${backendStatus}`} />
+        {backendStatus === 'ready' ? 'Local database connected' : backendStatus === 'connecting' ? 'Connecting to local database…' : 'Local backend unavailable'}
+      </span>
     </footer>
   </div>
-);
+};

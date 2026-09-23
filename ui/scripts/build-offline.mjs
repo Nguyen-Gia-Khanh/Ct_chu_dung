@@ -104,4 +104,3 @@ await writeFile(join(distRoot, 'index.html'), `<!DOCTYPE html>
   <body><div id="root"></div></body>
 </html>
 `);
-console.log(`Built ${modules.size} UI modules into dist/app.js`);

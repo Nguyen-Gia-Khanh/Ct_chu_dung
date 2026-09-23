@@ -189,8 +189,7 @@ export const ApiService = {
     try {
       const res = await backendFetch(`${API_BASE_URL}/products/on-hand`);
       if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn('API getOnHandProducts error:', e);
+    } catch {
     }
     return [];
   },
@@ -299,8 +298,7 @@ export const ApiService = {
     try {
       const res = await backendFetch(`${API_BASE_URL}/exceptions/pending`);
       if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn('API getPendingExceptions error:', e);
+    } catch {
     }
     return { success: true, count: 0, items: [] };
   },

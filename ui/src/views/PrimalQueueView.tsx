@@ -1,15 +1,16 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { ShelfCanvas } from '../components/ShelfCanvas';
-import { getShelfCode } from '../utils/coordinates';
+import { formatProductId, getShelfCode } from '../utils/coordinates';
 import { usePrimalQueueController } from '../controllers/usePrimalQueueController';
 
 export const PrimalQueueView: React.FC<{ active: boolean }> = React.memo(({ active }: { active: boolean }) => {
+  const queueScrollRef = useRef<HTMLDivElement>(null);
+  const catalogScrollRef = useRef<HTMLDivElement>(null);
   const {
     shelves,
     currentShelf,
     cellsData,
     searchQuery,
-    setSearchQuery,
     selectedCellLoc,
     selectedRow,
     selectedCol,
@@ -19,6 +20,17 @@ export const PrimalQueueView: React.FC<{ active: boolean }> = React.memo(({ acti
     handleCellClick,
     handleRemoveProduct,
     filteredQueue,
+    queueLoading,
+    filteredCatalog,
+    catalogLoading,
+    visibleQueue,
+    topSpacerHeight,
+    bottomSpacerHeight,
+    handleQueueScroll,
+    visibleCatalog,
+    catalogTopSpacerHeight,
+    catalogBottomSpacerHeight,
+    handleCatalogScroll,
     activeCellItems,
   } = usePrimalQueueController(active);
   return (
@@ -29,33 +41,54 @@ export const PrimalQueueView: React.FC<{ active: boolean }> = React.memo(({ acti
           <div className="panel-header">
             <span className="panel-title">Products (Primal Queue & Full Catalog)</span>
             <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
-              {filteredQueue.length} items
+              Search both lists
             </span>
           </div>
 
-          <div className="panel-body">
+          <div className="panel-body primal-products-body">
             <div className="form-group">
-              <label className="form-label">Search barcode or product ID (auto-formats 5-3-3)</label>
+              <label className="form-label">Search barcode, product ID, or name</label>
               <div className="input-search-wrapper">
                 <input
                   type="text"
                   className="input-text font-mono"
                   placeholder="Scan or type barcode (selects text on focus)..."
                   value={searchQuery}
-                  onChange={(e) => handleSearchChange(e.target.value)}
+                  onChange={(e) => {
+                    if (queueScrollRef.current) queueScrollRef.current.scrollTop = 0;
+                    if (catalogScrollRef.current) catalogScrollRef.current.scrollTop = 0;
+                    handleSearchChange(e.target.value);
+                  }}
                   onFocus={(e) => e.target.select()}
                   autoFocus
                 />
                 {searchQuery && (
-                  <button className="search-clear-btn" onClick={() => setSearchQuery('')}>
+                  <button className="search-clear-btn" onClick={() => {
+                    if (queueScrollRef.current) queueScrollRef.current.scrollTop = 0;
+                    if (catalogScrollRef.current) catalogScrollRef.current.scrollTop = 0;
+                    handleSearchChange('');
+                  }}>
                     &times;
                   </button>
                 )}
               </div>
             </div>
 
-            <div className="table-container" style={{ flex: 1, maxHeight: '520px' }}>
-              <table className="data-table">
+            <section className="primal-list-section">
+              <div className="list-section-heading"><strong>Primal Product Queue</strong><span>{filteredQueue.length} products</span></div>
+            <div
+              ref={queueScrollRef}
+              className="table-container queue-table-container"
+              onScroll={(e) => handleQueueScroll(e.currentTarget.scrollTop, e.currentTarget.clientHeight)}
+            >
+              <table className="data-table primal-queue-table" aria-label="Primal product queue">
+                <colgroup>
+                  <col style={{ width: '23%' }} />
+                  <col style={{ width: '39%' }} />
+                  <col style={{ width: '9%' }} />
+                  <col style={{ width: '19%' }} />
+                  <col style={{ width: '10%' }} />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>Barcode / ID</th>
@@ -66,7 +99,8 @@ export const PrimalQueueView: React.FC<{ active: boolean }> = React.memo(({ acti
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredQueue.map((item) => (
+                  {topSpacerHeight > 0 && <tr aria-hidden="true" className="queue-spacer"><td colSpan={5} style={{ height: topSpacerHeight }} /></tr>}
+                  {visibleQueue.map((item) => (
                     <tr
                       key={item.barcode}
                       style={{ cursor: 'pointer' }}
@@ -78,7 +112,7 @@ export const PrimalQueueView: React.FC<{ active: boolean }> = React.memo(({ acti
                       <td className="font-mono">
                         <strong>{formatProductId(item.barcode)}</strong>
                       </td>
-                      <td>{item.product_name}</td>
+                      <td title={item.product_name}>{item.product_name}</td>
                       <td>{item.quantity}</td>
                       <td>
                         {item.target_location ? (
@@ -102,16 +136,43 @@ export const PrimalQueueView: React.FC<{ active: boolean }> = React.memo(({ acti
                       </td>
                     </tr>
                   ))}
+                  {bottomSpacerHeight > 0 && <tr aria-hidden="true" className="queue-spacer"><td colSpan={5} style={{ height: bottomSpacerHeight }} /></tr>}
                   {filteredQueue.length === 0 && (
                     <tr>
                       <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                        No items found.
+                        {queueLoading ? 'Loading queue…' : 'No items found.'}
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
+            </section>
+            <section className="primal-list-section">
+              <div className="list-section-heading"><strong>Full Product Catalog</strong><span>{filteredCatalog.length} products</span></div>
+              <div
+                ref={catalogScrollRef}
+                className="table-container queue-table-container"
+                onScroll={(e) => handleCatalogScroll(e.currentTarget.scrollTop, e.currentTarget.clientHeight)}
+              >
+                <table className="data-table primal-queue-table" aria-label="Full product catalog">
+                  <colgroup><col style={{ width: '26%' }} /><col style={{ width: '55%' }} /><col style={{ width: '19%' }} /></colgroup>
+                  <thead><tr><th>Product ID</th><th>Product Name</th><th>Location</th></tr></thead>
+                  <tbody>
+                    {catalogTopSpacerHeight > 0 && <tr aria-hidden="true" className="queue-spacer"><td colSpan={3} style={{ height: catalogTopSpacerHeight }} /></tr>}
+                    {visibleCatalog.map((item) => (
+                      <tr key={item.product_id} onClick={() => handleSelectProduct(item.loc_id || undefined)} className={selectedCellLoc && item.loc_id === selectedCellLoc ? 'selected' : ''}>
+                        <td className="font-mono"><strong>{item.product_id}</strong></td>
+                        <td title={item.product_name}>{item.product_name}</td>
+                        <td>{item.loc_id ? <span className="loc-pill assigned">{item.loc_id}</span> : <span className="loc-pill">Unassigned</span>}</td>
+                      </tr>
+                    ))}
+                    {catalogBottomSpacerHeight > 0 && <tr aria-hidden="true" className="queue-spacer"><td colSpan={3} style={{ height: catalogBottomSpacerHeight }} /></tr>}
+                    {filteredCatalog.length === 0 && <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>{catalogLoading ? 'Loading catalog…' : 'No catalog products found.'}</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </div>
         </div>
 
@@ -122,7 +183,7 @@ export const PrimalQueueView: React.FC<{ active: boolean }> = React.memo(({ acti
               <span className="panel-title">Shelf View:</span>
               <select
                 className="input-select"
-                style={{ height: '24px', padding: '0 0.4rem', fontWeight: 600 }}
+                style={{ width: 'auto', minWidth: '180px', fontWeight: 600 }}
                 value={currentShelf ? currentShelf.id : ''}
                 onChange={(e) => {
                   const s = shelves.find((x) => x.id === parseInt(e.target.value, 10));
@@ -160,7 +221,7 @@ export const PrimalQueueView: React.FC<{ active: boolean }> = React.memo(({ acti
               />
             ) : (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>
-                No shelves created.
+                {queueLoading ? 'Loading shelves…' : 'No shelves created.'}
               </div>
             )}
 
