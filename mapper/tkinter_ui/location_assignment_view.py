@@ -6,7 +6,12 @@ from collections.abc import Callable
 import tkinter as tk
 from tkinter import ttk
 
-from utils.barcode_scanner import BarcodeScanner, format_product_id
+from utils.barcode_scanner import (
+    BarcodeScanner,
+    bind_auto_highlight,
+    format_product_id,
+    select_all_entry_text,
+)
 
 
 class LocationAssignmentView(ttk.Frame):
@@ -30,6 +35,7 @@ class LocationAssignmentView(ttk.Frame):
         on_upload: Callable[[], object],
         on_modify_location: Callable[[], object],
         on_connect_chrome: Callable[[], object],
+        barcode_scanner: BarcodeScanner | None = None,
     ):
         super().__init__(parent, padding=10)
 
@@ -81,7 +87,7 @@ class LocationAssignmentView(ttk.Frame):
             on_upload,
             on_modify_location,
         )
-        self.barcode_scanner = BarcodeScanner(self, self.on_barcode_scan)
+        self.barcode_scanner = barcode_scanner
 
     def _build_products_panel(
         self,
@@ -107,6 +113,7 @@ class LocationAssignmentView(ttk.Frame):
         self.search_entry = ttk.Entry(queue, textvariable=self.search_var)
         self.search_entry.grid(row=1, column=0, sticky="ew", pady=(3, 4))
         self.search_entry.bind("<Return>", self.format_primary_search)
+        bind_auto_highlight(self.search_entry)
         self.search_var.trace_add("write", on_search)
         self.search_location_text = tk.StringVar(self, value="")
         self.search_location_label = ttk.Label(
@@ -450,15 +457,25 @@ class LocationAssignmentView(ttk.Frame):
             self.upload_button.configure(text="Upload selected product to web")
 
     def on_barcode_scan(self, barcode: str) -> None:
-        self._set_and_select_search(self.search_var, self.search_entry, barcode)
+        self._set_and_select_search(
+            self.search_var, self.search_entry, format_product_id(barcode)
+        )
 
     def format_primary_search(self, _event=None) -> str:
+        if self.barcode_scanner is not None and self.barcode_scanner.is_scanner():
+            code = self.barcode_scanner.pop_scanner_code()
+            value = format_product_id(code) if code else ""
+        else:
+            value = format_product_id(self.search_var.get())
         self._set_and_select_search(
             self.search_var,
             self.search_entry,
-            format_product_id(self.search_var.get()),
+            value,
         )
         return "break"
+
+    def focus_search(self) -> None:
+        self._select_search_entry(self.search_entry)
 
     def _set_and_select_search(
         self,
