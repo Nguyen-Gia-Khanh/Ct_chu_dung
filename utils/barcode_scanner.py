@@ -1,12 +1,26 @@
 import time
 
 
-def format_product_id(value):
-    """Convert an 11-character scanner value to the stored 5-3-3 ID format."""
-    compact = value.strip().replace("-", "")
-    if len(compact) == 11 and compact.isascii() and compact.isalnum():
+def format_product_id(value: str) -> str:
+    """Convert a barcode scanner value to the stored 5-3-any ID format.
+
+    Examples:
+        "06410KFL850"   -> "06410-KFL-850"    (5-3-3)
+        "04801K0G900ZC" -> "04801-K0G-900ZC"  (5-3-5)
+        "08E50KVG700C"  -> "08E50-KVG-700C"   (5-3-4)
+        "9280012000"    -> "92800-120-00"     (5-3-2)
+    """
+    if not value:
+        return ""
+    trimmed = value.strip()
+    compact = trimmed.replace("-", "")
+    if len(compact) > 8 and compact.isascii() and compact.isalnum():
+        if "-" in trimmed:
+            parts = trimmed.split("-")
+            if len(parts[0]) != 5 or (len(parts) > 1 and len(parts[1]) != 3):
+                return trimmed
         return f"{compact[:5]}-{compact[5:8]}-{compact[8:]}"
-    return value.strip()
+    return trimmed
 
 
 class BarcodeScanner:
