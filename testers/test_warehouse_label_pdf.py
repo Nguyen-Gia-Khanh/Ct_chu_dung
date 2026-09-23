@@ -28,19 +28,29 @@ class TestWarehouseLabelPdf(unittest.TestCase):
         slots_full_15 = _compute_layout_slots(a4_w, a4_h, "full", 15, "landscape", mm)
         self.assertEqual(len(slots_full_15), 1)
 
-        # Product only mode (6 per page)
+        # Product only mode:
+        # Portrait (checked): smaller product list (120mm), 6 per page (4 upright + 2 rotated)
         slots_prod_pt = _compute_layout_slots(a4_h, a4_w, "product_only", 7, "portrait", mm)
         self.assertEqual(len(slots_prod_pt), 6)
         unrotated_prod_pt = [s for s in slots_prod_pt if not s.rotated]
         rotated_prod_pt = [s for s in slots_prod_pt if s.rotated]
         self.assertEqual(len(unrotated_prod_pt), 4)
         self.assertEqual(len(rotated_prod_pt), 2)
+        self.assertAlmostEqual(unrotated_prod_pt[0].w, 120.0 * mm)
 
+        # Landscape (unchecked): default horizontal size, long product list (207mm), 4 max per page (3 upright + 1 rotated)
         slots_prod_ls = _compute_layout_slots(a4_w, a4_h, "product_only", 7, "landscape", mm)
-        self.assertEqual(len(slots_prod_ls), 6)
+        self.assertEqual(len(slots_prod_ls), 4)
+        unrotated_prod_ls = [s for s in slots_prod_ls if not s.rotated]
+        rotated_prod_ls = [s for s in slots_prod_ls if s.rotated]
+        self.assertEqual(len(unrotated_prod_ls), 3)
+        self.assertEqual(len(rotated_prod_ls), 1)
+        self.assertAlmostEqual(unrotated_prod_ls[0].w, 207.0 * mm)
 
-        slots_prod_15 = _compute_layout_slots(a4_w, a4_h, "product_only", 15, "landscape", mm)
-        self.assertEqual(len(slots_prod_15), 2)
+        slots_prod_15_ls = _compute_layout_slots(a4_w, a4_h, "product_only", 15, "landscape", mm)
+        self.assertEqual(len(slots_prod_15_ls), 1)
+        slots_prod_15_pt = _compute_layout_slots(a4_h, a4_w, "product_only", 15, "portrait", mm)
+        self.assertEqual(len(slots_prod_15_pt), 1)
 
         # Location only mode
         slots_loc_ls = _compute_layout_slots(a4_w, a4_h, "location_only", 7, "landscape", mm)
@@ -86,18 +96,31 @@ class TestWarehouseLabelPdf(unittest.TestCase):
         test_dir.mkdir(exist_ok=True)
         try:
             for mode in ["full", "product_only", "location_only"]:
-                out = test_dir / f"test_{mode}.pdf"
-                res = render_labels_pdf(cells, out, label_height_cm=7, orientation="landscape", print_mode=mode)
-                self.assertTrue(out.is_file())
-                self.assertEqual(res.cells, 10)
-                self.assertEqual(res.labels, 10)
+                out_ls = test_dir / f"test_{mode}_landscape.pdf"
+                res_ls = render_labels_pdf(cells, out_ls, label_height_cm=7, orientation="landscape", print_mode=mode)
+                self.assertTrue(out_ls.is_file())
+                self.assertEqual(res_ls.cells, 10)
+                self.assertEqual(res_ls.labels, 10)
                 if mode == "full":
-                    self.assertEqual(res.pages, 4)
+                    self.assertEqual(res_ls.pages, 4)
                 elif mode == "product_only":
-                    self.assertEqual(res.pages, 2)
+                    self.assertEqual(res_ls.pages, 3)  # 4 per page in landscape -> 3 pages
                 elif mode == "location_only":
-                    self.assertEqual(res.pages, 2)
-                out.unlink()
+                    self.assertEqual(res_ls.pages, 2)  # 9 per page -> 2 pages
+                out_ls.unlink()
+
+                out_pt = test_dir / f"test_{mode}_portrait.pdf"
+                res_pt = render_labels_pdf(cells, out_pt, label_height_cm=7, orientation="portrait", print_mode=mode)
+                self.assertTrue(out_pt.is_file())
+                self.assertEqual(res_pt.cells, 10)
+                self.assertEqual(res_pt.labels, 10)
+                if mode == "full":
+                    self.assertEqual(res_pt.pages, 3)  # 4 per page in portrait -> 3 pages
+                elif mode == "product_only":
+                    self.assertEqual(res_pt.pages, 2)  # 6 per page in portrait -> 2 pages
+                elif mode == "location_only":
+                    self.assertEqual(res_pt.pages, 2)  # 9 per page -> 2 pages
+                out_pt.unlink()
         finally:
             if test_dir.is_dir():
                 test_dir.rmdir()

@@ -378,7 +378,6 @@ class LabelPrinterApp:
     def on_product_only_toggle(self):
         if self.product_only.get():
             self.location_only.set(False)
-            self.is_portrait.set(True)
 
     def selected_shelf_ids(self):
         selected = set(self.shelf_tree.selection())
