@@ -6,7 +6,6 @@ import json
 import mimetypes
 import re
 import socket
-import sys
 import threading
 import time
 import urllib.parse
@@ -45,6 +44,10 @@ def _get_uploader():
 
 class WarehouseApiHandler(BaseHTTPRequestHandler):
     server_version = "WarehouseMapperServer/1.0"
+
+    def log_message(self, format: str, *args: object) -> None:
+        """Keep routine local HTTP requests out of the launch terminal."""
+        return
 
     def _send_cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -415,8 +418,9 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
                         try:
                             from .web_upload import upload_product_location
                             upload_product_location(prod_id, slot_obj.slot_name)
-                        except Exception as ex:
-                            print(f"[KiotViet Upload Error] {ex}", file=sys.stderr)
+                        except Exception:
+                            # This optional upload runs after the local assignment succeeds.
+                            return
 
                     threading.Thread(target=_do_upload, daemon=True).start()
 
@@ -844,7 +848,9 @@ def _launch_app_mode(url: str, title: str = "Warehouse Shelf Mapper") -> bool:
                 f"--app={url}",
                 "--window-size=1400,860",
                 f"--app-id=warehouse_mapper",
-            ])
+            ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             proc.wait()
             return True
     return False
@@ -864,7 +870,8 @@ def run_desktop_app(port: int = 8000, title: str = "Warehouse Shelf Mapper") -> 
             current_port += 1
 
     if not server:
-        print(f"Error: Could not bind to any port between {port} and {port + 20}.", file=sys.stderr)
+        from tkinter import messagebox
+        messagebox.showerror("Warehouse Shelf Mapper", f"Could not bind to any port between {port} and {port + 20}.")
         return
 
     # Start background API server
@@ -873,10 +880,6 @@ def run_desktop_app(port: int = 8000, title: str = "Warehouse Shelf Mapper") -> 
 
     url = f"http://localhost:{current_port}"
     target_url = "http://localhost:3000" if _is_port_in_use(3000) else url
-    print("=" * 60)
-    print(f"  {title} - Native Desktop Window")
-    print(f"  Backend server running at: {url}")
-    print("=" * 60)
 
     # 1. Primary: Use pywebview for native Edge WebView2 desktop window
     launched = False
@@ -893,8 +896,7 @@ def run_desktop_app(port: int = 8000, title: str = "Warehouse Shelf Mapper") -> 
         )
         webview.start()
         launched = True
-    except Exception as ex:
-        print(f"pywebview notice: {ex}")
+    except Exception:
         launched = False
 
     # 2. Fallback: Standalone App Window mode (--app)
