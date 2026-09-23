@@ -301,22 +301,18 @@ export const CellTransferView: React.FC<{ active: boolean }> = React.memo(({ act
     handleRefreshBoth,
   } = useCellTransferController(active);
   return (
-    <div className="view-container" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Subheaders matching Tkinter */}
-      <div
-        className="tab-sub-header"
-        style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '3px', padding: '6px 12px' }}
-      >
-        <span className="tab-heading" style={{ fontSize: '12px', fontWeight: 600 }}>
+    <div className="view-container transfer-view">
+      <div className="transfer-note">
+        <span>
           Select one cell on each side, then switch or combine their committed products.
         </span>
-        <span style={{ color: '#8a6d1d', fontSize: '11.5px' }}>
+        <small>
           Local SQLite locations are updated immediately; KiotViet is not changed by this tab.
-        </span>
+        </small>
       </div>
 
       {/* 3-Column Workspace */}
-      <div className="transfer-workspace" style={{ padding: '0 10px 10px 10px' }}>
+      <div className="transfer-workspace">
         {/* Left Cell */}
         <CellTransferPane
           sideLabel="Left cell"
@@ -347,22 +343,19 @@ export const CellTransferView: React.FC<{ active: boolean }> = React.memo(({ act
         <div className="cell-actions-card">
           <div className="cell-actions-title">Cell actions</div>
           <button
-            className="btn btn-secondary"
-            style={{ width: '100%', marginBottom: '4px' }}
+            className="btn btn-secondary cell-action-button"
             onClick={handleSwitchCells}
           >
             Switch cells ↔
           </button>
           <button
-            className="btn btn-secondary"
-            style={{ width: '100%', marginBottom: '4px' }}
+            className="btn btn-secondary cell-action-button"
             onClick={handleCombineLeftRight}
           >
             Combine left → right
           </button>
           <button
-            className="btn btn-secondary"
-            style={{ width: '100%', marginBottom: '6px' }}
+            className="btn btn-secondary cell-action-button"
             onClick={handleCombineRightLeft}
           >
             Combine right → left
@@ -371,8 +364,7 @@ export const CellTransferView: React.FC<{ active: boolean }> = React.memo(({ act
           <div className="cell-actions-separator" />
 
           <button
-            className="btn btn-secondary"
-            style={{ width: '100%', marginTop: '4px', marginBottom: '4px' }}
+            className="btn btn-secondary cell-action-button"
             onClick={handleModifyLocationWeb}
             disabled={isModifyingWeb}
           >
@@ -382,8 +374,7 @@ export const CellTransferView: React.FC<{ active: boolean }> = React.memo(({ act
           <div className="cell-actions-separator" />
 
           <button
-            className="btn btn-secondary"
-            style={{ width: '100%', marginTop: '4px' }}
+            className="btn btn-secondary cell-action-button"
             onClick={handleRefreshBoth}
           >
             Refresh both

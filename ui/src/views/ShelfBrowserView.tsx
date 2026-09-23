@@ -20,24 +20,13 @@ export const ShelfBrowserView: React.FC<{ active: boolean }> = React.memo(({ act
   } = useShelfBrowserController(active);
   return (
     <div className="view-container">
-      <div className="panel" style={{ marginBottom: '0.4rem' }}>
-        <div
-          style={{
-            padding: '0.45rem 0.75rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '0.75rem',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <label className="form-label" style={{ margin: 0 }}>
-              Existing shelf:
-            </label>
+      <div className="panel">
+        <div className="browser-toolbar">
+          <div className="browser-toolbar-controls">
+            <label className="form-label" htmlFor="browser-shelf-select">Existing shelf</label>
             <select
+              id="browser-shelf-select"
               className="input-select"
-              style={{ fontWeight: 600, minWidth: '220px' }}
               value={selectedShelf ? selectedShelf.id : ''}
               onChange={(e) => {
                 const found = shelves.find((s) => s.id === parseInt(e.target.value, 10));
@@ -55,14 +44,10 @@ export const ShelfBrowserView: React.FC<{ active: boolean }> = React.memo(({ act
             </button>
           </div>
 
-          <div style={{ display: 'flex', gap: '1.25rem', fontSize: '12px', color: 'var(--text-secondary)' }}>
-            <div>
-              Occupied: <strong style={{ color: 'var(--success)' }}>{occupiedCount}</strong> cells
-            </div>
-            <div>
-              Total Products: <strong>{totalUnits}</strong> units
-            </div>
-            <div style={{ color: 'var(--text-muted)' }}>Read-only view</div>
+          <div className="browser-toolbar-stats">
+            <span>Occupied <strong>{occupiedCount}</strong></span>
+            <span>Units <strong>{totalUnits}</strong></span>
+            <span className="muted">Read only</span>
           </div>
         </div>
       </div>
@@ -119,22 +104,11 @@ export const ShelfBrowserView: React.FC<{ active: boolean }> = React.memo(({ act
           <div className="panel-body">
             {selectedCellLoc ? (
               <div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.4rem', marginBottom: '0.6rem' }}>
-                  <div style={{ background: 'var(--bg-subtle)', padding: '0.4rem', borderRadius: '2px' }}>
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Row (Ground Up)</div>
-                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Row {selectedRow}</div>
-                  </div>
-                  <div style={{ background: 'var(--bg-subtle)', padding: '0.4rem', borderRadius: '2px' }}>
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Slot / Column</div>
-                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Col {selectedCol}</div>
-                  </div>
-                  <div style={{ background: 'var(--bg-subtle)', padding: '0.4rem', borderRadius: '2px' }}>
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Status</div>
-                    <div style={{ fontSize: '13px', fontWeight: 600, color: items.length > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
-                      {items.length > 0 ? 'Occupied' : 'Empty'}
-                    </div>
-                  </div>
-                </div>
+                <dl className="browser-cell-facts">
+                  <div><dt>Row</dt><dd>{selectedRow}</dd></div>
+                  <div><dt>Column</dt><dd>{selectedCol}</dd></div>
+                  <div><dt>Status</dt><dd className={items.length > 0 ? 'occupied' : ''}>{items.length > 0 ? 'Occupied' : 'Empty'}</dd></div>
+                </dl>
 
                 <div className="table-container">
                   <table className="data-table">

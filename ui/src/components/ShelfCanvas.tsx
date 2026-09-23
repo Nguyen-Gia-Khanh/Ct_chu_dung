@@ -60,7 +60,7 @@ export const ShelfCanvas: React.FC<ShelfCanvasProps> = ({
         </div>
         <div style={{ display: 'flex', gap: '1rem' }}>
           <span>
-            Occupied: <strong style={{ color: '#2e7d32' }}>{occupiedCount}</strong> / {totalCells}
+            Occupied: <strong style={{ color: 'var(--ui-green)' }}>{occupiedCount}</strong> / {totalCells}
           </span>
           <span>
             ({totalCells > 0 ? Math.round((occupiedCount / totalCells) * 100) : 0}%)

@@ -203,33 +203,20 @@ export const ShelfDesignerView: React.FC<{ active: boolean }> = React.memo(({ ac
                 <span className="form-label" style={{ display: 'block', marginBottom: '0.3rem' }}>
                   Existing Shelves in Database:
                 </span>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                <div className="saved-shelves">
                   {shelves.map((s) => (
-                    <div
-                      key={s.id}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.3rem',
-                        background: 'var(--bg-subtle)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '2px',
-                        padding: '0.15rem 0.45rem',
-                        fontSize: '11.5px',
-                      }}
-                    >
-                      <span
-                        style={{ cursor: 'pointer', fontWeight: 600 }}
-                        onClick={() => handleSelectExisting(s)}
-                      >
+                    <div key={s.id} className="saved-shelf">
+                      <button type="button" className="saved-shelf-name" onClick={() => handleSelectExisting(s)}>
                         {getShelfCode(s.floor, s.side, s.shelf)} ({s.rows_count}×{s.default_cols})
-                      </span>
+                      </button>
                       <button
+                        type="button"
+                        className="saved-shelf-remove"
                         onClick={() => handleDeleteShelf(s.id)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}
                         title="Delete shelf"
+                        aria-label={`Delete shelf ${getShelfCode(s.floor, s.side, s.shelf)}`}
                       >
-                        &times;
+                        ×
                       </button>
                     </div>
                   ))}

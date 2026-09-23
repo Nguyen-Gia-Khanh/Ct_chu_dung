@@ -9,6 +9,7 @@ var _react = _interopRequireDefault(require("react"));
 var _client = _interopRequireDefault(require("react-dom/client"));
 var _App = _interopRequireDefault(require("./App"));
 require("./styles/app.css");
+require("./styles/theme.css");
 function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
 _client.default.createRoot(document.getElementById('root')).render(_react.default.createElement(_react.default.StrictMode, null, _react.default.createElement(_App.default, null)));
 },
@@ -115,27 +116,27 @@ function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e
 const tabs = [{
   id: 'designer',
   label: 'Shelf Designer',
-  description: 'Build, review, and commit shelf layouts.'
+  description: 'Build and commit shelf layouts'
 }, {
   id: 'assignment',
   label: 'Assign Locations',
-  description: 'Prepare products and assign them to a shelf address.'
+  description: 'Prepare products and assign addresses'
 }, {
   id: 'primal_queue',
   label: 'Primal Queue / Shelves',
-  description: 'Search the queue and inspect committed shelf contents.'
+  description: 'Search products and inspect shelves'
 }, {
   id: 'browser',
   label: 'Browse Shelves',
-  description: 'Explore saved shelves and their locations.'
+  description: 'Explore saved shelves and cells'
 }, {
   id: 'cell_transfer',
   label: 'Switch / Combine Cells',
-  description: 'Move or combine the contents of committed cells.'
+  description: 'Move or combine cell contents'
 }, {
   id: 'exceptions',
   label: 'Special Exceptions',
-  description: 'Manage multi-location stock and pending CSV updates.'
+  description: 'Manage multi-location stock and CSV updates'
 }];
 const WorkbenchChrome = ({
   activeTab,
@@ -145,22 +146,23 @@ const WorkbenchChrome = ({
 }) => {
   const current = tabs.find(tab => tab.id === activeTab);
   return _react.default.createElement("div", {
-    className: "vscode-workbench"
+    className: "workbench"
   }, _react.default.createElement("header", {
-    className: "app-header-toolbar"
+    className: "workbench-titlebar"
   }, _react.default.createElement("div", {
-    className: "app-brand-mark",
+    className: "workbench-identity"
+  }, _react.default.createElement("strong", null, "Warehouse Mapper"), _react.default.createElement("span", {
+    className: "workbench-titlebar-divider",
     "aria-hidden": "true"
-  }, "W"), _react.default.createElement("div", {
-    className: "app-brand-copy"
+  }), _react.default.createElement("span", {
+    className: "workbench-project"
+  }, "Local workspace")), _react.default.createElement("div", {
+    className: "workbench-connection",
+    role: "status"
   }, _react.default.createElement("span", {
-    className: "app-header-eyebrow"
-  }, "Warehouse operations"), _react.default.createElement("strong", {
-    className: "app-header-title"
-  }, "Shelf Mapper")), _react.default.createElement("div", {
-    className: "app-header-meta"
-  }, "Local workspace")), _react.default.createElement("nav", {
-    className: "vscode-tab-bar",
+    className: `backend-indicator ${backendStatus}`
+  }), backendStatus === 'ready' ? 'Database connected' : backendStatus === 'connecting' ? 'Connecting…' : 'Database unavailable')), _react.default.createElement("nav", {
+    className: "workbench-tabs",
     role: "tablist",
     "aria-label": "Warehouse workflows"
   }, tabs.map(({
@@ -172,27 +174,16 @@ const WorkbenchChrome = ({
     role: "tab",
     "aria-selected": activeTab === id,
     "aria-controls": `panel-${id}`,
-    className: `vscode-tab ${activeTab === id ? 'active' : ''}`,
+    className: `workbench-tab ${activeTab === id ? 'active' : ''}`,
     onClick: () => onSelectTab(id)
   }, _react.default.createElement("span", {
-    className: "tab-index",
+    className: "workbench-tab-index",
     "aria-hidden": "true"
-  }, String(index + 1).padStart(2, '0')), _react.default.createElement("span", null, label)))), _react.default.createElement("main", {
-    className: "vscode-content-view"
+  }, index + 1), label))), _react.default.createElement("main", {
+    className: "workbench-content"
   }, _react.default.createElement("div", {
-    className: "workspace-heading"
-  }, _react.default.createElement("div", null, _react.default.createElement("span", {
-    className: "workspace-kicker"
-  }, "WORKSPACE / ", String(tabs.indexOf(current) + 1).padStart(2, '0')), _react.default.createElement("h1", null, current.label), _react.default.createElement("p", null, current.description))), children), _react.default.createElement("footer", {
-    className: "vscode-status-bar",
-    role: "status"
-  }, _react.default.createElement("span", {
-    className: "status-context"
-  }, "Warehouse Shelf Mapper"), _react.default.createElement("span", {
-    className: "status-connection"
-  }, _react.default.createElement("span", {
-    className: `backend-indicator ${backendStatus}`
-  }), backendStatus === 'ready' ? 'Local database connected' : backendStatus === 'connecting' ? 'Connecting to local database…' : 'Local backend unavailable')));
+    className: "workbench-context"
+  }, _react.default.createElement("h1", null, current.label), _react.default.createElement("span", null, current.description)), children));
 };
 exports.WorkbenchChrome = WorkbenchChrome;
 },
@@ -438,38 +429,20 @@ const ShelfDesignerView = exports.ShelfDesignerView = _react.default.memo(({
       marginBottom: '0.3rem'
     }
   }, "Existing Shelves in Database:"), _react.default.createElement("div", {
-    style: {
-      display: 'flex',
-      flexWrap: 'wrap',
-      gap: '0.3rem'
-    }
+    className: "saved-shelves"
   }, shelves.map(s => _react.default.createElement("div", {
     key: s.id,
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: '0.3rem',
-      background: 'var(--bg-subtle)',
-      border: '1px solid var(--border-color)',
-      borderRadius: '2px',
-      padding: '0.15rem 0.45rem',
-      fontSize: '11.5px'
-    }
-  }, _react.default.createElement("span", {
-    style: {
-      cursor: 'pointer',
-      fontWeight: 600
-    },
+    className: "saved-shelf"
+  }, _react.default.createElement("button", {
+    type: "button",
+    className: "saved-shelf-name",
     onClick: () => handleSelectExisting(s)
   }, (0, _coordinates.getShelfCode)(s.floor, s.side, s.shelf), " (", s.rows_count, "\xD7", s.default_cols, ")"), _react.default.createElement("button", {
+    type: "button",
+    className: "saved-shelf-remove",
     onClick: () => handleDeleteShelf(s.id),
-    style: {
-      background: 'none',
-      border: 'none',
-      cursor: 'pointer',
-      color: 'var(--danger)'
-    },
-    title: "Delete shelf"
+    title: "Delete shelf",
+    "aria-label": `Delete shelf ${(0, _coordinates.getShelfCode)(s.floor, s.side, s.shelf)}`
   }, "\xD7"))), shelves.length === 0 && _react.default.createElement("span", {
     style: {
       fontSize: '11.5px',
@@ -562,7 +535,7 @@ const ShelfCanvas = ({
     }
   }, _react.default.createElement("span", null, "Occupied: ", _react.default.createElement("strong", {
     style: {
-      color: '#2e7d32'
+      color: 'var(--ui-green)'
     }
   }, occupiedCount), " / ", totalCells), _react.default.createElement("span", null, "(", totalCells > 0 ? Math.round(occupiedCount / totalCells * 100) : 0, "%)"))), _react.default.createElement("div", {
     className: "shelf-canvas-grid"
@@ -2726,36 +2699,17 @@ const ShelfBrowserView = exports.ShelfBrowserView = _react.default.memo(({
   return _react.default.createElement("div", {
     className: "view-container"
   }, _react.default.createElement("div", {
-    className: "panel",
-    style: {
-      marginBottom: '0.4rem'
-    }
+    className: "panel"
   }, _react.default.createElement("div", {
-    style: {
-      padding: '0.45rem 0.75rem',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      flexWrap: 'wrap',
-      gap: '0.75rem'
-    }
+    className: "browser-toolbar"
   }, _react.default.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '0.5rem'
-    }
+    className: "browser-toolbar-controls"
   }, _react.default.createElement("label", {
     className: "form-label",
-    style: {
-      margin: 0
-    }
-  }, "Existing shelf:"), _react.default.createElement("select", {
+    htmlFor: "browser-shelf-select"
+  }, "Existing shelf"), _react.default.createElement("select", {
+    id: "browser-shelf-select",
     className: "input-select",
-    style: {
-      fontWeight: 600,
-      minWidth: '220px'
-    },
     value: selectedShelf ? selectedShelf.id : '',
     onChange: e => {
       const found = shelves.find(s => s.id === parseInt(e.target.value, 10));
@@ -2768,21 +2722,10 @@ const ShelfBrowserView = exports.ShelfBrowserView = _react.default.memo(({
     className: "btn btn-secondary btn-sm",
     onClick: () => selectedShelf && loadShelfCells(selectedShelf)
   }, "Refresh")), _react.default.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '1.25rem',
-      fontSize: '12px',
-      color: 'var(--text-secondary)'
-    }
-  }, _react.default.createElement("div", null, "Occupied: ", _react.default.createElement("strong", {
-    style: {
-      color: 'var(--success)'
-    }
-  }, occupiedCount), " cells"), _react.default.createElement("div", null, "Total Products: ", _react.default.createElement("strong", null, totalUnits), " units"), _react.default.createElement("div", {
-    style: {
-      color: 'var(--text-muted)'
-    }
-  }, "Read-only view")))), _react.default.createElement("div", {
+    className: "browser-toolbar-stats"
+  }, _react.default.createElement("span", null, "Occupied ", _react.default.createElement("strong", null, occupiedCount)), _react.default.createElement("span", null, "Units ", _react.default.createElement("strong", null, totalUnits)), _react.default.createElement("span", {
+    className: "muted"
+  }, "Read only")))), _react.default.createElement("div", {
     className: "split-pane right-heavy"
   }, _react.default.createElement("div", {
     className: "panel"
@@ -2824,65 +2767,10 @@ const ShelfBrowserView = exports.ShelfBrowserView = _react.default.memo(({
     }
   }, items.length, " item(s) / ", selectedCell?.total_quantity || 0, " units")), _react.default.createElement("div", {
     className: "panel-body"
-  }, selectedCellLoc ? _react.default.createElement("div", null, _react.default.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(3, 1fr)',
-      gap: '0.4rem',
-      marginBottom: '0.6rem'
-    }
-  }, _react.default.createElement("div", {
-    style: {
-      background: 'var(--bg-subtle)',
-      padding: '0.4rem',
-      borderRadius: '2px'
-    }
-  }, _react.default.createElement("div", {
-    style: {
-      fontSize: '10px',
-      color: 'var(--text-muted)',
-      textTransform: 'uppercase'
-    }
-  }, "Row (Ground Up)"), _react.default.createElement("div", {
-    style: {
-      fontSize: '13px',
-      fontWeight: 600
-    }
-  }, "Row ", selectedRow)), _react.default.createElement("div", {
-    style: {
-      background: 'var(--bg-subtle)',
-      padding: '0.4rem',
-      borderRadius: '2px'
-    }
-  }, _react.default.createElement("div", {
-    style: {
-      fontSize: '10px',
-      color: 'var(--text-muted)',
-      textTransform: 'uppercase'
-    }
-  }, "Slot / Column"), _react.default.createElement("div", {
-    style: {
-      fontSize: '13px',
-      fontWeight: 600
-    }
-  }, "Col ", selectedCol)), _react.default.createElement("div", {
-    style: {
-      background: 'var(--bg-subtle)',
-      padding: '0.4rem',
-      borderRadius: '2px'
-    }
-  }, _react.default.createElement("div", {
-    style: {
-      fontSize: '10px',
-      color: 'var(--text-muted)',
-      textTransform: 'uppercase'
-    }
-  }, "Status"), _react.default.createElement("div", {
-    style: {
-      fontSize: '13px',
-      fontWeight: 600,
-      color: items.length > 0 ? 'var(--success)' : 'var(--text-muted)'
-    }
+  }, selectedCellLoc ? _react.default.createElement("div", null, _react.default.createElement("dl", {
+    className: "browser-cell-facts"
+  }, _react.default.createElement("div", null, _react.default.createElement("dt", null, "Row"), _react.default.createElement("dd", null, selectedRow)), _react.default.createElement("div", null, _react.default.createElement("dt", null, "Column"), _react.default.createElement("dd", null, selectedCol)), _react.default.createElement("div", null, _react.default.createElement("dt", null, "Status"), _react.default.createElement("dd", {
+    className: items.length > 0 ? 'occupied' : ''
   }, items.length > 0 ? 'Occupied' : 'Empty'))), _react.default.createElement("div", {
     className: "table-container"
   }, _react.default.createElement("table", {
@@ -3275,36 +3163,11 @@ const CellTransferView = exports.CellTransferView = _react.default.memo(({
     handleRefreshBoth
   } = (0, _useCellTransferController.useCellTransferController)(active);
   return _react.default.createElement("div", {
-    className: "view-container",
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%'
-    }
+    className: "view-container transfer-view"
   }, _react.default.createElement("div", {
-    className: "tab-sub-header",
-    style: {
-      flexDirection: 'column',
-      alignItems: 'flex-start',
-      gap: '3px',
-      padding: '6px 12px'
-    }
-  }, _react.default.createElement("span", {
-    className: "tab-heading",
-    style: {
-      fontSize: '12px',
-      fontWeight: 600
-    }
-  }, "Select one cell on each side, then switch or combine their committed products."), _react.default.createElement("span", {
-    style: {
-      color: '#8a6d1d',
-      fontSize: '11.5px'
-    }
-  }, "Local SQLite locations are updated immediately; KiotViet is not changed by this tab.")), _react.default.createElement("div", {
-    className: "transfer-workspace",
-    style: {
-      padding: '0 10px 10px 10px'
-    }
+    className: "transfer-note"
+  }, _react.default.createElement("span", null, "Select one cell on each side, then switch or combine their committed products."), _react.default.createElement("small", null, "Local SQLite locations are updated immediately; KiotViet is not changed by this tab.")), _react.default.createElement("div", {
+    className: "transfer-workspace"
   }, _react.default.createElement(CellTransferPane, {
     sideLabel: "Left cell",
     shelves: shelves,
@@ -3333,45 +3196,24 @@ const CellTransferView = exports.CellTransferView = _react.default.memo(({
   }, _react.default.createElement("div", {
     className: "cell-actions-title"
   }, "Cell actions"), _react.default.createElement("button", {
-    className: "btn btn-secondary",
-    style: {
-      width: '100%',
-      marginBottom: '4px'
-    },
+    className: "btn btn-secondary cell-action-button",
     onClick: handleSwitchCells
   }, "Switch cells \u2194"), _react.default.createElement("button", {
-    className: "btn btn-secondary",
-    style: {
-      width: '100%',
-      marginBottom: '4px'
-    },
+    className: "btn btn-secondary cell-action-button",
     onClick: handleCombineLeftRight
   }, "Combine left \u2192 right"), _react.default.createElement("button", {
-    className: "btn btn-secondary",
-    style: {
-      width: '100%',
-      marginBottom: '6px'
-    },
+    className: "btn btn-secondary cell-action-button",
     onClick: handleCombineRightLeft
   }, "Combine right \u2192 left"), _react.default.createElement("div", {
     className: "cell-actions-separator"
   }), _react.default.createElement("button", {
-    className: "btn btn-secondary",
-    style: {
-      width: '100%',
-      marginTop: '4px',
-      marginBottom: '4px'
-    },
+    className: "btn btn-secondary cell-action-button",
     onClick: handleModifyLocationWeb,
     disabled: isModifyingWeb
   }, "Modify location ID on web"), _react.default.createElement("div", {
     className: "cell-actions-separator"
   }), _react.default.createElement("button", {
-    className: "btn btn-secondary",
-    style: {
-      width: '100%',
-      marginTop: '4px'
-    },
+    className: "btn btn-secondary cell-action-button",
     onClick: handleRefreshBoth
   }, "Refresh both"), _react.default.createElement("div", {
     className: "cell-actions-desc"
@@ -3791,570 +3633,252 @@ const ExceptionsView = exports.ExceptionsView = _react.default.memo(({
     filteredOnHand
   } = (0, _useExceptionsController.useExceptionsController)(active);
   return _react.default.createElement("div", {
-    className: "tab-pane-container",
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%',
-      padding: '10px'
-    }
+    className: "exceptions-view"
   }, _react.default.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: '10px',
-      borderBottom: '1px solid #d0d7de',
-      paddingBottom: '8px'
-    }
-  }, _react.default.createElement("div", null, _react.default.createElement("h2", {
-    style: {
-      fontSize: '15px',
-      fontWeight: 600,
-      margin: '0 0 4px 0',
-      color: '#1f2328'
-    }
-  }, "Special Exceptions & Multi-Location Products"), _react.default.createElement("div", {
-    style: {
-      fontSize: '12px',
-      color: '#656d76'
-    }
-  }, "Assign items requiring multiple locations or stage unregistered products safely. Staged items will not modify CSV files until appended.")), _react.default.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '12px'
-    }
-  }, _react.default.createElement("span", {
-    style: {
-      fontSize: '12px',
-      fontWeight: 600,
-      color: '#0969da'
-    }
-  }, pendingItems.length, " staged CSV update(s)"), _react.default.createElement("button", {
-    className: "vscode-btn vscode-btn-primary",
-    onClick: handleAppendToCSV,
-    disabled: isBusy || pendingItems.length === 0,
-    style: {
-      fontSize: '12px',
-      padding: '4px 12px'
-    }
-  }, "Append back to CSV"))), _react.default.createElement("div", {
-    className: "address-status-label"
+    className: "exceptions-intro"
+  }, _react.default.createElement("div", null, _react.default.createElement("strong", null, "Special exceptions and multi-location products"), _react.default.createElement("p", null, "Assign stock to an exact address. New products stay staged until you append them to CSV.")), _react.default.createElement("span", {
+    className: "count-label"
+  }, pendingItems.length, " staged update", pendingItems.length === 1 ? '' : 's')), statusMessage && _react.default.createElement("div", {
+    className: "inline-status",
+    role: "status"
   }, statusMessage), _react.default.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '12px',
-      flex: 1,
-      minHeight: 0
-    }
+    className: "exceptions-columns"
   }, _react.default.createElement("div", {
-    style: {
-      flex: 1,
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '10px',
-      minWidth: 0
-    }
+    className: "exceptions-stack"
+  }, _react.default.createElement("section", {
+    className: "panel exceptions-form-panel"
   }, _react.default.createElement("div", {
-    style: {
-      background: '#ffffff',
-      border: '1px solid #d0d7de',
-      borderRadius: '4px',
-      padding: '10px'
-    }
-  }, _react.default.createElement("div", {
-    style: {
-      fontSize: '12px',
-      fontWeight: 600,
-      marginBottom: '8px',
-      color: '#1f2328'
-    }
-  }, "Assign Special Exception / Unregistered Product"), _react.default.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      marginBottom: '8px'
-    }
+    className: "panel-header"
+  }, _react.default.createElement("span", {
+    className: "panel-title"
+  }, "Assign a product")), _react.default.createElement("div", {
+    className: "panel-body"
   }, _react.default.createElement("label", {
-    style: {
-      fontSize: '12px',
-      minWidth: '130px',
-      fontWeight: 500
-    }
-  }, "Product ID / Barcode:"), _react.default.createElement("input", {
+    className: "form-group"
+  }, _react.default.createElement("span", {
+    className: "form-label"
+  }, "Product ID or barcode"), _react.default.createElement("input", {
     type: "text",
-    className: "vscode-input",
+    className: "input-text font-mono",
     value: productId,
-    onChange: e => setProductId(e.target.value),
-    onKeyDown: e => {
-      if (e.key === 'Enter') handleAssignException();
+    onChange: event => setProductId(event.target.value),
+    onKeyDown: event => {
+      if (event.key === 'Enter') handleAssignException();
     },
-    placeholder: "e.g. 06410-KAN-640 or new code",
-    style: {
-      flex: 1,
-      height: '26px'
-    }
+    placeholder: "Scan or enter a product ID"
   })), _react.default.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '6px',
-      marginBottom: '8px',
-      flexWrap: 'wrap'
-    }
-  }, _react.default.createElement("span", {
-    style: {
-      fontSize: '12px',
-      fontWeight: 500
-    }
-  }, "Floor:"), _react.default.createElement("input", {
-    type: "text",
-    className: "vscode-input",
-    value: floor,
-    onChange: e => setFloor(e.target.value),
-    style: {
-      width: '40px',
-      height: '24px',
-      textAlign: 'center'
-    }
-  }), _react.default.createElement("span", {
-    style: {
-      fontSize: '12px',
-      fontWeight: 500
-    }
-  }, "Side:"), _react.default.createElement("input", {
-    type: "text",
-    className: "vscode-input",
-    value: side,
-    onChange: e => setSide(e.target.value),
-    style: {
-      width: '40px',
-      height: '24px',
-      textAlign: 'center'
-    }
-  }), _react.default.createElement("span", {
-    style: {
-      fontSize: '12px',
-      fontWeight: 500
-    }
-  }, "Shelf:"), _react.default.createElement("input", {
-    type: "text",
-    className: "vscode-input",
-    value: shelf,
-    onChange: e => setShelf(e.target.value),
-    style: {
-      width: '45px',
-      height: '24px',
-      textAlign: 'center'
-    }
-  }), _react.default.createElement("span", {
-    style: {
-      fontSize: '12px',
-      fontWeight: 500
-    }
-  }, "Row:"), _react.default.createElement("input", {
-    type: "number",
-    min: "1",
-    className: "vscode-input",
-    value: row,
-    onChange: e => setRow(e.target.value),
-    style: {
-      width: '45px',
-      height: '24px',
-      textAlign: 'center'
-    }
-  }), _react.default.createElement("span", {
-    style: {
-      fontSize: '12px',
-      fontWeight: 500
-    }
-  }, "Cell:"), _react.default.createElement("input", {
-    type: "number",
-    min: "1",
-    className: "vscode-input",
-    value: col,
-    onChange: e => setCol(e.target.value),
-    style: {
-      width: '45px',
-      height: '24px',
-      textAlign: 'center'
-    }
-  }), _react.default.createElement("button", {
-    className: "vscode-btn",
-    onClick: handleLoadAddress,
-    style: {
-      height: '24px',
-      padding: '0 8px',
-      fontSize: '11px',
-      marginLeft: '4px'
-    }
-  }, "Load address")), _react.default.createElement("div", {
-    style: {
-      fontSize: '11px',
-      fontWeight: 600,
-      color: loadedSlotId ? '#0969da' : '#656d76',
-      marginBottom: '8px'
-    }
-  }, loadedSlotMessage), _react.default.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px'
-    }
+    className: "exceptions-address-fields"
   }, _react.default.createElement("label", {
-    style: {
-      fontSize: '12px',
-      fontWeight: 500
-    }
-  }, "Stock Qty (optional):"), _react.default.createElement("input", {
-    type: "text",
-    className: "vscode-input",
-    value: stockQty,
-    onChange: e => setStockQty(e.target.value),
-    placeholder: "null",
-    style: {
-      width: '60px',
-      height: '26px',
-      textAlign: 'center'
-    }
-  }), _react.default.createElement("button", {
-    className: "vscode-btn vscode-btn-primary",
-    onClick: handleAssignException,
-    disabled: isBusy,
-    style: {
-      flex: 1,
-      height: '28px',
-      fontSize: '12px',
-      fontWeight: 600
-    }
-  }, "Assign to loaded address"))), _react.default.createElement("div", {
-    style: {
-      background: '#ffffff',
-      border: '1px solid #d0d7de',
-      borderRadius: '4px',
-      padding: '8px',
-      flex: 1,
-      display: 'flex',
-      flexDirection: 'column',
-      minHeight: 0
-    }
-  }, _react.default.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: '6px'
-    }
+    className: "form-group"
   }, _react.default.createElement("span", {
-    style: {
-      fontSize: '12px',
-      fontWeight: 600,
-      color: '#1f2328'
-    }
-  }, "Shared On-Hand Products"), _react.default.createElement("input", {
-    type: "text",
-    className: "vscode-input",
+    className: "form-label"
+  }, "Floor"), _react.default.createElement("input", {
+    className: "input-text font-mono",
+    value: floor,
+    onChange: event => setFloor(event.target.value)
+  })), _react.default.createElement("label", {
+    className: "form-group"
+  }, _react.default.createElement("span", {
+    className: "form-label"
+  }, "Side"), _react.default.createElement("input", {
+    className: "input-text font-mono",
+    value: side,
+    onChange: event => setSide(event.target.value)
+  })), _react.default.createElement("label", {
+    className: "form-group"
+  }, _react.default.createElement("span", {
+    className: "form-label"
+  }, "Shelf"), _react.default.createElement("input", {
+    className: "input-text font-mono",
+    value: shelf,
+    onChange: event => setShelf(event.target.value)
+  })), _react.default.createElement("label", {
+    className: "form-group"
+  }, _react.default.createElement("span", {
+    className: "form-label"
+  }, "Row"), _react.default.createElement("input", {
+    type: "number",
+    min: "1",
+    className: "input-text font-mono",
+    value: row,
+    onChange: event => setRow(event.target.value)
+  })), _react.default.createElement("label", {
+    className: "form-group"
+  }, _react.default.createElement("span", {
+    className: "form-label"
+  }, "Cell"), _react.default.createElement("input", {
+    type: "number",
+    min: "1",
+    className: "input-text font-mono",
+    value: col,
+    onChange: event => setCol(event.target.value)
+  })), _react.default.createElement("button", {
+    type: "button",
+    className: "btn btn-secondary",
+    onClick: handleLoadAddress
+  }, "Load address")), _react.default.createElement("div", {
+    className: `exceptions-address-result ${loadedSlotId ? 'resolved' : ''}`,
+    role: "status"
+  }, loadedSlotMessage), _react.default.createElement("div", {
+    className: "exceptions-assign-row"
+  }, _react.default.createElement("label", {
+    className: "form-group"
+  }, _react.default.createElement("span", {
+    className: "form-label"
+  }, "Stock quantity (optional)"), _react.default.createElement("input", {
+    className: "input-text font-mono",
+    value: stockQty,
+    onChange: event => setStockQty(event.target.value),
+    placeholder: "Optional"
+  })), _react.default.createElement("button", {
+    type: "button",
+    className: "btn btn-primary",
+    onClick: handleAssignException,
+    disabled: isBusy
+  }, "Assign to address")))), _react.default.createElement("section", {
+    className: "panel exceptions-list-panel"
+  }, _react.default.createElement("div", {
+    className: "panel-header"
+  }, _react.default.createElement("span", {
+    className: "panel-title"
+  }, "Shared on-hand products"), _react.default.createElement("input", {
+    className: "input-text exceptions-search",
     value: onHandSearch,
-    onChange: e => setOnHandSearch(e.target.value),
-    placeholder: "Search on-hand...",
-    style: {
-      width: '180px',
-      height: '22px',
-      fontSize: '11px'
-    }
+    onChange: event => setOnHandSearch(event.target.value),
+    placeholder: "Search products",
+    "aria-label": "Search on-hand products"
   })), _react.default.createElement("div", {
-    style: {
-      flex: 1,
-      overflowY: 'auto',
-      border: '1px solid #e1e4e8',
-      borderRadius: '2px'
-    }
+    className: "exceptions-table-scroll"
   }, _react.default.createElement("table", {
     className: "data-table",
+    "aria-label": "Shared on-hand products"
+  }, _react.default.createElement("colgroup", null, _react.default.createElement("col", {
     style: {
-      width: '100%',
-      borderCollapse: 'collapse',
-      fontSize: '12px'
+      width: '31%'
     }
-  }, _react.default.createElement("thead", null, _react.default.createElement("tr", {
+  }), _react.default.createElement("col", {
     style: {
-      background: '#f6f8fa',
-      borderBottom: '1px solid #d0d7de',
-      position: 'sticky',
-      top: 0
+      width: '54%'
     }
-  }, _react.default.createElement("th", {
+  }), _react.default.createElement("col", {
     style: {
-      textAlign: 'left',
-      padding: '4px 6px'
+      width: '15%'
     }
-  }, "Product ID"), _react.default.createElement("th", {
-    style: {
-      textAlign: 'left',
-      padding: '4px 6px'
-    }
-  }, "Product Name"), _react.default.createElement("th", {
-    style: {
-      textAlign: 'right',
-      padding: '4px 6px'
-    }
+  })), _react.default.createElement("thead", null, _react.default.createElement("tr", null, _react.default.createElement("th", null, "Product ID"), _react.default.createElement("th", null, "Product name"), _react.default.createElement("th", {
+    className: "numeric"
   }, "Stock"))), _react.default.createElement("tbody", null, filteredOnHand.map(item => _react.default.createElement("tr", {
     key: item.product_id,
+    className: `selectable-row ${productId === item.product_id ? 'selected' : ''}`,
     onClick: () => {
       setProductId(item.product_id);
-      if (item.stock_qty !== null && item.stock_qty !== undefined) {
-        setStockQty(String(item.stock_qty));
-      }
-    },
-    style: {
-      cursor: 'pointer',
-      background: productId === item.product_id ? '#e8f0fe' : 'transparent',
-      borderBottom: '1px solid #f0f2f5'
+      if (item.stock_qty !== null && item.stock_qty !== undefined) setStockQty(String(item.stock_qty));
     }
   }, _react.default.createElement("td", {
-    style: {
-      padding: '4px 6px',
-      fontWeight: 500
-    }
+    className: "font-mono"
   }, item.product_id), _react.default.createElement("td", {
-    style: {
-      padding: '4px 6px',
-      maxWidth: '180px',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap'
-    }
+    className: "truncate-cell",
+    title: item.product_name
   }, item.product_name), _react.default.createElement("td", {
-    style: {
-      padding: '4px 6px',
-      textAlign: 'right'
-    }
-  }, item.stock_qty !== null && item.stock_qty !== undefined ? item.stock_qty : ''))), filteredOnHand.length === 0 && _react.default.createElement("tr", null, _react.default.createElement("td", {
+    className: "numeric"
+  }, item.stock_qty ?? ''))), filteredOnHand.length === 0 && _react.default.createElement("tr", null, _react.default.createElement("td", {
     colSpan: 3,
-    style: {
-      textAlign: 'center',
-      padding: '12px',
-      color: '#8c959f'
-    }
+    className: "empty-table"
   }, "No on-hand products found."))))))), _react.default.createElement("div", {
-    style: {
-      flex: 1,
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '10px',
-      minWidth: 0
-    }
+    className: "exceptions-stack"
+  }, _react.default.createElement("section", {
+    className: "panel exceptions-list-panel"
   }, _react.default.createElement("div", {
-    style: {
-      background: '#ffffff',
-      border: '1px solid #d0d7de',
-      borderRadius: '4px',
-      padding: '8px',
-      flex: 1,
-      display: 'flex',
-      flexDirection: 'column',
-      minHeight: 0
-    }
-  }, _react.default.createElement("div", {
-    style: {
-      fontSize: '12px',
-      fontWeight: 600,
-      marginBottom: '6px',
-      color: '#1f2328'
-    }
-  }, "Current Loaded Cell Contents ", loadedSlotName ? `(${loadedSlotName})` : ''), _react.default.createElement("div", {
-    style: {
-      flex: 1,
-      overflowY: 'auto',
-      border: '1px solid #e1e4e8',
-      borderRadius: '2px'
-    }
+    className: "panel-header"
+  }, _react.default.createElement("span", {
+    className: "panel-title"
+  }, "Loaded cell contents"), loadedSlotName && _react.default.createElement("span", {
+    className: "location-text"
+  }, loadedSlotName)), _react.default.createElement("div", {
+    className: "exceptions-table-scroll"
   }, _react.default.createElement("table", {
     className: "data-table",
+    "aria-label": "Loaded cell contents"
+  }, _react.default.createElement("colgroup", null, _react.default.createElement("col", {
     style: {
-      width: '100%',
-      borderCollapse: 'collapse',
-      fontSize: '12px'
+      width: '26%'
     }
-  }, _react.default.createElement("thead", null, _react.default.createElement("tr", {
+  }), _react.default.createElement("col", {
     style: {
-      background: '#f6f8fa',
-      borderBottom: '1px solid #d0d7de',
-      position: 'sticky',
-      top: 0
+      width: '36%'
     }
-  }, _react.default.createElement("th", {
+  }), _react.default.createElement("col", {
     style: {
-      textAlign: 'left',
-      padding: '4px 6px'
+      width: '12%'
     }
-  }, "Product ID"), _react.default.createElement("th", {
+  }), _react.default.createElement("col", {
     style: {
-      textAlign: 'left',
-      padding: '4px 6px'
+      width: '26%'
     }
-  }, "Product Name"), _react.default.createElement("th", {
-    style: {
-      textAlign: 'right',
-      padding: '4px 6px'
-    }
-  }, "Stock"), _react.default.createElement("th", {
-    style: {
-      textAlign: 'left',
-      padding: '4px 6px'
-    }
-  }, "Assigned Time"))), _react.default.createElement("tbody", null, loadedSlotItems.map((item, idx) => _react.default.createElement("tr", {
-    key: `${item.product_id}-${idx}`,
-    style: {
-      borderBottom: '1px solid #f0f2f5'
-    }
+  })), _react.default.createElement("thead", null, _react.default.createElement("tr", null, _react.default.createElement("th", null, "Product ID"), _react.default.createElement("th", null, "Product name"), _react.default.createElement("th", {
+    className: "numeric"
+  }, "Stock"), _react.default.createElement("th", null, "Assigned"))), _react.default.createElement("tbody", null, loadedSlotItems.map((item, index) => _react.default.createElement("tr", {
+    key: `${item.product_id}-${index}`
   }, _react.default.createElement("td", {
-    style: {
-      padding: '4px 6px',
-      fontWeight: 500
-    }
+    className: "font-mono"
   }, item.product_id), _react.default.createElement("td", {
-    style: {
-      padding: '4px 6px',
-      maxWidth: '160px',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap'
-    }
+    className: "truncate-cell",
+    title: item.product_name
   }, item.product_name), _react.default.createElement("td", {
-    style: {
-      padding: '4px 6px',
-      textAlign: 'right'
-    }
-  }, item.stock_qty !== null && item.stock_qty !== undefined ? item.stock_qty : ''), _react.default.createElement("td", {
-    style: {
-      padding: '4px 6px',
-      fontSize: '11px',
-      color: '#555'
-    }
+    className: "numeric"
+  }, item.stock_qty ?? ''), _react.default.createElement("td", {
+    className: "muted-cell"
   }, item.assigned_at))), loadedSlotItems.length === 0 && _react.default.createElement("tr", null, _react.default.createElement("td", {
     colSpan: 4,
-    style: {
-      textAlign: 'center',
-      padding: '16px',
-      color: '#8c959f'
-    }
-  }, loadedSlotId ? 'Cell is currently empty.' : 'Load a shelf address to inspect its contents.')))))), _react.default.createElement("div", {
-    style: {
-      background: '#ffffff',
-      border: '1px solid #d0d7de',
-      borderRadius: '4px',
-      padding: '8px',
-      flex: 1,
-      display: 'flex',
-      flexDirection: 'column',
-      minHeight: 0
-    }
+    className: "empty-table"
+  }, loadedSlotId ? 'Cell is empty.' : 'Load an address to inspect its contents.')))))), _react.default.createElement("section", {
+    className: "panel exceptions-list-panel"
   }, _react.default.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: '6px'
-    }
+    className: "panel-header"
   }, _react.default.createElement("span", {
-    style: {
-      fontSize: '12px',
-      fontWeight: 600,
-      color: '#1f2328'
-    }
-  }, "Wait to Update Back to CSV (Staged)"), _react.default.createElement("button", {
-    className: "vscode-btn vscode-btn-primary",
+    className: "panel-title"
+  }, "Pending CSV updates"), _react.default.createElement("button", {
+    type: "button",
+    className: "btn btn-primary btn-sm",
     onClick: handleAppendToCSV,
-    disabled: isBusy || pendingItems.length === 0,
-    style: {
-      fontSize: '11px',
-      padding: '2px 8px'
-    }
-  }, "Append back to CSV")), _react.default.createElement("div", {
-    style: {
-      flex: 1,
-      overflowY: 'auto',
-      border: '1px solid #e1e4e8',
-      borderRadius: '2px'
-    }
+    disabled: isBusy || pendingItems.length === 0
+  }, "Append to CSV")), _react.default.createElement("div", {
+    className: "exceptions-table-scroll"
   }, _react.default.createElement("table", {
     className: "data-table",
+    "aria-label": "Pending CSV updates"
+  }, _react.default.createElement("colgroup", null, _react.default.createElement("col", {
     style: {
-      width: '100%',
-      borderCollapse: 'collapse',
-      fontSize: '12px'
+      width: '25%'
     }
-  }, _react.default.createElement("thead", null, _react.default.createElement("tr", {
+  }), _react.default.createElement("col", {
     style: {
-      background: '#f6f8fa',
-      borderBottom: '1px solid #d0d7de',
-      position: 'sticky',
-      top: 0
+      width: '33%'
     }
-  }, _react.default.createElement("th", {
+  }), _react.default.createElement("col", {
     style: {
-      textAlign: 'left',
-      padding: '4px 6px'
+      width: '20%'
     }
-  }, "Product ID"), _react.default.createElement("th", {
+  }), _react.default.createElement("col", {
     style: {
-      textAlign: 'left',
-      padding: '4px 6px'
+      width: '22%'
     }
-  }, "Product Name"), _react.default.createElement("th", {
-    style: {
-      textAlign: 'left',
-      padding: '4px 6px'
-    }
-  }, "Target Cell"), _react.default.createElement("th", {
-    style: {
-      textAlign: 'left',
-      padding: '4px 6px'
-    }
-  }, "Staged At"))), _react.default.createElement("tbody", null, pendingItems.map(item => _react.default.createElement("tr", {
-    key: item.id,
-    style: {
-      borderBottom: '1px solid #f0f2f5'
-    }
+  })), _react.default.createElement("thead", null, _react.default.createElement("tr", null, _react.default.createElement("th", null, "Product ID"), _react.default.createElement("th", null, "Product name"), _react.default.createElement("th", null, "Target cell"), _react.default.createElement("th", null, "Staged at"))), _react.default.createElement("tbody", null, pendingItems.map(item => _react.default.createElement("tr", {
+    key: item.id
   }, _react.default.createElement("td", {
-    style: {
-      padding: '4px 6px',
-      fontWeight: 500
-    }
+    className: "font-mono"
   }, item.product_id), _react.default.createElement("td", {
-    style: {
-      padding: '4px 6px',
-      color: '#656d76'
-    }
+    className: "truncate-cell",
+    title: item.product_name
   }, item.product_name), _react.default.createElement("td", {
-    style: {
-      padding: '4px 6px',
-      fontWeight: 600,
-      color: '#0969da'
-    }
+    className: "font-mono"
   }, item.slot_name), _react.default.createElement("td", {
-    style: {
-      padding: '4px 6px',
-      fontSize: '11px',
-      color: '#555'
-    }
+    className: "muted-cell"
   }, item.created_at.replace('T', ' ')))), pendingItems.length === 0 && _react.default.createElement("tr", null, _react.default.createElement("td", {
     colSpan: 4,
-    style: {
-      textAlign: 'center',
-      padding: '16px',
-      color: '#8c959f'
-    }
-  }, "No pending exceptions staged."))))), _react.default.createElement("div", {
-    style: {
-      fontSize: '11px',
-      color: '#656d76',
-      marginTop: '6px'
-    }
-  }, "Newly added exception products wait here safely. Appending will write them with name \"Exc - added later\" to your chosen CSV file.")))));
+    className: "empty-table"
+  }, "No exceptions staged."))))), _react.default.createElement("div", {
+    className: "panel-note"
+  }, "New products remain staged until you append them to a CSV file.")))));
 });
 },
 "controllers/useExceptionsController.ts": function(module, exports, require) {
@@ -4533,7 +4057,7 @@ function useExceptionsController(active) {
 }
 }
 };
-const dependencies = {"main.tsx":{"./App":"App.tsx","./styles/app.css":null},"App.tsx":{"./types":"types/index.ts","./services/backendStatus":"services/backendStatus.ts","./components/WorkbenchChrome":"components/WorkbenchChrome.tsx","./views/ShelfDesignerView":"views/ShelfDesignerView.tsx","./views/LocationAssignmentView":"views/LocationAssignmentView.tsx","./views/PrimalQueueView":"views/PrimalQueueView.tsx","./views/ShelfBrowserView":"views/ShelfBrowserView.tsx","./views/CellTransferView":"views/CellTransferView.tsx","./views/ExceptionsView":"views/ExceptionsView.tsx"},"types/index.ts":{},"services/backendStatus.ts":{},"components/WorkbenchChrome.tsx":{"../types":"types/index.ts","../services/backendStatus":"services/backendStatus.ts"},"views/ShelfDesignerView.tsx":{"../components/ShelfCanvas":"components/ShelfCanvas.tsx","../components/ColumnMappingDialog":"components/ColumnMappingDialog.tsx","../utils/coordinates":"utils/coordinates.ts","../controllers/useShelfDesignerController":"controllers/useShelfDesignerController.ts"},"components/ShelfCanvas.tsx":{"../types":"types/index.ts","../utils/coordinates":"utils/coordinates.ts"},"utils/coordinates.ts":{"../types":"types/index.ts"},"components/ColumnMappingDialog.tsx":{"../types":"types/index.ts"},"controllers/useShelfDesignerController.ts":{"../types":"types/index.ts","../services/api":"services/api.ts","../utils/coordinates":"utils/coordinates.ts","../utils/csv":"utils/csv.ts"},"services/api.ts":{"../types":"types/index.ts","./backendStatus":"services/backendStatus.ts"},"utils/csv.ts":{"../types":"types/index.ts"},"views/LocationAssignmentView.tsx":{"../controllers/useLocationAssignmentController":"controllers/useLocationAssignmentController.ts"},"controllers/useLocationAssignmentController.ts":{"../types":"types/index.ts","../services/api":"services/api.ts","../utils/coordinates":"utils/coordinates.ts"},"views/PrimalQueueView.tsx":{"../components/ShelfCanvas":"components/ShelfCanvas.tsx","../utils/coordinates":"utils/coordinates.ts","../controllers/usePrimalQueueController":"controllers/usePrimalQueueController.ts"},"controllers/usePrimalQueueController.ts":{"../types":"types/index.ts","../services/api":"services/api.ts","../utils/coordinates":"utils/coordinates.ts"},"views/ShelfBrowserView.tsx":{"../components/ShelfCanvas":"components/ShelfCanvas.tsx","../utils/coordinates":"utils/coordinates.ts","../controllers/useShelfBrowserController":"controllers/useShelfBrowserController.ts"},"controllers/useShelfBrowserController.ts":{"../types":"types/index.ts","../services/api":"services/api.ts","../utils/coordinates":"utils/coordinates.ts"},"views/CellTransferView.tsx":{"../controllers/useCellTransferPaneSelection":"controllers/useCellTransferPaneSelection.ts","../types":"types/index.ts","../utils/coordinates":"utils/coordinates.ts","../controllers/useCellTransferController":"controllers/useCellTransferController.ts"},"controllers/useCellTransferPaneSelection.ts":{"../types":"types/index.ts"},"controllers/useCellTransferController.ts":{"../types":"types/index.ts","../services/api":"services/api.ts","../utils/coordinates":"utils/coordinates.ts"},"views/ExceptionsView.tsx":{"../controllers/useExceptionsController":"controllers/useExceptionsController.ts"},"controllers/useExceptionsController.ts":{"../services/api":"services/api.ts","../types":"types/index.ts"}};
+const dependencies = {"main.tsx":{"./App":"App.tsx","./styles/app.css":null,"./styles/theme.css":null},"App.tsx":{"./types":"types/index.ts","./services/backendStatus":"services/backendStatus.ts","./components/WorkbenchChrome":"components/WorkbenchChrome.tsx","./views/ShelfDesignerView":"views/ShelfDesignerView.tsx","./views/LocationAssignmentView":"views/LocationAssignmentView.tsx","./views/PrimalQueueView":"views/PrimalQueueView.tsx","./views/ShelfBrowserView":"views/ShelfBrowserView.tsx","./views/CellTransferView":"views/CellTransferView.tsx","./views/ExceptionsView":"views/ExceptionsView.tsx"},"types/index.ts":{},"services/backendStatus.ts":{},"components/WorkbenchChrome.tsx":{"../types":"types/index.ts","../services/backendStatus":"services/backendStatus.ts"},"views/ShelfDesignerView.tsx":{"../components/ShelfCanvas":"components/ShelfCanvas.tsx","../components/ColumnMappingDialog":"components/ColumnMappingDialog.tsx","../utils/coordinates":"utils/coordinates.ts","../controllers/useShelfDesignerController":"controllers/useShelfDesignerController.ts"},"components/ShelfCanvas.tsx":{"../types":"types/index.ts","../utils/coordinates":"utils/coordinates.ts"},"utils/coordinates.ts":{"../types":"types/index.ts"},"components/ColumnMappingDialog.tsx":{"../types":"types/index.ts"},"controllers/useShelfDesignerController.ts":{"../types":"types/index.ts","../services/api":"services/api.ts","../utils/coordinates":"utils/coordinates.ts","../utils/csv":"utils/csv.ts"},"services/api.ts":{"../types":"types/index.ts","./backendStatus":"services/backendStatus.ts"},"utils/csv.ts":{"../types":"types/index.ts"},"views/LocationAssignmentView.tsx":{"../controllers/useLocationAssignmentController":"controllers/useLocationAssignmentController.ts"},"controllers/useLocationAssignmentController.ts":{"../types":"types/index.ts","../services/api":"services/api.ts","../utils/coordinates":"utils/coordinates.ts"},"views/PrimalQueueView.tsx":{"../components/ShelfCanvas":"components/ShelfCanvas.tsx","../utils/coordinates":"utils/coordinates.ts","../controllers/usePrimalQueueController":"controllers/usePrimalQueueController.ts"},"controllers/usePrimalQueueController.ts":{"../types":"types/index.ts","../services/api":"services/api.ts","../utils/coordinates":"utils/coordinates.ts"},"views/ShelfBrowserView.tsx":{"../components/ShelfCanvas":"components/ShelfCanvas.tsx","../utils/coordinates":"utils/coordinates.ts","../controllers/useShelfBrowserController":"controllers/useShelfBrowserController.ts"},"controllers/useShelfBrowserController.ts":{"../types":"types/index.ts","../services/api":"services/api.ts","../utils/coordinates":"utils/coordinates.ts"},"views/CellTransferView.tsx":{"../controllers/useCellTransferPaneSelection":"controllers/useCellTransferPaneSelection.ts","../types":"types/index.ts","../utils/coordinates":"utils/coordinates.ts","../controllers/useCellTransferController":"controllers/useCellTransferController.ts"},"controllers/useCellTransferPaneSelection.ts":{"../types":"types/index.ts"},"controllers/useCellTransferController.ts":{"../types":"types/index.ts","../services/api":"services/api.ts","../utils/coordinates":"utils/coordinates.ts"},"views/ExceptionsView.tsx":{"../controllers/useExceptionsController":"controllers/useExceptionsController.ts"},"controllers/useExceptionsController.ts":{"../services/api":"services/api.ts","../types":"types/index.ts"}};
 const cache = Object.create(null);
 function load(id) {
   if (cache[id]) return cache[id].exports;
