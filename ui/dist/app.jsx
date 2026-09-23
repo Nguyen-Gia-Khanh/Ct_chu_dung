@@ -50,11 +50,18 @@ function parseSlotName(locId) {
 
 function formatProductId(value) {
   if (!value) return '';
-  const compact = value.trim().replace(/-/g, '');
-  if (compact.length === 11 && /^[a-zA-Z0-9]+$/.test(compact)) {
+  const trimmed = value.trim();
+  const compact = trimmed.replace(/-/g, '');
+  if (compact.length > 8 && /^[a-zA-Z0-9]+$/.test(compact)) {
+    if (trimmed.includes('-')) {
+      const parts = trimmed.split('-');
+      if (parts[0].length !== 5 || (parts.length > 1 && parts[1].length !== 3)) {
+        return trimmed;
+      }
+    }
     return `${compact.slice(0, 5)}-${compact.slice(5, 8)}-${compact.slice(8)}`;
   }
-  return value.trim();
+  return trimmed;
 }
 
 // --- API CLIENT ---
