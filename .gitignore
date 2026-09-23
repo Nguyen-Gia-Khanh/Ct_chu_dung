@@ -15,3 +15,7 @@ __pycache__/
 .vscode/
 *.xlsx
 ~$*
+
+# Local tests and generated comparison results
+testers/
+xl/app_result/
