@@ -28,20 +28,19 @@ class TestWarehouseLabelPdf(unittest.TestCase):
         slots_full_15 = _compute_layout_slots(a4_w, a4_h, "full", 15, "landscape", mm)
         self.assertEqual(len(slots_full_15), 1)
 
-        # Product only mode
-        slots_prod_ls = _compute_layout_slots(a4_w, a4_h, "product_only", 7, "landscape", mm)
-        self.assertEqual(len(slots_prod_ls), 4)
-        # Verify 3 unrotated and 1 rotated 90 degrees
-        unrotated_prod = [s for s in slots_prod_ls if not s.rotated]
-        rotated_prod = [s for s in slots_prod_ls if s.rotated]
-        self.assertEqual(len(unrotated_prod), 3)
-        self.assertEqual(len(rotated_prod), 1)
-
+        # Product only mode (6 per page)
         slots_prod_pt = _compute_layout_slots(a4_h, a4_w, "product_only", 7, "portrait", mm)
-        self.assertEqual(len(slots_prod_pt), 4)
+        self.assertEqual(len(slots_prod_pt), 6)
+        unrotated_prod_pt = [s for s in slots_prod_pt if not s.rotated]
+        rotated_prod_pt = [s for s in slots_prod_pt if s.rotated]
+        self.assertEqual(len(unrotated_prod_pt), 4)
+        self.assertEqual(len(rotated_prod_pt), 2)
+
+        slots_prod_ls = _compute_layout_slots(a4_w, a4_h, "product_only", 7, "landscape", mm)
+        self.assertEqual(len(slots_prod_ls), 6)
 
         slots_prod_15 = _compute_layout_slots(a4_w, a4_h, "product_only", 15, "landscape", mm)
-        self.assertEqual(len(slots_prod_15), 1)
+        self.assertEqual(len(slots_prod_15), 2)
 
         # Location only mode
         slots_loc_ls = _compute_layout_slots(a4_w, a4_h, "location_only", 7, "landscape", mm)
@@ -95,7 +94,7 @@ class TestWarehouseLabelPdf(unittest.TestCase):
                 if mode == "full":
                     self.assertEqual(res.pages, 4)
                 elif mode == "product_only":
-                    self.assertEqual(res.pages, 3)
+                    self.assertEqual(res.pages, 2)
                 elif mode == "location_only":
                     self.assertEqual(res.pages, 2)
                 out.unlink()

@@ -120,32 +120,48 @@ def _compute_layout_slots(
         return slots
 
     elif print_mode == "product_only":
-        item_w = primal_product_w  # 207 mm
-        item_h = label_h           # 70 mm or 150 mm
+        portrait_w = min(page_w, page_h)
+        item_w = (portrait_w - 2 * margin) - left_w  # 120 * mm_unit
+        item_h = label_h                              # 70 * mm_unit or 150 * mm_unit
         slots = []
-        if not is_portrait and label_height_cm == 7:
-            # Landscape 7cm: 3 unrotated stacked vertically + 1 rotated in the leftover 80mm column
-            for row in range(3):
-                y = (2 - row) * 70 * mm_unit
-                slots.append(LabelSlot(x=5 * mm_unit, y=y, w=item_w, h=item_h, rotated=False))
-            # 4th item rotated 90 deg: width on page is 70mm (222mm to 292mm), height is 207mm (1.5mm to 208.5mm)
-            slots.append(LabelSlot(x=222 * mm_unit, y=1.5 * mm_unit, w=item_w, h=item_h, rotated=True))
-        elif is_portrait and label_height_cm == 7:
-            # Portrait 7cm: 4 unrotated stacked vertically
-            left_margin = (page_w - item_w) / 2
-            top_margin = (page_h - 4 * 70 * mm_unit) / 2
+        if is_portrait and label_height_cm == 7:
+            # Portrait 7cm:
+            # 4 upright items in the product column (x = 85mm .. 205mm)
+            # + 2 items rotated 90 deg in the 80mm column where location ID used to be (x = 10mm .. 80mm)
+            top_margin = (page_h - 4 * item_h) / 2  # 8.5mm
             for row in range(4):
-                y = page_h - top_margin - (row + 1) * 70 * mm_unit
-                slots.append(LabelSlot(x=left_margin, y=y, w=item_w, h=item_h, rotated=False))
-        else:
-            # 15cm height: 1 item centered
+                y = page_h - top_margin - (row + 1) * item_h
+                slots.append(LabelSlot(x=margin + left_w, y=y, w=item_w, h=item_h, rotated=False))
+            # 2 rotated items in the 80mm left column:
+            rot_x = margin + (left_w - item_h) / 2
+            y_top_rot = (page_h - top_margin - 2 * item_h) + (2 * item_h - item_w) / 2
+            y_bot_rot = top_margin + (2 * item_h - item_w) / 2
+            slots.append(LabelSlot(x=rot_x, y=y_top_rot, w=item_w, h=item_h, rotated=True))
+            slots.append(LabelSlot(x=rot_x, y=y_bot_rot, w=item_w, h=item_h, rotated=True))
+        elif not is_portrait and label_height_cm == 7:
+            # Landscape 7cm: 2 columns of 3 upright items = 6 slots
+            left_margin = (page_w - 2 * item_w) / 3
+            for r in range(3):
+                y = (2 - r) * 70 * mm_unit
+                for c in range(2):
+                    x = left_margin + c * (item_w + left_margin)
+                    slots.append(LabelSlot(x=x, y=y, w=item_w, h=item_h, rotated=False))
+        elif is_portrait and label_height_cm == 15:
+            # Portrait 15cm: 1 item centered in product column
             slots.append(LabelSlot(
-                x=(page_w - item_w) / 2,
+                x=margin + left_w,
                 y=(page_h - item_h) / 2,
                 w=item_w,
                 h=item_h,
                 rotated=False,
             ))
+        else:
+            # Landscape 15cm: 2 items side-by-side
+            left_margin = (page_w - 2 * item_w) / 3
+            y = (page_h - item_h) / 2
+            for c in range(2):
+                x = left_margin + c * (item_w + left_margin)
+                slots.append(LabelSlot(x=x, y=y, w=item_w, h=item_h, rotated=False))
         return slots
 
     elif print_mode == "location_only":
