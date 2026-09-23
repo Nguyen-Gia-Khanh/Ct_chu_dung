@@ -9,7 +9,12 @@ from tkinter import filedialog, messagebox, ttk
 
 from mapper.common import clean_location_segment, make_slot_name
 from mapper.database import SlotAddress, WarehouseDatabase
-from utils.barcode_scanner import BarcodeScanner, format_product_id
+from utils.barcode_scanner import (
+    BarcodeScanner,
+    bind_auto_highlight,
+    format_product_id,
+    select_all_entry_text,
+)
 
 
 class ExceptionsView(ttk.Frame):
@@ -22,11 +27,13 @@ class ExceptionsView(ttk.Frame):
         *,
         status_text: tk.StringVar | None = None,
         on_refresh_callback=None,
+        barcode_scanner: BarcodeScanner | None = None,
     ) -> None:
         super().__init__(parent, padding=10)
         self.database = database
         self.status_text = status_text
         self.on_refresh_callback = on_refresh_callback
+        self.barcode_scanner = barcode_scanner
 
         self.selected_address: SlotAddress | None = None
 
@@ -47,7 +54,6 @@ class ExceptionsView(ttk.Frame):
         )
 
         self._build_ui()
-        self.barcode_scanner = BarcodeScanner(self, self._on_barcode_scan)
 
     def _build_ui(self) -> None:
         # Header bar
@@ -107,7 +113,8 @@ class ExceptionsView(ttk.Frame):
         ttk.Label(id_frame, text="Product ID / Barcode:").pack(side="left", padx=(0, 6))
         self.product_id_entry = ttk.Entry(id_frame, textvariable=self.product_id_var, width=28)
         self.product_id_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
-        self.product_id_entry.bind("<Return>", lambda e: self.assign_exception())
+        self.product_id_entry.bind("<Return>", self._on_product_id_return)
+        bind_auto_highlight(self.product_id_entry)
 
         # Address selector
         addr_frame = ttk.Frame(assign_box)
@@ -244,9 +251,29 @@ class ExceptionsView(ttk.Frame):
             foreground="#666666",
         ).pack(anchor="w", pady=(4, 0))
 
+    def _select_entry(self) -> None:
+        select_all_entry_text(self.product_id_entry)
+
+    def focus_search(self) -> None:
+        self._select_entry()
+
+    def _on_product_id_return(self, _event: tk.Event | None = None) -> str:
+        if self.barcode_scanner is not None and self.barcode_scanner.is_scanner():
+            code = self.barcode_scanner.pop_scanner_code()
+            value = format_product_id(code) if code else ""
+        else:
+            value = format_product_id(self.product_id_var.get())
+        self.product_id_var.set(value)
+        self.after_idle(self._select_entry)
+        self.assign_exception()
+        return "break"
+
     def _on_barcode_scan(self, scanned_code: str) -> None:
         self.product_id_var.set(format_product_id(scanned_code))
-        self.product_id_entry.focus_set()
+        self.after_idle(self._select_entry)
+
+    def on_barcode_scan(self, scanned_code: str) -> None:
+        self._on_barcode_scan(scanned_code)
 
     def _on_hand_select(self, _event=None) -> None:
         selection = self.on_hand_tree.selection()

@@ -38,10 +38,12 @@ from mapper.database import (
 from .designer import ShelfDesigner
 from .exceptions_view import ExceptionsView
 from .location_assignment_view import LocationAssignmentView
+from .location_comparison_view import LocationComparisonView
 from .lookup_view import ProductLookupView
 from .primal_queue_view import PrimalQueueView
 from .shelf_browser import ShelfBrowserView
 from mapper.web_upload import LocationUpdate, UploadProduct, WebsiteUploader
+from utils.barcode_scanner import BarcodeScanner
 
 
 class WarehouseMapperApp:
@@ -165,6 +167,8 @@ class WarehouseMapperApp:
             command=self.commit_changes,
         ).pack(side="right")
 
+        self.barcode_scanner = BarcodeScanner(self.root, self.on_global_barcode_scan)
+
         self.designer = ShelfDesigner(
             self.designer_tab,
             self.build_shelf_preview,
@@ -188,11 +192,14 @@ class WarehouseMapperApp:
             on_upload=self.upload_selected_product,
             on_modify_location=self.modify_selected_location,
             on_connect_chrome=self.connect_chrome,
+            barcode_scanner=self.barcode_scanner,
         )
         self.connect_chrome_button = self.assignments.connect_chrome_button
         self.notebook.add(self.designer_tab, text="1. Shelf Designer")
         self.notebook.add(self.assignments, text="2. Assign Locations")
-        self.primal_view = PrimalQueueView(self.notebook, self.database)
+        self.primal_view = PrimalQueueView(
+            self.notebook, self.database, barcode_scanner=self.barcode_scanner
+        )
         self.lookup = self.primal_view
         self.notebook.add(self.primal_view, text="3. Primal Queue / Shelves")
         self.shelf_browser = ShelfBrowserView(self.notebook, self.database)
@@ -203,6 +210,7 @@ class WarehouseMapperApp:
             self.on_cell_transfer_changed,
             self.can_change_cells,
             on_modify_web=self.modify_cell_transfer_locations,
+            barcode_scanner=self.barcode_scanner,
         )
         self.notebook.add(self.cell_transfer, text="5. Switch / Combine Cells")
 
@@ -211,8 +219,14 @@ class WarehouseMapperApp:
             self.database,
             status_text=getattr(self, "status_text", None),
             on_refresh_callback=self.refresh_all_views,
+            barcode_scanner=self.barcode_scanner,
         )
         self.notebook.add(self.exceptions_view, text="6. Special Exceptions")
+
+        self.location_comparison = LocationComparisonView(
+            self.notebook, self.database, self.resync_web_locations
+        )
+        self.notebook.add(self.location_comparison, text="7. Web Location Sync")
 
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
@@ -226,18 +240,43 @@ class WarehouseMapperApp:
             padding=(8, 3),
         ).pack(fill="x", side="bottom")
 
+    def on_global_barcode_scan(self, barcode: str) -> None:
+        """Route scanned barcode to the currently active tab."""
+        current_tab = self.notebook.select()
+        if not current_tab:
+            return
+        try:
+            current_widget = self.notebook.nametowidget(current_tab)
+        except Exception:
+            return
+
+        if hasattr(current_widget, "on_barcode_scan"):
+            current_widget.on_barcode_scan(barcode)
+        elif hasattr(current_widget, "_on_barcode_scan"):
+            current_widget._on_barcode_scan(barcode)
+        else:
+            self.assignments.on_barcode_scan(barcode)
+
     def on_tab_changed(self, _event=None) -> None:
-        if hasattr(self, "primal_view") and self.notebook.select() == str(self.primal_view):
+        current_tab = self.notebook.select()
+        if current_tab == str(self.assignments):
+            self.assignments.focus_search()
+        elif hasattr(self, "primal_view") and current_tab == str(self.primal_view):
             self.primal_view.refresh()
-        elif self.notebook.select() == str(self.shelf_browser):
+            self.primal_view.focus_search()
+        elif current_tab == str(self.shelf_browser):
             if self.shelf_browser.current_shelf_id is None:
                 self.shelf_browser.refresh()
             else:
                 self.shelf_browser.show_saved_shelf(self.shelf_browser.current_shelf_id)
-        elif self.notebook.select() == str(self.cell_transfer):
+        elif current_tab == str(self.cell_transfer):
             self.cell_transfer.refresh()
-        elif hasattr(self, "exceptions_view") and self.notebook.select() == str(self.exceptions_view):
+            self.cell_transfer.focus_search()
+        elif hasattr(self, "exceptions_view") and current_tab == str(self.exceptions_view):
             self.exceptions_view.refresh()
+            self.exceptions_view.focus_search()
+        elif hasattr(self, "location_comparison") and current_tab == str(self.location_comparison):
+            self.location_comparison.refresh()
 
     def on_cell_transfer_changed(self, message: str) -> None:
         """Synchronize every other tab after an immediate cell operation."""
@@ -1488,25 +1527,40 @@ class WarehouseMapperApp:
             return
         self._start_web_update(updates, location_only=True)
 
+    def resync_web_locations(self, updates: list[LocationUpdate]) -> None:
+        """Upload only mismatches from the imported KiotViet snapshot."""
+        if not self._can_start_web_update():
+            return
+        if not updates:
+            return
+        self._start_web_update(
+            updates, location_only=True, force_save_each_product=True, source="comparison"
+        )
+
     def _start_web_update(
         self,
         products: list[UploadProduct] | list[LocationUpdate],
         *,
         location_only: bool,
+        force_save_each_product: bool = False,
+        source: str = "other",
     ) -> None:
         # The complete product list was captured before starting this worker.
         # Later row selections and address changes cannot alter the running task.
         products = list(products)
         if not products:
             return
-        save_each_product = self._web_batch_mode_enabled()
+        save_each_product = force_save_each_product or self._web_batch_mode_enabled()
         self.web_upload_busy = True
         self.web_upload_action = "location" if location_only else "upload"
+        self.web_upload_source = source
         self.assignments.upload_button.configure(state="disabled")
         self.assignments.modify_location_button.configure(state="disabled")
         self.assignments.web_batch_mode_check.configure(state="disabled")
         if hasattr(self, "cell_transfer") and hasattr(self.cell_transfer, "modify_location_button"):
             self.cell_transfer.modify_location_button.configure(state="disabled")
+        if hasattr(self, "location_comparison"):
+            self.location_comparison.set_busy(True)
         if len(products) == 1:
             product = products[0]
             action = "Updating location" if location_only else "Uploading"
@@ -1517,6 +1571,8 @@ class WarehouseMapperApp:
                 f"{action} {len(products)} products → {products[0].location_id}…"
             )
         self.assignments.upload_status_text.set(status)
+        if hasattr(self, "location_comparison") and source == "comparison":
+            self.location_comparison.set_progress(status)
         if hasattr(self, "cell_transfer") and hasattr(self.cell_transfer, "status_text"):
             self.cell_transfer.status_text.set(status)
         self.status_text.set(
@@ -1570,6 +1626,7 @@ class WarehouseMapperApp:
                         save=True if save_each_product else None,
                     )
                 completed = index
+                events.put(("item_done", product.product_id))
                 if total > 1:
                     events.put(
                         (
@@ -1592,10 +1649,10 @@ class WarehouseMapperApp:
             if total == 1:
                 summary = result
             elif location_only:
-                summary = (
-                    f"Updated web locations for {total} products at "
-                    f"{products[0].location_id}."
-                )
+                if len({item.location_id for item in products}) == 1:
+                    summary = f"Updated web locations for {total} products at {products[0].location_id}."
+                else:
+                    summary = f"Updated web locations for {total} products."
             else:
                 summary = (
                     f"Uploaded stock and web locations for {total} products at "
@@ -1611,8 +1668,16 @@ class WarehouseMapperApp:
             except Empty:
                 break
             event, text, *metadata = event_data
+            if event == "item_done":
+                if (getattr(self, "web_upload_source", "other") == "comparison"
+                        and hasattr(self, "location_comparison")):
+                    self.location_comparison.mark_resynced(text)
+                continue
             if event == "progress":
                 self.assignments.upload_status_text.set(text)
+                if (getattr(self, "web_upload_source", "other") == "comparison"
+                        and hasattr(self, "location_comparison")):
+                    self.location_comparison.set_progress(text)
                 if hasattr(self, "cell_transfer") and hasattr(self.cell_transfer, "status_text"):
                     self.cell_transfer.status_text.set(text)
                 continue
@@ -1622,12 +1687,17 @@ class WarehouseMapperApp:
             self.assignments.web_batch_mode_check.configure(state="normal")
             if hasattr(self, "cell_transfer") and hasattr(self.cell_transfer, "modify_location_button"):
                 self.cell_transfer.modify_location_button.configure(state="normal")
+            if hasattr(self, "location_comparison"):
+                self.location_comparison.set_busy(False)
             action_title = (
                 "Modify location"
                 if self.web_upload_action == "location"
                 else "Upload to web"
             )
             if event == "error":
+                if (getattr(self, "web_upload_source", "other") == "comparison"
+                        and hasattr(self, "location_comparison")):
+                    self.location_comparison.set_progress("Web resync stopped. See the error message.")
                 if metadata and not metadata[0]:
                     self.chrome_connected = False
                     self.connect_chrome_button.configure(text="Connect Chrome")
@@ -1642,6 +1712,9 @@ class WarehouseMapperApp:
                 messagebox.showerror(action_title, text, parent=self.root)
             else:
                 self.assignments.upload_status_text.set(text)
+                if (getattr(self, "web_upload_source", "other") == "comparison"
+                        and hasattr(self, "location_comparison")):
+                    self.location_comparison.set_progress(text)
                 if hasattr(self, "cell_transfer") and hasattr(self.cell_transfer, "status_text"):
                     self.cell_transfer.status_text.set(text)
                 self.status_text.set(text)

@@ -227,7 +227,7 @@ class AssignmentView(ttk.Frame):
             )
             self.search_location_label.grid(row=2, column=0, sticky="w", pady=(0, 6))
 
-        self.barcode_scanner = BarcodeScanner(self, self.on_barcode_scan)
+        self.barcode_scanner = BarcodeScanner(self, self.on_barcode_scan) if not read_only else None
 
         queue_body = ttk.Frame(queue_section)
         queue_body.grid(row=queue_body_row, column=0, sticky="nsew")

@@ -11,7 +11,12 @@ from mapper.common import clean_location_segment, make_slot_name, normalize_sear
 from mapper.database import Placement, SlotAddress, WarehouseDatabase
 from mapper.web_upload import LocationUpdate
 from .widgets import ScrollableFrame
-from utils.barcode_scanner import BarcodeScanner, format_product_id
+from utils.barcode_scanner import (
+    BarcodeScanner,
+    bind_auto_highlight,
+    format_product_id,
+    select_all_entry_text,
+)
 
 
 class CellTransferPane(ttk.LabelFrame):
@@ -22,9 +27,11 @@ class CellTransferPane(ttk.LabelFrame):
         parent: tk.Misc,
         title: str,
         database: WarehouseDatabase,
+        barcode_scanner: BarcodeScanner | None = None,
     ) -> None:
         super().__init__(parent, text=title, padding=8)
         self.database = database
+        self.barcode_scanner = barcode_scanner
         self.shelves: list[tuple[int, str, str, str]] = []
         self.current_shelf_id: int | None = None
         self.current_layout: list[int] = []
@@ -255,7 +262,12 @@ class CellTransferPane(ttk.LabelFrame):
             self.find()
 
     def find(self, _event: tk.Event | None = None) -> str:
-        raw_query = self.search_var.get().strip()
+        if self.barcode_scanner is not None and self.barcode_scanner.is_scanner():
+            code = self.barcode_scanner.pop_scanner_code()
+            raw_query = code.strip() if code else ""
+        else:
+            raw_query = self.search_var.get().strip()
+
         if not raw_query:
             return "break"
 
@@ -594,6 +606,7 @@ class CellTransferView(ttk.Frame):
         on_changed: Callable[[str], object],
         can_change: Callable[[], bool],
         on_modify_web: Callable[[list[LocationUpdate]], object] | None = None,
+        barcode_scanner: BarcodeScanner | None = None,
     ) -> None:
         super().__init__(parent, padding=10)
         self.database = database
@@ -619,7 +632,9 @@ class CellTransferView(ttk.Frame):
         workspace.columnconfigure(0, weight=1, uniform="transfer-side")
         workspace.columnconfigure(2, weight=1, uniform="transfer-side")
 
-        self.left = CellTransferPane(workspace, "Left cell", database)
+        self.left = CellTransferPane(
+            workspace, "Left cell", database, barcode_scanner=barcode_scanner
+        )
         self.left.grid(row=0, column=0, sticky="nsew")
 
         actions = ttk.LabelFrame(workspace, text="Cell actions", padding=10)
@@ -663,13 +678,15 @@ class CellTransferView(ttk.Frame):
             justify="left",
         ).pack(anchor="w", pady=(14, 0))
 
-        self.right = CellTransferPane(workspace, "Right cell", database)
+        self.right = CellTransferPane(
+            workspace, "Right cell", database, barcode_scanner=barcode_scanner
+        )
         self.right.grid(row=0, column=2, sticky="nsew")
 
         self.last_active_pane: CellTransferPane = self.left
         self.left.on_focus_callback = self._set_active_pane
         self.right.on_focus_callback = self._set_active_pane
-        self.barcode_scanner = BarcodeScanner(self, self.on_barcode_scan)
+        self.barcode_scanner = barcode_scanner
         self.refresh()
 
     def _set_active_pane(self, pane: CellTransferPane) -> None:
@@ -679,6 +696,10 @@ class CellTransferView(ttk.Frame):
         target = self.last_active_pane if self.last_active_pane is not None else self.left
         target._set_and_select_search(format_product_id(barcode))
         target.find()
+
+    def focus_search(self) -> None:
+        target = self.last_active_pane if self.last_active_pane is not None else self.left
+        target._select_search_entry(target.search_entry)
 
     def refresh(self) -> None:
         self.left.refresh()

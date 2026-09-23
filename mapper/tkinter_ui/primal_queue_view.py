@@ -9,13 +9,23 @@ from tkinter import messagebox, ttk
 from mapper.common import MAX_VISIBLE_PRODUCTS, clean_location_segment, make_slot_name, normalize_search
 from mapper.database import Placement, WarehouseDatabase
 from .widgets import ScrollableFrame
-from utils.barcode_scanner import BarcodeScanner, format_product_id
+from utils.barcode_scanner import (
+    BarcodeScanner,
+    bind_auto_highlight,
+    format_product_id,
+    select_all_entry_text,
+)
 
 
 class PrimalQueueView(ttk.Frame):
     """Tab 3: Search primal queue (CSV hot sellers) & full catalog with 2D shelf view."""
 
-    def __init__(self, parent: tk.Misc, database: WarehouseDatabase) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        database: WarehouseDatabase,
+        barcode_scanner: BarcodeScanner | None = None,
+    ) -> None:
         super().__init__(parent, padding=10)
         self.database = database
 
@@ -61,7 +71,7 @@ class PrimalQueueView(ttk.Frame):
         self._build_left_pane(left_pane)
         self._build_right_pane(right_pane)
 
-        self.barcode_scanner = BarcodeScanner(self, self.on_barcode_scan)
+        self.barcode_scanner = barcode_scanner
 
     def _build_left_pane(self, parent: ttk.LabelFrame) -> None:
         parent.columnconfigure(0, weight=1)
@@ -75,6 +85,7 @@ class PrimalQueueView(ttk.Frame):
         self.search_entry = ttk.Entry(parent, textvariable=self.search_var)
         self.search_entry.grid(row=1, column=0, sticky="ew", pady=(3, 4))
         self.search_entry.bind("<Return>", self.format_primary_search)
+        bind_auto_highlight(self.search_entry)
         self.search_var.trace_add("write", self._schedule_search)
 
         self.search_status_text = tk.StringVar(
@@ -736,10 +747,16 @@ class PrimalQueueView(ttk.Frame):
             )
 
     def on_barcode_scan(self, barcode: str) -> None:
-        self._fill_search_bar(barcode)
+        self._fill_search_bar(format_product_id(barcode))
 
     def format_primary_search(self, _event: tk.Event | None = None) -> str:
-        formatted = format_product_id(self.search_var.get())
-        if formatted != self.search_var.get():
-            self._fill_search_bar(formatted)
+        if self.barcode_scanner is not None and self.barcode_scanner.is_scanner():
+            code = self.barcode_scanner.pop_scanner_code()
+            formatted = format_product_id(code) if code else ""
+        else:
+            formatted = format_product_id(self.search_var.get())
+        self._fill_search_bar(formatted)
         return "break"
+
+    def focus_search(self) -> None:
+        self._select_entry()

@@ -4,7 +4,7 @@ A local Windows/Tkinter application for mapping products to irregular warehouse
 shelves. SQLite lives beside the Python entry point, so no Docker or database
 server is required.
 
-## Five focused tabs
+## Seven tabs
 
 1. **Shelf Designer** — import CSV files, create or edit a shelf, and commit its
    structure. Rows count upward from the ground and may contain different cell
@@ -19,6 +19,9 @@ server is required.
 5. **Switch / Combine Cells** — load two shelves independently, select one cell
    on each side, then atomically switch their contents or combine one complete
    cell into the other.
+6. **Special Exceptions** — assign products that need multiple shelf locations.
+7. **Web Location Sync** — import a KiotViet Excel export, inspect location
+   differences, resync mismatched products, and export a comparison workbook.
 
 The total queue, on-hand queue, and assigned shelf locations are separate
 states. A working product is in exactly one of them at a time.
@@ -32,8 +35,8 @@ From the activated virtual environment in the project folder:
 python warehouse_mapper.py
 ```
 
-Selenium is only needed for the optional Chrome/KiotViet integration. The local
-warehouse mapper itself uses Python's standard library.
+Selenium is only needed for the optional Chrome/KiotViet integration. Tab 7
+uses `openpyxl` to read and write `.xlsx` workbooks.
 
 ## Main workflow
 
@@ -91,6 +94,26 @@ be different. Pending Shelf Designer changes must be committed or discarded
 first. This tab changes local SQLite locations only; use the tab 2 web action
 afterward when KiotViet must receive the new location IDs.
 
+### Compare and resync KiotViet locations
+
+1. On tab 7, press **Import Web's Data** and choose the KiotViet `.xlsx` export.
+2. Confirm the worksheet and columns. The supplied KiotViet headers **Mã hàng**
+   and **Vị trí** are selected automatically.
+3. Review website and local locations side by side. Only product IDs registered
+   in the local product database with saved shelf assignments are compared.
+   Local IDs absent from the export are shown separately and are not uploaded.
+4. Connect Chrome on tab 2, then press **Web resync** on tab 7. The app saves
+   each comparable mismatch in sequence using tab 2's location-only
+   upload; stock quantities are untouched. Successfully resynced rows are
+   excluded from another upload until a new export is imported.
+5. Press **Export comparison excel** to save the remaining mismatches under
+   `xl/app_result/` as an `.xlsx` file with exactly `product_id`,
+   `wrong_location`, and `true_location`.
+
+Products with several local locations appear in the comparison and export,
+but need manual web review because the current website uploader sets one
+location per product. Import a new KiotViet export to verify completed updates.
+
 ## Search and catalog behavior
 
 One search box filters both the total queue and the full catalog. It searches
@@ -141,6 +164,8 @@ assignment time.
 | `mapper/tkinter_ui/assignment_view.py` | Shared shelf renderer plus stock quantity dialog. |
 | `mapper/tkinter_ui/widgets.py` | Shared custom UI widgets (`ScrollableFrame`). |
 | `mapper/tkinter_ui/csv_dialog.py` | Interactive column selection dialog for CSV import. |
+| `mapper/location_comparison.py` | KiotViet Excel import, location comparison, and three-column export. |
+| `mapper/tkinter_ui/location_comparison_view.py` | Tab 7 comparison and resync controls. |
 
 ## Data and backup
 
@@ -158,6 +183,7 @@ the app runs.
 python -m unittest testers.test_on_hand_queue -v
 python -m unittest testers.test_cell_transfer -v
 python -m unittest testers.test_mapper_stock testers.test_web_upload testers.test_widgets -v
+python -m unittest testers.test_location_comparison testers.test_web_batch -v
 ```
 
 The on-hand tests cover persistence, exact-address assignment, shelf-to-on-hand
