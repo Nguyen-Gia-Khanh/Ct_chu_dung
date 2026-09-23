@@ -57,6 +57,13 @@ export interface OnHandProduct {
   selected?: boolean;
 }
 
+export interface WorkingBatchProduct {
+  product_id: string;
+  product_name: string;
+  stock_qty: number | null;
+  queued_at: string;
+}
+
 export interface ReturnedQueueProduct {
   code: string;
   name: string;
@@ -111,4 +118,22 @@ export interface ApiResponse<T = unknown> {
   data?: T;
   error?: string;
   message?: string;
+  slot_name?: string;
+  slot?: {
+    slot_id: number;
+    slot_name: string;
+    floor: string | number;
+    side: string | number;
+    shelf: string;
+    row: number;
+    col: number;
+  };
+  contents?: Array<{
+    product_id: string;
+    product_name: string;
+    stock_qty: number | null;
+    assigned_at: string;
+  }>;
+  count?: number;
+  changed_products?: Array<{ product_id: string; slot_name: string }>;
 }

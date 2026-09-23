@@ -6,7 +6,7 @@ A modern, responsive React + TypeScript user interface for the Warehouse Shelf M
 
 ## Features & Navigation
 
-The application mirrors and enhances the 5 core tabs of the warehouse mapping workflow:
+The application follows the six tabs of the Tkinter warehouse mapping workflow:
 
 ### 1. Tab 1: Shelf Designer (`ShelfDesignerView.tsx`)
 - Configure warehouse physical shelf metadata: Floor (`L1`, `L2`, ...), Side (`1`, `2`), Shelf Code (`A`, `B`, ...), Row count, and default columns per row.
@@ -50,39 +50,20 @@ The application mirrors and enhances the 5 core tabs of the warehouse mapping wo
 
 ---
 
-## Directory Structure
+### 6. Tab 6: Special Exceptions (`ExceptionsView.tsx`)
+- Assign an unregistered or multi-location product to an existing cell.
+- Inspect the shared on-hand batch and stage catalog CSV updates.
 
-```
-ui/
-├── index.html                   # HTML5 application root
-├── package.json                 # Dependencies and scripts (Vite, React 18, TypeScript)
-├── tsconfig.json                # TypeScript strict configuration
-├── tsconfig.node.json           # Node configuration for Vite
-├── vite.config.ts               # Vite configuration
-├── README.md                    # This documentation
-└── src/
-    ├── main.tsx                 # React DOM mount point
-    ├── App.tsx                  # Tab navigation controller & count sync
-    ├── types/
-    │   └── index.ts             # Domain models (Shelf, SlotAddress, Product, etc.)
-    ├── utils/
-    │   └── coordinates.ts       # Coordinate formatting, parsing, barcode helpers
-    ├── services/
-    │   └── api.ts               # REST API client with local mock fallback
-    ├── components/
-    │   ├── Navbar.tsx           # Tab bar with badge counters
-    │   ├── ShelfCanvas.tsx      # 2D front-view interactive shelf grid
-    │   ├── StockQuantityDialog.tsx # Stock quantity assignment modal
-    │   └── ColumnMappingDialog.tsx # CSV column mapping modal
-    ├── views/
-    │   ├── ShelfDesignerView.tsx      # Tab 1
-    │   ├── LocationAssignmentView.tsx  # Tab 2
-    │   ├── PrimalQueueView.tsx        # Tab 3
-    │   ├── ShelfBrowserView.tsx       # Tab 4
-    │   └── CellTransferView.tsx       # Tab 5
-    └── styles/
-        └── app.css              # Modern CSS theme and shelf grid styles
-```
+---
+
+## UI Structure
+
+- `src/App.tsx` selects and retains visited tabs; `components/WorkbenchChrome.tsx` renders the shared Tkinter-style frame.
+- `src/views/` contains screen markup, tables, forms, and reusable shelf visuals.
+- `src/controllers/` owns screen state, selection, refresh, and event handlers.
+- `src/services/api.ts` calls the local Python API; `backendStatus.ts` reports availability.
+- `src/utils/` contains location/barcode helpers and CSV parsing.
+- `scripts/build-offline.mjs` compiles the TypeScript UI into `dist/app.js` using the local build compiler.
 
 ---
 
@@ -101,10 +82,12 @@ npm install
 ```bash
 npm run dev
 ```
-The server will start at `http://localhost:3000`. If the Python backend server is not running, the application automatically uses its built-in local persistence layer with realistic mock warehouse data.
+The Vite server starts at `http://localhost:3000` and proxies `/api` to the local Python server on port 8000. The UI uses the SQLite-backed Python API; it does not substitute demo records when the backend is unavailable.
 
 ### Production Build
 ```bash
 npm run build
 ```
-The optimized static build will be generated in `ui/dist/`.
+The checked TypeScript source is compiled to `ui/dist/app.js` and served by `mapper/web_server.py`. The desktop page loads local React files and the prebuilt bundle, with no browser-time Babel compilation or network font dependency. If dependencies are not installed, `node scripts/build-offline.mjs` builds the same bundle using the checked-in Babel compiler.
+
+`src/views/` contains presentation, `src/controllers/` contains screen state and event handling, and `src/services/` owns backend calls and connection status. The Python database and other functional modules are unchanged.

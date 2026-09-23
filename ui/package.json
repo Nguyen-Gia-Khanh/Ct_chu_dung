@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && node scripts/build-offline.mjs",
+    "build:offline": "node scripts/build-offline.mjs",
     "preview": "vite preview",
     "lint": "tsc --noEmit"
   },

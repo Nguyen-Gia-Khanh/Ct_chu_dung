@@ -1,58 +1,23 @@
-import React, { useState, useEffect } from 'react';
-import { Shelf, ShelfCell } from '../types';
-import { ApiService } from '../services/api';
+import React from 'react';
 import { ShelfCanvas } from '../components/ShelfCanvas';
 import { getShelfCode } from '../utils/coordinates';
+import { useShelfBrowserController } from '../controllers/useShelfBrowserController';
 
-export const ShelfBrowserView: React.FC = () => {
-  const [shelves, setShelves] = useState<Shelf[]>([]);
-  const [selectedShelf, setSelectedShelf] = useState<Shelf | null>(null);
-  const [cellsData, setCellsData] = useState<Record<string, ShelfCell>>({});
-  const [selectedCellLoc, setSelectedCellLoc] = useState<string | null>(null);
-  const [selectedRow, setSelectedRow] = useState<number | null>(null);
-  const [selectedCol, setSelectedCol] = useState<number | null>(null);
-
-  useEffect(() => {
-    loadShelves();
-  }, []);
-
-  const loadShelves = async () => {
-    const list = await ApiService.getShelves();
-    setShelves(list);
-    if (list.length > 0) {
-      loadShelfCells(list[0]);
-    }
-  };
-
-  const loadShelfCells = async (shelf: Shelf) => {
-    setSelectedShelf(shelf);
-    const code = getShelfCode(shelf.floor, shelf.side, shelf.shelf);
-    const cells = await ApiService.getShelfCells(code);
-    setCellsData(cells);
-    setSelectedCellLoc(null);
-    setSelectedRow(null);
-    setSelectedCol(null);
-  };
-
-  const handleCellClick = (row: number, col: number, locId: string) => {
-    setSelectedRow(row);
-    setSelectedCol(col);
-    setSelectedCellLoc(locId);
-  };
-
-  const selectedCell = selectedCellLoc ? cellsData[selectedCellLoc] : null;
-  const items = selectedCell ? selectedCell.items : [];
-
-  // Stats
-  let totalUnits = 0;
-  let occupiedCount = 0;
-  Object.values(cellsData).forEach((cell) => {
-    if (cell.items && cell.items.length > 0) {
-      occupiedCount++;
-      totalUnits += cell.total_quantity;
-    }
-  });
-
+export const ShelfBrowserView: React.FC<{ active: boolean }> = React.memo(({ active }: { active: boolean }) => {
+  const {
+    shelves,
+    selectedShelf,
+    cellsData,
+    selectedCellLoc,
+    selectedRow,
+    selectedCol,
+    loadShelfCells,
+    handleCellClick,
+    selectedCell,
+    items,
+    totalUnits,
+    occupiedCount,
+  } = useShelfBrowserController(active);
   return (
     <div className="view-container">
       <div className="panel" style={{ marginBottom: '0.4rem' }}>
@@ -215,4 +180,4 @@ export const ShelfBrowserView: React.FC = () => {
       </div>
     </div>
   );
-};
+});

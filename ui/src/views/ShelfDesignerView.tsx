@@ -1,125 +1,87 @@
-import React, { useState, useEffect } from 'react';
-import { Shelf } from '../types';
-import { ApiService } from '../services/api';
+import React from 'react';
 import { ShelfCanvas } from '../components/ShelfCanvas';
+import { ColumnMappingDialog } from '../components/ColumnMappingDialog';
 import { getShelfCode } from '../utils/coordinates';
+import { useShelfDesignerController } from '../controllers/useShelfDesignerController';
 
-export const ShelfDesignerView: React.FC = () => {
-  const [shelves, setShelves] = useState<Shelf[]>([]);
-  const [floor, setFloor] = useState<number>(1);
-  const [side, setSide] = useState<number>(1);
-  const [shelfLetter, setShelfLetter] = useState<string>('A');
-  const [rowsCount, setRowsCount] = useState<number>(8);
-  const [defaultCols, setDefaultCols] = useState<number>(10);
-  const [rowCols, setRowCols] = useState<Record<number, number>>({});
-  const [selectedRow, setSelectedRow] = useState<number | null>(null);
-  const [selectedCol, setSelectedCol] = useState<number | null>(null);
-  const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'info' | 'success' | 'error' } | null>(null);
-
-  useEffect(() => {
-    loadShelves();
-  }, []);
-
-  const loadShelves = async () => {
-    const list = await ApiService.getShelves();
-    setShelves(list);
-  };
-
-  const handleRowsCountChange = (newCount: number) => {
-    const clamped = Math.max(1, Math.min(25, newCount));
-    setRowsCount(clamped);
-    const updated: Record<number, number> = {};
-    for (let r = 1; r <= clamped; r++) {
-      updated[r] = rowCols[r] || defaultCols;
-    }
-    setRowCols(updated);
-  };
-
-  const handleAddRowAtTop = () => {
-    const nextCount = rowsCount + 1;
-    setRowsCount(nextCount);
-    setRowCols((prev) => ({ ...prev, [nextCount]: defaultCols }));
-  };
-
-  const handleRemoveTopRow = () => {
-    if (rowsCount <= 1) return;
-    const nextCount = rowsCount - 1;
-    setRowsCount(nextCount);
-    setRowCols((prev) => {
-      const copy = { ...prev };
-      delete copy[rowsCount];
-      return copy;
-    });
-  };
-
-  const handleRowColOverride = (rowNum: number, cols: number) => {
-    const clamped = Math.max(1, Math.min(50, cols));
-    setRowCols((prev) => ({ ...prev, [rowNum]: clamped }));
-  };
-
-  const handleSelectExisting = (s: Shelf) => {
-    setFloor(s.floor);
-    setSide(s.side);
-    setShelfLetter(s.shelf);
-    setRowsCount(s.rows_count);
-    setDefaultCols(s.default_cols);
-    setRowCols(s.custom_row_cols || {});
-    setStatusMsg({ text: `Loaded shelf ${getShelfCode(s.floor, s.side, s.shelf)}`, type: 'info' });
-  };
-
-  const handleSaveShelf = async () => {
-    if (!shelfLetter.trim()) {
-      setStatusMsg({ text: 'Shelf code letter is required', type: 'error' });
-      return;
-    }
-    try {
-      const shelfPayload: Shelf = {
-        floor,
-        side,
-        shelf: shelfLetter.trim().toUpperCase(),
-        rows_count: rowsCount,
-        default_cols: defaultCols,
-        custom_row_cols: rowCols,
-      };
-      const res = await ApiService.saveShelf(shelfPayload);
-      if (res && res.error) {
-        setStatusMsg({ text: `Error saving shelf: ${res.error}`, type: 'error' });
-        return;
-      }
-      setStatusMsg({
-        text: `Successfully saved Shelf ${getShelfCode(floor, side, shelfLetter)} (${rowsCount} rows)`,
-        type: 'success',
-      });
-      await loadShelves();
-    } catch (err: unknown) {
-      setStatusMsg({ text: `Error saving shelf: ${String(err)}`, type: 'error' });
-    }
-  };
-
-  const handleDeleteShelf = async (id?: number) => {
-    if (!id) return;
-    if (confirm('Are you sure you want to delete this shelf definition?')) {
-      const res = await ApiService.deleteShelf(id);
-      if (res && res.error) {
-        setStatusMsg({ text: `Error deleting shelf: ${res.error}`, type: 'error' });
-        return;
-      }
-      await loadShelves();
-      setStatusMsg({ text: 'Shelf deleted.', type: 'info' });
-    }
-  };
-
+export const ShelfDesignerView: React.FC<{ active: boolean }> = React.memo(({ active }: { active: boolean }) => {
+  const {
+    shelves,
+    floor,
+    setFloor,
+    side,
+    setSide,
+    shelfLetter,
+    setShelfLetter,
+    rowsCount,
+    defaultCols,
+    rowCols,
+    selectedRow,
+    setSelectedRow,
+    selectedCol,
+    statusMsg,
+    editingShelfId,
+    csvData,
+    csvMode,
+    setCsvData,
+    previewOpen,
+    setPreviewOpen,
+    handleCsvFile,
+    handleCsvConfirm,
+    handleNewShelf,
+    handleRowsCountChange,
+    handleAddRowAtTop,
+    handleRemoveTopRow,
+    handleRowColOverride,
+    handleSelectExisting,
+    handleSaveShelf,
+    handleDeleteShelf,
+  } = useShelfDesignerController(active);
   return (
     <div className="view-container">
-      <div className="split-pane">
+      <div className="designer-toolbar">
+        <label className="btn csv-file-button">
+          Import working products CSV
+          <input type="file" accept=".csv,text/csv" onChange={(event) => {
+            void handleCsvFile(event.target.files?.[0] ?? null, 'new');
+            event.target.value = '';
+          }} />
+        </label>
+        <label className="btn csv-file-button">
+          Import full catalog CSV
+          <input type="file" accept=".csv,text/csv" onChange={(event) => {
+            void handleCsvFile(event.target.files?.[0] ?? null, 'return');
+            event.target.value = '';
+          }} />
+        </label>
+        <button className="btn" onClick={handleNewShelf}>New shelf</button>
+        <button className="btn" aria-expanded={previewOpen} onClick={() => setPreviewOpen((open) => !open)}>
+          {previewOpen ? 'Hide 2D preview' : 'Preview 2D shelf'}
+        </button>
+        <label className="form-label" htmlFor="designer-shelf-selector">Edit existing shelf:</label>
+        <select
+          id="designer-shelf-selector"
+          className="input-select"
+          value={editingShelfId ?? ''}
+          onChange={(event) => {
+            const selected = shelves.find((item) => item.id === Number(event.target.value));
+            if (selected) handleSelectExisting(selected);
+          }}
+        >
+          <option value="">Select a shelf</option>
+          {shelves.map((item) => (
+            <option key={item.id} value={item.id}>{getShelfCode(item.floor, item.side, item.shelf)}</option>
+          ))}
+        </select>
+        <button className="btn btn-primary commit-btn" onClick={handleSaveShelf}>Commit shelf design</button>
+      </div>
+      {statusMsg && <div className={`designer-status ${statusMsg.type}`} role="status">{statusMsg.text}</div>}
+      <div className="designer-layout">
         {/* Left Side: Shelf Metadata & Row Customizer (Exact Tkinter format) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
           <div className="panel">
             <div className="panel-header">
               <span className="panel-title">Shelf Metadata</span>
-              <button className="btn btn-primary btn-sm" onClick={handleSaveShelf}>
-                Save Shelf to DB
-              </button>
             </div>
 
             <div className="panel-body">
@@ -129,7 +91,7 @@ export const ShelfDesignerView: React.FC = () => {
                   <input
                     type="number"
                     min="1"
-                    max="10"
+                    max="100"
                     className="input-text font-mono"
                     value={floor}
                     onChange={(e) => setFloor(parseInt(e.target.value, 10) || 1)}
@@ -165,7 +127,7 @@ export const ShelfDesignerView: React.FC = () => {
                   <input
                     type="number"
                     min="1"
-                    max="25"
+                    max="100"
                     className="input-text font-mono"
                     value={rowsCount}
                     onChange={(e) => handleRowsCountChange(parseInt(e.target.value, 10) || 1)}
@@ -213,7 +175,7 @@ export const ShelfDesignerView: React.FC = () => {
                           <input
                             type="number"
                             min="1"
-                            max="40"
+                            max="200"
                             className="input-text font-mono"
                             style={{ width: '70px', height: '22px', padding: '0 0.3rem' }}
                             value={rowCols[rowNum] || defaultCols}
@@ -282,7 +244,8 @@ export const ShelfDesignerView: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Side: 2D Front-View Preview */}
+        {previewOpen && (
+        /* Optional 2D preview follows the Tkinter row editor. */
         <div className="panel">
           <div className="panel-header">
             <span className="panel-title">
@@ -312,33 +275,17 @@ export const ShelfDesignerView: React.FC = () => {
               title={`Preview: L${floor}-${side}${shelfLetter}`}
             />
 
-            {statusMsg && (
-              <div
-                style={{
-                  marginTop: '0.5rem',
-                  padding: '0.4rem 0.6rem',
-                  borderRadius: '3px',
-                  fontSize: '11.5px',
-                  background:
-                    statusMsg.type === 'success'
-                      ? 'var(--success-subtle)'
-                      : statusMsg.type === 'error'
-                      ? 'var(--danger-subtle)'
-                      : 'var(--primary-subtle)',
-                  color:
-                    statusMsg.type === 'success'
-                      ? 'var(--success)'
-                      : statusMsg.type === 'error'
-                      ? 'var(--danger)'
-                      : 'var(--primary)',
-                }}
-              >
-                {statusMsg.text}
-              </div>
-            )}
           </div>
         </div>
+        )}
       </div>
+      <ColumnMappingDialog
+        isOpen={csvData !== null}
+        csvData={csvData}
+        modeTitle={csvMode === 'new' ? 'Import working products CSV' : 'Import full catalog CSV'}
+        onConfirm={handleCsvConfirm}
+        onCancel={() => setCsvData(null)}
+      />
     </div>
   );
-};
+});
