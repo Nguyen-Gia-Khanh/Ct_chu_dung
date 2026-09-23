@@ -9,3 +9,9 @@ __pycache__/
 # Excluded file types
 *.csv
 *.pdf
+
+# Virtual environments and IDE settings
+.venv/
+.vscode/
+*.xlsx
+~$*

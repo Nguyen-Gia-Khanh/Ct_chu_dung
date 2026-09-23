@@ -261,6 +261,31 @@ class CellTransferPaneCascadeTests(unittest.TestCase):
         self.assertEqual(self.pane.search_entry.index(tk.SEL_FIRST), 0)
         self.assertEqual(self.pane.search_entry.index(tk.SEL_LAST), len(self.pane.search_var.get()))
 
+    def test_newly_created_shelves_appear_in_cascade_selection(self) -> None:
+        # Create 3 new shelves
+        shelf2_id = self.database.save_shelf("1", "B", [4, 4], side="1")
+        shelf3_id = self.database.save_shelf("1", "C", [5, 5, 5], side="1")
+        shelf4_id = self.database.save_shelf("2", "A", [6], side="2")
+
+        # Refresh the pane
+        self.pane.refresh()
+
+        values = list(self.pane.shelf_selector["values"])
+        self.assertIn("Floor 1 — Side 1 — Shelf A", values)
+        self.assertIn("Floor 1 — Side 1 — Shelf B", values)
+        self.assertIn("Floor 1 — Side 1 — Shelf C", values)
+        self.assertIn("Floor 2 — Side 2 — Shelf A", values)
+
+        # Select one of the new shelves and verify cascade dropdowns
+        self.pane.shelf_var.set("Floor 1 — Side 1 — Shelf C")
+        self.pane._shelf_changed()
+        self.assertEqual(self.pane.current_shelf_id, shelf3_id)
+        self.assertEqual(list(self.pane.row_selector["values"]), ["1", "2", "3"])
+
+        self.pane.row_var.set("2")
+        self.pane._row_changed()
+        self.assertEqual(list(self.pane.cell_selector["values"]), ["1", "2", "3", "4", "5"])
+
 
 if __name__ == "__main__":
     unittest.main()

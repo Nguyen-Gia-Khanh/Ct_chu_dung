@@ -124,20 +124,23 @@ assignment time.
 
 ## Files
 
-| File | Responsibility |
+| File / Folder | Responsibility |
 | --- | --- |
-| `warehouse_mapper.py` | Small application entry point. |
-| `mapper/app.py` | Coordinates tabs, searches, assignment actions, and optional web upload. |
-| `mapper/designer.py` | Shelf metadata and irregular row editor. |
-| `mapper/location_assignment_view.py` | Tab 2 total queue, on-hand batch, address form, and address contents. |
-| `mapper/primal_queue_view.py` | Tab 3 primal queue (hot sellers), catalog search, and shelf view. |
-| `mapper/shelf_browser.py` | Tab 4 read-only shelf selector and front view. |
-| `mapper/cell_transfer_view.py` | Tab 5 two-shelf cell switch/combine workspace. |
-| `mapper/assignment_view.py` | Shared shelf renderer plus stock quantity dialog. |
-| `mapper/database.py` | SQLite schema and atomic queue/location operations. |
-| `mapper/csv_import.py` | CSV parsing and column mapping. |
+| `warehouse_mapper.py` | Application entry point. |
+| `mapper/database.py` | Pure backend SQLite schema and atomic queue/location operations. |
+| `mapper/csv_import.py` | Pure backend CSV reading and parsing (`read_csv`, `CSVData`). |
 | `mapper/common.py` | Location IDs, search normalization, and database path. |
 | `mapper/web_upload.py` | Optional Selenium/KiotViet integration. |
+| `mapper/tkinter_ui/` | Dedicated Tkinter Desktop UI package. |
+| `mapper/tkinter_ui/app.py` | Main window, tabs, and application controller (`WarehouseMapperApp`). |
+| `mapper/tkinter_ui/designer.py` | Tab 1: Shelf metadata and irregular row editor. |
+| `mapper/tkinter_ui/location_assignment_view.py` | Tab 2: Total queue, on-hand batch, address form, and address contents. |
+| `mapper/tkinter_ui/primal_queue_view.py` | Tab 3: Primal queue (hot sellers), catalog search, and shelf view. |
+| `mapper/tkinter_ui/shelf_browser.py` | Tab 4: Read-only shelf selector and front view. |
+| `mapper/tkinter_ui/cell_transfer_view.py` | Tab 5: Two-shelf cell switch/combine workspace. |
+| `mapper/tkinter_ui/assignment_view.py` | Shared shelf renderer plus stock quantity dialog. |
+| `mapper/tkinter_ui/widgets.py` | Shared custom UI widgets (`ScrollableFrame`). |
+| `mapper/tkinter_ui/csv_dialog.py` | Interactive column selection dialog for CSV import. |
 
 ## Data and backup
 
