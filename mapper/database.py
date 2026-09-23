@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .common import clean_location_segment, make_slot_name
+from .common import clean_location_segment, make_slot_name, normalize_search
 from utils.barcode_scanner import format_product_id
 
 
@@ -165,6 +166,8 @@ class WarehouseDatabase:
                     slot_id      INTEGER REFERENCES slots(slot_id) ON DELETE SET NULL,
                     slot_name    TEXT NOT NULL,
                     created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    csv_updated  INTEGER NOT NULL DEFAULT 0 CHECK (csv_updated IN (0, 1)),
+                    catalog_updated INTEGER NOT NULL DEFAULT 0 CHECK (catalog_updated IN (0, 1)),
                     UNIQUE (product_id, slot_name)
                 );
 
@@ -199,6 +202,30 @@ class WarehouseDatabase:
             # before BEGIN. Check all references before the transaction commits.
             connection.execute("PRAGMA foreign_keys = OFF")
             connection.execute("BEGIN IMMEDIATE")
+            staging_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(wait_to_update_csv)")
+            }
+            if "csv_updated" not in staging_columns:
+                connection.execute(
+                    "ALTER TABLE wait_to_update_csv ADD COLUMN csv_updated INTEGER NOT NULL DEFAULT 0"
+                )
+            if "catalog_updated" not in staging_columns:
+                connection.execute(
+                    "ALTER TABLE wait_to_update_csv ADD COLUMN catalog_updated INTEGER NOT NULL DEFAULT 0"
+                )
+                # Historical placeholder catalog rows were created automatically;
+                # only a real existing catalog name counts as registered.
+                connection.execute(
+                    """
+                    UPDATE wait_to_update_csv SET catalog_updated = 1
+                    WHERE EXISTS (
+                        SELECT 1 FROM catalog_products AS catalog
+                        WHERE catalog.product_id = wait_to_update_csv.product_id
+                          AND catalog.product_name <> 'Exc - added later'
+                    )
+                    """
+                )
             columns = {
                 row["name"]
                 for row in connection.execute("PRAGMA table_info(placements)")
@@ -1556,10 +1583,10 @@ class WarehouseDatabase:
         slot_id: int,
         assigned_at: str | None = None,
         stock_qty: int | None = None,
-        product_name: str = "Exc - added later",
+        product_name: str | None = None,
     ) -> str:
         """Assign an existing or unregistered product to an exception slot.
-        Records into exception_placements and wait_to_update_csv.
+        Stage its CSV and catalog registrations independently.
         Returns the slot_name.
         """
         if stock_qty is not None:
@@ -1578,22 +1605,59 @@ class WarehouseDatabase:
                 raise ValueError(f"Slot ID {slot_id} does not exist.")
             slot_name = slot_row["slot_name"]
 
-            # Ensure product exists in products and catalog_products
+            existing_product = connection.execute(
+                "SELECT product_name FROM products WHERE product_id = ?", (clean_pid,)
+            ).fetchone()
+            existing_catalog = connection.execute(
+                "SELECT product_name FROM catalog_products WHERE product_id = ?", (clean_pid,)
+            ).fetchone()
+            staged = connection.execute(
+                """
+                SELECT product_name, MAX(csv_updated) AS csv_updated,
+                       MAX(catalog_updated) AS catalog_updated
+                FROM wait_to_update_csv WHERE product_id = ?
+                GROUP BY product_id
+                """,
+                (clean_pid,),
+            ).fetchone()
+            entered_name = (product_name or "").strip()
+            resolved_name = (
+                entered_name
+                or (staged["product_name"] if staged else "")
+                or (existing_catalog["product_name"] if existing_catalog else "")
+                or (existing_product["product_name"] if existing_product else "")
+                or "Exc - added later"
+            )
+            csv_done = int(staged["csv_updated"]) if staged else 0
+            catalog_done = (
+                int(staged["catalog_updated"])
+                if staged else
+                int(existing_catalog is not None and existing_catalog["product_name"] != "Exc - added later")
+            )
+            if entered_name and existing_catalog and entered_name != existing_catalog["product_name"]:
+                catalog_done = 0
+            if staged and entered_name and entered_name != staged["product_name"]:
+                # A changed name needs to be registered again at both targets.
+                connection.execute(
+                    """
+                    UPDATE wait_to_update_csv
+                    SET product_name = ?, csv_updated = 0, catalog_updated = 0
+                    WHERE product_id = ?
+                    """,
+                    (resolved_name, clean_pid),
+                )
+                csv_done = 0
+                catalog_done = 0
+
             connection.execute(
                 """
                 INSERT INTO products (product_id, product_name, shortened_name)
                 VALUES (?, ?, ?)
-                ON CONFLICT (product_id) DO NOTHING
+                ON CONFLICT (product_id) DO UPDATE SET
+                    product_name = CASE WHEN ? THEN excluded.product_name ELSE products.product_name END,
+                    shortened_name = CASE WHEN ? THEN excluded.shortened_name ELSE products.shortened_name END
                 """,
-                (clean_pid, product_name, product_name),
-            )
-            connection.execute(
-                """
-                INSERT INTO catalog_products (product_id, product_name, shortened_name)
-                VALUES (?, ?, ?)
-                ON CONFLICT (product_id) DO NOTHING
-                """,
-                (clean_pid, product_name, product_name),
+                (clean_pid, resolved_name, resolved_name, bool(entered_name), bool(entered_name)),
             )
 
             # Insert or update into exception_placements
@@ -1608,24 +1672,28 @@ class WarehouseDatabase:
                 (clean_pid, slot_id, stock_qty, assigned_at),
             )
 
-            # Insert into wait_to_update_csv
+            # Keep the staged row after either registration action.
             connection.execute(
                 """
-                INSERT INTO wait_to_update_csv (product_id, product_name, slot_id, slot_name)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO wait_to_update_csv
+                    (product_id, product_name, slot_id, slot_name, csv_updated, catalog_updated)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT (product_id, slot_name) DO UPDATE SET
-                    product_name = excluded.product_name
+                    product_name = excluded.product_name,
+                    slot_id = excluded.slot_id
                 """,
-                (clean_pid, "Exc - added later", slot_id, slot_name),
+                (clean_pid, resolved_name, slot_id, slot_name, csv_done, catalog_done),
             )
 
         return slot_name
 
-    def get_pending_csv_updates(self) -> list[dict[str, Any]]:
+    def get_exception_staging(self) -> list[dict[str, Any]]:
+        """Return every staged exception, including fully registered rows."""
         with closing(self.connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT id, product_id, product_name, slot_id, slot_name, created_at
+                SELECT id, product_id, product_name, slot_id, slot_name, created_at,
+                       csv_updated, catalog_updated
                 FROM wait_to_update_csv
                 ORDER BY id ASC
                 """
@@ -1638,9 +1706,100 @@ class WarehouseDatabase:
                 "slot_id": row["slot_id"],
                 "slot_name": row["slot_name"],
                 "created_at": row["created_at"],
+                "csv_updated": bool(row["csv_updated"]),
+                "catalog_updated": bool(row["catalog_updated"]),
             }
             for row in rows
         ]
+
+    def get_pending_csv_updates(self) -> list[dict[str, Any]]:
+        return [item for item in self.get_exception_staging() if not item["csv_updated"]]
+
+    def update_staged_exception_name(self, product_id: str, product_name: str) -> None:
+        """Save a staged name and reopen registrations when that name changes."""
+        clean_pid = format_product_id(product_id.strip())
+        clean_name = product_name.strip()
+        if not clean_name:
+            raise ValueError("Product name cannot be empty.")
+        with closing(self.connect()) as connection, connection:
+            staged = connection.execute(
+                "SELECT product_name FROM wait_to_update_csv WHERE product_id = ? LIMIT 1",
+                (clean_pid,),
+            ).fetchone()
+            if staged is None:
+                raise ValueError(f"{clean_pid} is no longer in the staged exception list.")
+            if staged["product_name"] == clean_name:
+                return
+            connection.execute(
+                """
+                UPDATE wait_to_update_csv
+                SET product_name = ?, csv_updated = 0, catalog_updated = 0
+                WHERE product_id = ?
+                """,
+                (clean_name, clean_pid),
+            )
+            connection.execute(
+                """
+                UPDATE products SET product_name = ?, shortened_name = ?
+                WHERE product_id = ?
+                """,
+                (clean_name, clean_name, clean_pid),
+            )
+
+    def add_staged_to_catalog(self, product_ids: list[str] | None = None) -> int:
+        """Register selected staged products in the full catalog once."""
+        selected = set(product_ids) if product_ids is not None else None
+        with closing(self.connect()) as connection, connection:
+            rows = connection.execute(
+                """
+                SELECT product_id, product_name FROM wait_to_update_csv
+                WHERE catalog_updated = 0 ORDER BY id DESC
+                """
+            ).fetchall()
+            products: dict[str, str] = {}
+            for row in rows:
+                product_id = row["product_id"]
+                if selected is None or product_id in selected:
+                    products.setdefault(product_id, row["product_name"])
+            if not products:
+                return 0
+            connection.executemany(
+                """
+                INSERT INTO catalog_products (product_id, product_name, shortened_name)
+                VALUES (?, ?, ?)
+                ON CONFLICT(product_id) DO UPDATE SET
+                    product_name = excluded.product_name,
+                    shortened_name = excluded.shortened_name,
+                    imported_at = CURRENT_TIMESTAMP
+                """,
+                [(product_id, name, name) for product_id, name in products.items()],
+            )
+            connection.executemany(
+                "UPDATE wait_to_update_csv SET catalog_updated = 1 WHERE product_id = ?",
+                [(product_id,) for product_id in products],
+            )
+        return len(products)
+
+    def wipe_staged_exception(self, product_id: str) -> None:
+        """Remove staging, catalog record, and every saved shelf placement."""
+        with closing(self.connect()) as connection, connection:
+            exists = connection.execute(
+                "SELECT 1 FROM wait_to_update_csv WHERE product_id = ? LIMIT 1", (product_id,)
+            ).fetchone()
+            if exists is None:
+                raise ValueError(f"{product_id} is no longer in the staged exception list.")
+            connection.execute(
+                "DELETE FROM wait_to_update_csv WHERE product_id = ?", (product_id,)
+            )
+            connection.execute(
+                "DELETE FROM catalog_products WHERE product_id = ?", (product_id,)
+            )
+            connection.execute(
+                "DELETE FROM placements WHERE product_id = ?", (product_id,)
+            )
+            connection.execute(
+                "DELETE FROM exception_placements WHERE product_id = ?", (product_id,)
+            )
 
     def clear_pending_csv_updates(self, ids: list[int] | None = None) -> int:
         with closing(self.connect()) as connection, connection:
@@ -1656,69 +1815,89 @@ class WarehouseDatabase:
                 cursor = connection.execute("DELETE FROM wait_to_update_csv")
             return cursor.rowcount
 
-    def append_pending_to_csv(self, csv_path: str | Path) -> int:
-        """Append all pending exception records to the specified CSV file.
-        All appended rows are named 'Exc - added later'.
-        Clears the pending records upon successful write and returns the count appended.
-        """
-        pending = self.get_pending_csv_updates()
+    def append_pending_to_csv(
+        self, csv_path: str | Path, product_ids: list[str] | None = None
+    ) -> int:
+        """Register each selected pending product in a CSV and keep its staged row."""
+        selected = set(product_ids) if product_ids is not None else None
+        pending: dict[str, dict[str, Any]] = {}
+        for item in self.get_pending_csv_updates():
+            if selected is None or item["product_id"] in selected:
+                pending[item["product_id"]] = item
         if not pending:
             return 0
 
         path = Path(csv_path)
-        delimiter = ";"
-        header_cols: list[str] = []
-
-        if path.exists():
-            raw_bytes = path.read_bytes()
-            for enc in ("utf-8-sig", "utf-8", "cp1258", "cp1252"):
+        raw = path.read_bytes() if path.exists() else b""
+        encoding = "utf-8"
+        text_content = ""
+        if raw:
+            for candidate in ("utf-8-sig", "utf-8", "cp1258", "cp1252"):
                 try:
-                    text_content = raw_bytes.decode(enc)
+                    text_content = raw.decode(candidate)
+                    encoding = candidate
                     break
                 except UnicodeDecodeError:
                     continue
-            else:
-                text_content = raw_bytes.decode("utf-8", errors="replace")
 
-            first_line = text_content.splitlines()[0] if text_content.splitlines() else ""
-            if first_line:
-                for cand in (";", ",", "\t", "|"):
-                    if cand in first_line:
-                        delimiter = cand
-                        break
-                header_cols = [c.strip() for c in first_line.split(delimiter)]
-        else:
-            header_cols = ["product_id", "product_name", "shortened_name"]
+        first_line = text_content.splitlines()[0] if text_content.splitlines() else ""
+        delimiter = max((";", ",", "\t", "|"), key=first_line.count) if first_line else ";"
+        existing_rows = list(csv.reader(io.StringIO(text_content), delimiter=delimiter))
+        header_cols = existing_rows[0] if existing_rows else [
+            "product_id", "product_name", "shortened_name"
+        ]
+        if len(header_cols) < 2:
+            raise ValueError("The CSV needs separate product ID and product name columns.")
 
-        id_idx = 0
-        name_idx = 1
-        for idx, col in enumerate(header_cols):
-            low = col.lower()
-            if any(k in low for k in ("id", "mã", "ma", "code", "barcode")):
-                id_idx = idx
-            elif any(k in low for k in ("name", "tên", "ten", "title")):
-                name_idx = idx
+        normalized = [
+            "".join(character for character in normalize_search(column) if character.isalnum())
+            for column in header_cols
+        ]
+        id_idx = next(
+            (index for index, value in enumerate(normalized)
+             if value in {"productid", "productcode", "mahang", "masanpham", "sku", "code"}),
+            0,
+        )
+        name_idx = next(
+            (index for index, value in enumerate(normalized)
+             if value in {"productname", "tenhang", "tensanpham", "name", "title"}),
+            1,
+        )
+        if id_idx == name_idx:
+            raise ValueError("Could not identify different product ID and name columns in the CSV.")
+        rows_to_write = existing_rows if existing_rows else [header_cols]
+        existing_ids: set[str] = set()
+        for row in rows_to_write[1:]:
+            if len(row) <= id_idx:
+                continue
+            product_id = row[id_idx].strip()
+            if product_id in pending:
+                row.extend([""] * (name_idx + 1 - len(row)))
+                row[name_idx] = pending[product_id]["product_name"]
+                existing_ids.add(product_id)
+        for product_id, item in pending.items():
+            if product_id in existing_ids:
+                continue
+            row = [""] * len(header_cols)
+            row[id_idx] = product_id
+            row[name_idx] = item["product_name"]
+            rows_to_write.append(row)
 
-        total_cols = max(len(header_cols), 2)
-        new_lines: list[str] = []
+        output = io.StringIO(newline="")
+        newline = "\r\n" if b"\r\n" in raw else "\n"
+        writer = csv.writer(output, delimiter=delimiter, lineterminator=newline)
+        writer.writerows(rows_to_write)
+        payload = output.getvalue().encode(encoding)
+        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(payload)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
-        needs_leading_newline = False
-        if path.exists():
-            raw = path.read_bytes()
-            if raw and not raw.endswith(b"\n") and not raw.endswith(b"\r"):
-                needs_leading_newline = True
-        else:
-            new_lines.append(delimiter.join(header_cols))
-
-        for item in pending:
-            row = [""] * total_cols
-            row[id_idx] = item["product_id"]
-            row[name_idx] = "Exc - added later"
-            new_lines.append(delimiter.join(row))
-
-        content_to_append = ("\n" if needs_leading_newline else "") + "\n".join(new_lines) + "\n"
-        with open(path, "a", encoding="utf-8", errors="replace") as f:
-            f.write(content_to_append)
-
-        self.clear_pending_csv_updates([item["id"] for item in pending])
+        with closing(self.connect()) as connection, connection:
+            connection.executemany(
+                "UPDATE wait_to_update_csv SET csv_updated = 1 WHERE product_id = ?",
+                [(product_id,) for product_id in pending],
+            )
         return len(pending)

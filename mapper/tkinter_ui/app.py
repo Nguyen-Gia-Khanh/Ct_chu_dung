@@ -218,7 +218,7 @@ class WarehouseMapperApp:
             self.notebook,
             self.database,
             status_text=getattr(self, "status_text", None),
-            on_refresh_callback=self.refresh_all_views,
+            on_refresh_callback=self.on_exception_data_changed,
             barcode_scanner=self.barcode_scanner,
         )
         self.notebook.add(self.exceptions_view, text="6. Special Exceptions")
@@ -1972,6 +1972,10 @@ class WarehouseMapperApp:
         self.refresh_change_summary()
         if hasattr(self, "exceptions_view"):
             self.exceptions_view.refresh()
+
+    def on_exception_data_changed(self) -> None:
+        self.reload_database_state(reload_catalog=True)
+        self.refresh_all_views()
 
     def reload_database_state(self, reload_catalog: bool = False) -> None:
         product_rows = self.database.get_product_records()
