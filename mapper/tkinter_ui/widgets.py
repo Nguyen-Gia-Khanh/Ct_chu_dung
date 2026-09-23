@@ -74,6 +74,46 @@ class ScrollableFrame(ttk.Frame):
     def _fit_inner_width(self, event: tk.Event) -> None:
         self.canvas.itemconfigure(self.window_id, width=event.width)
 
+    def center_widget(self, widget: tk.Widget) -> None:
+        """Scroll both axes to put a child near the viewport center."""
+        canvas = self.canvas
+        canvas.update_idletasks()
+        if not widget.winfo_exists():
+            return
+        region = canvas.bbox("all")
+        if region is None:
+            return
+
+        # A pending smooth wheel step must not move the view away afterward.
+        for axis in ("x", "y"):
+            self._scroll_remaining[axis] = 0
+            after_id = self._scroll_after_ids[axis]
+            if after_id is not None:
+                try:
+                    self.after_cancel(after_id)
+                except tk.TclError:
+                    pass
+                self._scroll_after_ids[axis] = None
+
+        for axis, start, end, viewport, target in (
+            (
+                "x", region[0], region[2], canvas.winfo_width(),
+                widget.winfo_rootx() - self.inner.winfo_rootx() + widget.winfo_width() / 2,
+            ),
+            (
+                "y", region[1], region[3], canvas.winfo_height(),
+                widget.winfo_rooty() - self.inner.winfo_rooty() + widget.winfo_height() / 2,
+            ),
+        ):
+            span = end - start
+            if viewport <= 1 or span <= viewport:
+                continue
+            fraction = (target - viewport / 2 - start) / span
+            if axis == "x":
+                canvas.xview_moveto(max(0.0, min(1.0, fraction)))
+            else:
+                canvas.yview_moveto(max(0.0, min(1.0, fraction)))
+
     @staticmethod
     def _wheel_direction(event: tk.Event) -> int:
         if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0:
