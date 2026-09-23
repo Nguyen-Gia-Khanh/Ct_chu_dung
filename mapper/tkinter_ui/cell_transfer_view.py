@@ -385,6 +385,17 @@ class CellTransferPane(ttk.LabelFrame):
         self._set_cell_choices(address.row_number)
         self.cell_var.set(str(address.slot_number))
         self._refresh_contents()
+        self.after_idle(
+            lambda slot_name=address.slot_name: self._center_selected_cell(slot_name)
+        )
+
+    def _center_selected_cell(self, slot_name: str) -> None:
+        if (self.selected_address is None
+                or self.selected_address.slot_name != slot_name):
+            return
+        button = self.slot_buttons.get(slot_name)
+        if button is not None:
+            self.shelf_scroll.center_widget(button)
 
     def _shelf_changed(self, _event: tk.Event | None = None) -> None:
         label = self.shelf_var.get()
