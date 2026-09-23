@@ -39,6 +39,7 @@ class ExceptionsView(ttk.Frame):
 
         # Variables
         self.product_id_var = tk.StringVar(self)
+        self.product_name_var = tk.StringVar(self)
         self.qty_var = tk.StringVar(self, value="")
         self.floor_var = tk.StringVar(self, value="1")
         self.side_var = tk.StringVar(self, value="1")
@@ -47,7 +48,7 @@ class ExceptionsView(ttk.Frame):
         self.cell_var = tk.StringVar(self, value="1")
 
         self.loaded_slot_text = tk.StringVar(self, value="No cell loaded. Enter address and click Load cell.")
-        self.pending_summary_text = tk.StringVar(self, value="0 staged CSV updates")
+        self.pending_summary_text = tk.StringVar(self, value="0 staged exceptions")
         self.status_message = tk.StringVar(
             self,
             value="Ready. Enter a product ID and load a cell address to assign.",
@@ -70,7 +71,7 @@ class ExceptionsView(ttk.Frame):
         ).pack(anchor="w")
         ttk.Label(
             sub_header,
-            text="Assign items requiring multiple locations or stage unregistered products safely without corrupting CSVs.",
+            text="Assign exception locations, then register staged products in CSV and catalog independently.",
             foreground="#555555",
         ).pack(anchor="w")
 
@@ -83,12 +84,6 @@ class ExceptionsView(ttk.Frame):
             font=("Segoe UI", 9, "bold"),
             foreground="#0969da",
         ).pack(side="left", padx=(0, 10))
-
-        ttk.Button(
-            right_actions,
-            text="Append back to CSV",
-            command=self.append_to_csv,
-        ).pack(side="left")
 
         # Main paned workspace
         paned = ttk.Panedwindow(self, orient="horizontal")
@@ -115,6 +110,14 @@ class ExceptionsView(ttk.Frame):
         self.product_id_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
         self.product_id_entry.bind("<Return>", self._on_product_id_return)
         bind_auto_highlight(self.product_id_entry)
+
+        name_frame = ttk.Frame(assign_box)
+        name_frame.pack(fill="x", pady=(0, 6))
+        ttk.Label(name_frame, text="Name:").pack(side="left", padx=(0, 6))
+        ttk.Entry(name_frame, textvariable=self.product_name_var, width=32).pack(
+            side="left", fill="x", expand=True, padx=(0, 6)
+        )
+        ttk.Button(name_frame, text="Save name", command=self.save_name).pack(side="left")
 
         # Address selector
         addr_frame = ttk.Frame(assign_box)
@@ -215,38 +218,58 @@ class ExceptionsView(ttk.Frame):
         self.cell_contents_tree.pack(side="left", fill="both", expand=True)
         slot_scroll.pack(side="right", fill="y")
 
-        # Bottom: Pending CSV Updates (Staging Table)
-        pending_box = ttk.LabelFrame(parent, text="Wait to Update Back to CSV (Staged)", padding=8)
+        # Bottom: persistent exception staging
+        pending_box = ttk.LabelFrame(parent, text="Staged Exceptions", padding=8)
         pending_box.pack(fill="both", expand=True)
+
+        stage_actions = ttk.Frame(pending_box)
+        stage_actions.pack(fill="x", pady=(0, 6))
+        ttk.Button(stage_actions, text="Append back to CSV", command=self.append_to_csv).pack(
+            side="left", padx=(0, 6)
+        )
+        ttk.Button(stage_actions, text="Add to catalog", command=self.add_to_catalog).pack(
+            side="left", padx=(0, 6)
+        )
+        ttk.Button(stage_actions, text="Wipe from treeview", command=self.wipe_selected).pack(
+            side="left"
+        )
 
         pending_tree_frame = ttk.Frame(pending_box)
         pending_tree_frame.pack(fill="both", expand=True)
 
         self.pending_tree = ttk.Treeview(
             pending_tree_frame,
-            columns=("product_id", "product_name", "slot_name", "created_at"),
+            columns=("product_id", "product_name", "slot_name", "staged_status", "created_at"),
             show="headings",
             selectmode="browse",
         )
         self.pending_tree.heading("product_id", text="Product ID")
         self.pending_tree.heading("product_name", text="Product Name")
         self.pending_tree.heading("slot_name", text="Target Cell")
+        self.pending_tree.heading("staged_status", text="Staged Status")
         self.pending_tree.heading("created_at", text="Staged At")
 
         self.pending_tree.column("product_id", width=130, anchor="w")
         self.pending_tree.column("product_name", width=160, anchor="w")
         self.pending_tree.column("slot_name", width=100, anchor="w")
+        self.pending_tree.column("staged_status", width=190, anchor="w")
         self.pending_tree.column("created_at", width=130, anchor="w")
 
         pending_scroll = ttk.Scrollbar(pending_tree_frame, orient="vertical", command=self.pending_tree.yview)
-        self.pending_tree.configure(yscrollcommand=pending_scroll.set)
+        pending_horizontal = ttk.Scrollbar(pending_box, orient="horizontal", command=self.pending_tree.xview)
+        self.pending_tree.configure(
+            yscrollcommand=pending_scroll.set,
+            xscrollcommand=pending_horizontal.set,
+        )
         self.pending_tree.pack(side="left", fill="both", expand=True)
         pending_scroll.pack(side="right", fill="y")
+        pending_horizontal.pack(fill="x")
+        self.pending_tree.bind("<<TreeviewSelect>>", self._on_staged_select)
 
         # Note at bottom
         ttk.Label(
             pending_box,
-            text="Items staged here will not alter your active CSV files until you click 'Append back to CSV'.",
+            text="Select a row to update one product; with no selection, registration buttons process all waiting products.",
             font=("Segoe UI", 8),
             foreground="#666666",
         ).pack(anchor="w", pady=(4, 0))
@@ -283,8 +306,45 @@ class ExceptionsView(ttk.Frame):
         values = item.get("values", [])
         if values:
             self.product_id_var.set(str(values[0]))
+            if len(values) >= 2:
+                self.product_name_var.set(str(values[1]))
             if len(values) >= 3 and values[2] not in ("", "Unknown", None):
                 self.qty_var.set(str(values[2]))
+
+    def _on_staged_select(self, _event=None) -> None:
+        selection = self.pending_tree.selection()
+        if not selection:
+            return
+        values = self.pending_tree.item(selection[0], "values")
+        if values:
+            self.product_id_var.set(str(values[0]))
+            self.product_name_var.set(str(values[1]))
+
+    def _selected_staged_ids(self) -> list[str] | None:
+        selection = self.pending_tree.selection()
+        if not selection:
+            return None
+        return list({str(self.pending_tree.item(iid, "values")[0]) for iid in selection})
+
+    def _refresh_after_change(self) -> None:
+        self.refresh()
+        if self.on_refresh_callback:
+            self.on_refresh_callback()
+
+    def save_name(self) -> None:
+        product_id = format_product_id(self.product_id_var.get().strip())
+        name = self.product_name_var.get().strip()
+        if not product_id or not name:
+            messagebox.showinfo("Name required", "Select a staged product and enter its name.", parent=self)
+            return
+        try:
+            self.database.update_staged_exception_name(product_id, name)
+        except Exception as error:
+            messagebox.showerror("Name update failed", str(error), parent=self)
+            return
+        self._refresh_after_change()
+        if self.status_text:
+            self.status_text.set(f"Saved name for {product_id}.")
 
     def load_address(self) -> None:
         floor = clean_location_segment(self.floor_var.get())
@@ -351,31 +411,36 @@ class ExceptionsView(ttk.Frame):
                 clean_pid,
                 self.selected_address.slot_id,
                 stock_qty=stock_qty,
+                product_name=self.product_name_var.get().strip() or None,
             )
         except Exception as error:
             messagebox.showerror("Assignment Failed", str(error), parent=self)
             return
 
-        msg = f"Assigned {clean_pid} to {slot_name}. Staged for CSV update."
+        msg = f"Assigned {clean_pid} to {slot_name}. Staged for CSV and catalog registration."
         if self.status_text:
             self.status_text.set(msg)
 
         # Refresh UI
-        self.refresh_cell_contents()
-        self.refresh_pending_tree()
-        self.refresh_on_hand_tree()
-
-        if self.on_refresh_callback:
-            self.on_refresh_callback()
+        self.pending_tree.selection_remove(self.pending_tree.selection())
+        self._refresh_after_change()
 
         # Clear product ID input for next entry
         self.product_id_var.set("")
+        self.product_name_var.set("")
         self.product_id_entry.focus_set()
 
     def append_to_csv(self) -> None:
-        pending = self.database.get_pending_csv_updates()
+        selected_ids = self._selected_staged_ids()
+        pending = [item for item in self.database.get_pending_csv_updates()
+                   if selected_ids is None or item["product_id"] in selected_ids]
         if not pending:
-            messagebox.showinfo("No Pending Updates", "There are no staged exception products waiting to update.", parent=self)
+            messagebox.showinfo(
+                "No Pending Updates",
+                "No staged product has a CSV update waiting." if selected_ids is None
+                else "The selected product has no CSV update waiting.",
+                parent=self,
+            )
             return
 
         selected = filedialog.askopenfilename(
@@ -391,36 +456,87 @@ class ExceptionsView(ttk.Frame):
             return
 
         try:
-            count = self.database.append_pending_to_csv(Path(selected))
+            count = self.database.append_pending_to_csv(Path(selected), selected_ids)
         except Exception as error:
             messagebox.showerror("Append Failed", str(error), parent=self)
             return
 
         messagebox.showinfo(
             "CSV Updated",
-            f"Successfully appended {count:,} exception product(s) to {Path(selected).name}.\n"
-            f"All appended records are named 'Exc - added later'.",
+            f"Registered {count:,} exception product(s) in {Path(selected).name}.",
             parent=self,
         )
 
-        self.refresh_pending_tree()
+        self._refresh_after_change()
         if self.status_text:
-            self.status_text.set(f"Appended {count} exception(s) to {Path(selected).name}.")
+            self.status_text.set(f"Registered {count} exception(s) in {Path(selected).name}.")
 
-        if self.on_refresh_callback:
-            self.on_refresh_callback()
+    def add_to_catalog(self) -> None:
+        selected_ids = self._selected_staged_ids()
+        try:
+            count = self.database.add_staged_to_catalog(selected_ids)
+        except Exception as error:
+            messagebox.showerror("Catalog update failed", str(error), parent=self)
+            return
+        if not count:
+            messagebox.showinfo(
+                "No Pending Updates",
+                "No staged product has a catalog update waiting." if selected_ids is None
+                else "The selected product has no catalog update waiting.",
+                parent=self,
+            )
+            return
+        self._refresh_after_change()
+        if self.status_text:
+            self.status_text.set(f"Added {count} staged product(s) to the full catalog.")
+
+    def wipe_selected(self) -> None:
+        selected_ids = self._selected_staged_ids()
+        if not selected_ids:
+            messagebox.showinfo("Select a product", "Select a staged product to wipe.", parent=self)
+            return
+        product_id = selected_ids[0]
+        confirmed = messagebox.askyesno(
+            "Wipe staged product",
+            f"Remove {product_id} from this tree and the full catalog, and delete all its saved shelf placements?\n\n"
+            "The working product record and CSV file will remain.",
+            parent=self,
+        )
+        if not confirmed:
+            return
+        try:
+            self.database.wipe_staged_exception(product_id)
+        except Exception as error:
+            messagebox.showerror("Wipe failed", str(error), parent=self)
+            return
+        self.product_id_var.set("")
+        self.product_name_var.set("")
+        self._refresh_after_change()
+        if self.status_text:
+            self.status_text.set(f"Wiped {product_id} from staging, catalog, and saved shelf placements.")
 
     def refresh_pending_tree(self) -> None:
+        selected = set(self.pending_tree.selection())
         self.pending_tree.delete(*self.pending_tree.get_children())
-        pending = self.database.get_pending_csv_updates()
-        for item in pending:
+        staged = self.database.get_exception_staging()
+        for item in staged:
             created = item["created_at"].replace("T", " ") if item["created_at"] else ""
+            missing = []
+            if not item["csv_updated"]:
+                missing.append("CSV")
+            if not item["catalog_updated"]:
+                missing.append("catalog")
+            status = "Updated" if not missing else "Hasn't Add to: " + " + ".join(missing)
+            iid = f"stage-{item['id']}"
             self.pending_tree.insert(
                 "",
                 "end",
-                values=(item["product_id"], item["product_name"], item["slot_name"], created),
+                iid=iid,
+                values=(item["product_id"], item["product_name"], item["slot_name"], status, created),
             )
-        self.pending_summary_text.set(f"{len(pending):,} staged CSV update(s)")
+            if iid in selected:
+                self.pending_tree.selection_add(iid)
+        self.pending_summary_text.set(f"{len(staged):,} staged exception(s)")
 
     def refresh_on_hand_tree(self) -> None:
         self.on_hand_tree.delete(*self.on_hand_tree.get_children())

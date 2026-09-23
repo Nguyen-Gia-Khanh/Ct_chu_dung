@@ -19,7 +19,8 @@ server is required.
 5. **Switch / Combine Cells** — load two shelves independently, select one cell
    on each side, then atomically switch their contents or combine one complete
    cell into the other.
-6. **Special Exceptions** — assign products that need multiple shelf locations.
+6. **Special Exceptions** — assign products to multiple shelf locations and
+   register staged exceptions in the CSV and full catalog separately.
 7. **Web Location Sync** — import a KiotViet Excel export, inspect location
    differences, resync mismatched products, and export a comparison workbook.
 
@@ -137,6 +138,19 @@ The location rule is centralized in `mapper/common.py`. For Floor `1`, Side
 ```text
 L1-1A8-10
 ```
+
+## Special exceptions
+
+On tab 6, enter a product ID and optional name, load a cell, then assign it.
+The staged row remains visible while you register the product with **Append
+back to CSV** and **Add to catalog**. Select a row to register one product;
+clear the selection to process every product still waiting for that target.
+The Staged Status column shows the remaining destinations or **Updated**.
+Changing a staged name reopens both registrations so the new name can be saved.
+
+**Wipe from treeview** removes the selected product from staging and the full
+catalog, and deletes its regular and exception shelf placements. The working
+product record and any CSV file remain. The app asks for confirmation first.
 
 ## CSV behavior
 
