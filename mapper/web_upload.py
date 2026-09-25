@@ -313,32 +313,7 @@ const lookupProduct = async (skuValue, auth) => {
         const productForEdit = Object.assign({}, scope.dataItem || {}, product);
         scope.$applyAsync(() => {
             try {
-                const prevX = window.scrollX || window.pageXOffset || 0;
-                const prevY = window.scrollY || window.pageYOffset || 0;
-                const docElem = document.documentElement;
-                const body = document.body;
-                const prevDocTop = docElem ? docElem.scrollTop : 0;
-                const prevBodyTop = body ? body.scrollTop : 0;
-
-                const origScrollTo = window.scrollTo;
-                const origScroll = window.scroll;
-                const origScrollBy = window.scrollBy;
-
-                if (typeof window.scrollTo === 'function') window.scrollTo = () => {};
-                if (typeof window.scroll === 'function') window.scroll = () => {};
-                if (typeof window.scrollBy === 'function') window.scrollBy = () => {};
-
-                try {
-                    scope.UpdateProduct(productForEdit);
-                } finally {
-                    window.scrollTo = origScrollTo;
-                    window.scroll = origScroll;
-                    window.scrollBy = origScrollBy;
-
-                    if (typeof window.scrollTo === 'function') window.scrollTo(prevX, prevY);
-                    if (docElem && docElem.scrollTop !== prevDocTop) docElem.scrollTop = prevDocTop;
-                    if (body && body.scrollTop !== prevBodyTop) body.scrollTop = prevBodyTop;
-                }
+                scope.UpdateProduct(productForEdit);
 
                 finish({
                     ok: true,
@@ -478,12 +453,6 @@ const findCurrentAuth = () => {
 # WebDriver arguments, never interpolated into executable JavaScript.
 DOM_SCRIPT = r"""
 const [action, paths, value] = arguments;
-const prevScrollX = window.scrollX || window.pageXOffset || 0;
-const prevScrollY = window.scrollY || window.pageYOffset || 0;
-const docElem = document.documentElement;
-const body = document.body;
-const prevDocTop = docElem ? docElem.scrollTop : 0;
-const prevBodyTop = body ? body.scrollTop : 0;
 
 const visible = e => !!e && e.getClientRects().length > 0 &&
     getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
@@ -515,11 +484,6 @@ const setValue = (e, text) => {
 };
 const targetClick = e => {
     if (!e || e.disabled || e.getAttribute('aria-disabled') === 'true' || e.classList.contains('disabled')) return false;
-    const prevX = window.scrollX || window.pageXOffset || 0;
-    const prevY = window.scrollY || window.pageYOffset || 0;
-    const dTop = docElem ? docElem.scrollTop : 0;
-    const bTop = body ? body.scrollTop : 0;
-
     const anchor = e.tagName === 'A' ? e : (e.closest ? e.closest('a') : null);
     if (anchor) {
         const href = anchor.getAttribute('href');
@@ -528,25 +492,7 @@ const targetClick = e => {
         }
     }
 
-    const origScrollTo = window.scrollTo;
-    const origScroll = window.scroll;
-    const origScrollBy = window.scrollBy;
-
-    if (typeof window.scrollTo === 'function') window.scrollTo = () => {};
-    if (typeof window.scroll === 'function') window.scroll = () => {};
-    if (typeof window.scrollBy === 'function') window.scrollBy = () => {};
-
-    try {
-        e.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
-    } finally {
-        window.scrollTo = origScrollTo;
-        window.scroll = origScroll;
-        window.scrollBy = origScrollBy;
-
-        if (typeof window.scrollTo === 'function') window.scrollTo(prevX, prevY);
-        if (docElem && docElem.scrollTop !== dTop) docElem.scrollTop = dTop;
-        if (body && body.scrollTop !== bTop) body.scrollTop = bTop;
-    }
+    e.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
     return true;
 };
 const widget = root => {
@@ -751,18 +697,7 @@ const executeAction = () => {
     throw Error('Unknown DOM operation: ' + action);
 };
 
-let domResult;
-try {
-    domResult = executeAction();
-} finally {
-    if ((window.scrollX || window.pageXOffset || 0) !== prevScrollX ||
-        (window.scrollY || window.pageYOffset || 0) !== prevScrollY) {
-        if (typeof window.scrollTo === 'function') window.scrollTo(prevScrollX, prevScrollY);
-    }
-    if (docElem && docElem.scrollTop !== prevDocTop) docElem.scrollTop = prevDocTop;
-    if (body && body.scrollTop !== prevBodyTop) body.scrollTop = prevBodyTop;
-}
-return domResult;
+return executeAction();
 """
 
 
