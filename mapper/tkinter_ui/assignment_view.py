@@ -590,9 +590,11 @@ class AssignmentView(ttk.Frame):
             row_frame.grid(row=screen_row, column=1, sticky="nsew", pady=2)
             row_frame.grid_propagate(False)
             row_frame.rowconfigure(0, weight=1)
-            for slot_index in range(1, count + 1):
+            even_side = side.isdigit() and int(side) % 2 == 0
+            slot_numbers = range(count, 0, -1) if even_side else range(1, count + 1)
+            for display_column, slot_index in enumerate(slot_numbers):
                 row_frame.columnconfigure(
-                    slot_index - 1, weight=1, uniform=f"r{row_number}"
+                    display_column, weight=1, uniform=f"r{row_number}"
                 )
                 slot_name = make_slot_name(
                     floor, shelf_code, row_number, slot_index, side=side
@@ -617,7 +619,7 @@ class AssignmentView(ttk.Frame):
                     highlightthickness=0,
                     font=("Segoe UI", 9, "bold" if selected else "normal"),
                 )
-                button.grid(row=0, column=slot_index - 1, sticky="nsew", padx=1, pady=1)
+                button.grid(row=0, column=display_column, sticky="nsew", padx=1, pady=1)
                 self.slot_buttons[slot_name] = button
 
         ttk.Separator(self.shelf_scroll.inner).grid(
