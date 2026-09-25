@@ -56,14 +56,20 @@ python warehouse_mapper.py
 `data/warehouse_locations.db`. To choose another database, run
 `python warehouse_mapper.py --db path/to/file.db`.
 
-To rebuild both executables after changing the source, run:
+The executable contains its own Python runtime and libraries. It does not load
+newly installed packages from a venv when you double-click it. To rebuild it
+with the packages from the shared `Auto/.venv`, install the build tool in that
+venv, then run:
 
 ```powershell
-py -m pip install pyinstaller reportlab pypdf
+& '..\..\.venv\Scripts\python.exe' -m pip install pyinstaller
 py utils/build_exe.py
 ```
 
 Use `py utils/build_exe.py --app mapper` or `--app labels` to rebuild just one.
+The build script selects `Auto/.venv` when present. Pass `--python` followed by
+another `python.exe` path to select a different environment. The mapper build
+includes Selenium's Chrome modules for the optional KiotViet connection.
 The builds create single-file executables at the project root, so opening them
 takes a few seconds while they unpack their runtimes.
 

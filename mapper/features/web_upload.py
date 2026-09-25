@@ -10,6 +10,7 @@ deliberately leave the website quantity untouched.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from time import monotonic, sleep
 from typing import Callable
@@ -759,11 +760,16 @@ class WebsiteUploader:
             return
         try:
             from selenium import webdriver
+            options = webdriver.ChromeOptions()
         except ImportError as error:
+            if getattr(sys, "frozen", False):
+                raise UploadError(
+                    "This executable is missing Selenium modules. Rebuild warehouse_mapper.exe "
+                    "from the project venv with: py utils/build_exe.py --app mapper"
+                ) from error
             raise UploadError(
                 "Install Selenium in the same venv as this app:\n\npython -m pip install -U selenium"
             ) from error
-        options = webdriver.ChromeOptions()
         options.debugger_address = DEBUGGER_ADDRESS
         try:
             self.driver = webdriver.Chrome(options=options)
