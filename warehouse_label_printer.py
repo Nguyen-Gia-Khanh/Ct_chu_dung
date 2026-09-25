@@ -48,7 +48,7 @@ class PrintedPdfHit:
 
 
 _PRINT_FILE_TIME = re.compile(
-    r"warehouse_labels_(?:location_only_|product_only_|location_|product_)?\d+cm_(?:portrait_|landscape_)?(\d{8})_(\d{6})_(\d{6})\.pdf$",
+    r"warehouse_labels_(?:location_only_|product_only_|location_|product_)?[\d.]+cm_(?:portrait_|landscape_)?(\d{8})_(\d{6})_(\d{6})\.pdf$",
     re.IGNORECASE,
 )
 
@@ -242,7 +242,7 @@ class LabelPrinterApp:
         self.print_reference_text = tk.StringVar(value="No previous PDFs loaded.")
         self.db_text = tk.StringVar(value=str(self.database.path))
         self.search_text = tk.StringVar()
-        self.label_height = tk.IntVar(value=7)
+        self.label_height = tk.DoubleVar(value=7.0)
         self.summary_text = tk.StringVar(value="Select a shelf to begin.")
         self.location_text = tk.StringVar(value="Click a cell")
         self.status_text = tk.StringVar(value="Uses committed data. Commit changes in the mapper, then press Refresh here.")
@@ -341,8 +341,9 @@ class LabelPrinterApp:
         buttons = ttk.Frame(footer)
         buttons.pack(fill="x")
         ttk.Label(buttons, text="Label height:").pack(side="left")
-        ttk.Radiobutton(buttons, text="7 cm", variable=self.label_height, value=7).pack(side="left", padx=(6, 8))
-        ttk.Radiobutton(buttons, text="15 cm", variable=self.label_height, value=15).pack(side="left", padx=(0, 12))
+        ttk.Radiobutton(buttons, text="4 cm", variable=self.label_height, value=4.0).pack(side="left", padx=(6, 8))
+        ttk.Radiobutton(buttons, text="7 cm", variable=self.label_height, value=7.0).pack(side="left", padx=(0, 8))
+        ttk.Radiobutton(buttons, text="14.5 cm", variable=self.label_height, value=14.5).pack(side="left", padx=(0, 12))
         self.portrait_check = ttk.Checkbutton(
             buttons,
             text="Portrait orientation",
@@ -621,7 +622,9 @@ class LabelPrinterApp:
                         parent=self.root,
                     )
                     return
-            height_cm = int(self.label_height.get())
+            height_val = float(self.label_height.get())
+            height_cm = int(height_val) if height_val.is_integer() else height_val
+            height_label = f"{height_cm}"
             orientation = "portrait" if self.is_portrait.get() else "landscape"
             print_mode = (
                 "location_only" if self.location_only.get()
@@ -632,7 +635,7 @@ class LabelPrinterApp:
             messagebox.showerror("Cannot print labels", str(error), parent=self.root)
             return
         mode_prefix = f"{print_mode}_" if print_mode != "full" else ""
-        output = Path(__file__).resolve().parent / "label_printouts" / f"warehouse_labels_{mode_prefix}{height_cm}cm_{orientation}_{datetime.now():%Y%m%d_%H%M%S_%f}.pdf"
+        output = Path(__file__).resolve().parent / "label_printouts" / f"warehouse_labels_{mode_prefix}{height_label}cm_{orientation}_{datetime.now():%Y%m%d_%H%M%S_%f}.pdf"
         self.busy = True
         self.update_summary()
         skip_note = f" Skipped {skipped_count} cell(s) found in previous PDFs." if skipped_count else ""

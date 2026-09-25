@@ -626,9 +626,11 @@ class PrimalQueueView(ttk.Frame):
             row_frame.grid_propagate(False)
             row_frame.rowconfigure(0, weight=1)
 
-            for slot_number in range(1, count + 1):
+            even_side = side.isdigit() and int(side) % 2 == 0
+            slot_numbers = range(count, 0, -1) if even_side else range(1, count + 1)
+            for display_column, slot_number in enumerate(slot_numbers):
                 row_frame.columnconfigure(
-                    slot_number - 1,
+                    display_column,
                     weight=1,
                     uniform=f"primal-r{row_number}",
                 )
@@ -653,7 +655,7 @@ class PrimalQueueView(ttk.Frame):
                 )
                 btn.grid(
                     row=0,
-                    column=slot_number - 1,
+                    column=display_column,
                     sticky="nsew",
                     padx=1,
                     pady=1,
