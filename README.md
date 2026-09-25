@@ -42,8 +42,8 @@ states. A working product is in exactly one of them at a time.
 ## Run on Windows 11
 
 Double-click `warehouse_mapper.exe` in the project folder to open the desktop
-app without VS Code or a Python installation. The executable is built locally
-and sits beside `warehouse_mapper.py`; Git ignores the generated `.exe`.
+app without VS Code or a Python installation. The executable is committed at
+the project root beside `warehouse_mapper.py`.
 
 To run the source instead, from the project folder with Python installed:
 
@@ -195,7 +195,7 @@ assignment time.
 
 | Path | Responsibility |
 | --- | --- |
-| `warehouse_mapper.py`, `warehouse_mapper.exe` | Root desktop launchers. The executable is generated locally. |
+| `warehouse_mapper.py`, `warehouse_mapper.exe` | Root desktop launchers. Rebuild the executable after source changes. |
 | `warehouse_label_printer.py` | Root label printer launcher. |
 | `warehouse_web.py` | Root launcher for the deprecated web UI. |
 | `ui/desktop/` | Tkinter window, tabs, widgets, and action handlers. |

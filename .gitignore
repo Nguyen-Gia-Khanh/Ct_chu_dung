@@ -30,6 +30,3 @@ data/*
 !data/README.md
 tmp/
 ui/web/node_modules/
-
-# Local Windows build output
-/warehouse_mapper.exe
