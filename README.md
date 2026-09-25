@@ -111,15 +111,18 @@ afterward when KiotViet must receive the new location IDs.
 ### Compare and resync KiotViet locations
 
 1. On tab 7, press **Import Web's Data** and choose the KiotViet `.xlsx` export.
+   Import, comparison, and export run in the background while a thin loading bar
+   shows activity.
 2. Confirm the worksheet and columns. The supplied KiotViet headers **Mã hàng**
    and **Vị trí** are selected automatically.
-3. Review website and local locations side by side. Only product IDs registered
-   in the local product database with saved shelf assignments are compared.
-   Local IDs absent from the export are shown separately and are not uploaded.
+3. Review website and local locations side by side. A website location with no
+   saved local location is queued to be cleared on the website. Local IDs absent
+   from the export are shown separately and are not uploaded.
 4. Connect Chrome on tab 2, then press **Web resync** on tab 7. The app saves
    each comparable mismatch in sequence using tab 2's location-only
-   upload; stock quantities are untouched. Successfully resynced rows are
-   excluded from another upload until a new export is imported.
+   upload; an empty local location clears the website selection without
+   creating a location. Stock quantities are untouched. Successfully resynced
+   rows are excluded from another upload until a new export is imported.
 5. Press **Export comparison excel** to save the remaining mismatches under
    `xl/app_result/` as an `.xlsx` file with exactly `product_id`,
    `wrong_location`, and `true_location`.

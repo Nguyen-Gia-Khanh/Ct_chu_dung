@@ -69,8 +69,10 @@ class LocationUpdate:
     location_id: str
 
     def __post_init__(self) -> None:
-        if not self.product_id.strip() or not self.location_id.strip():
-            raise ValueError("A product ID and a location ID are required.")
+        if not self.product_id.strip():
+            raise ValueError("A product ID is required.")
+        if self.location_id and not self.location_id.strip():
+            raise ValueError("Use an empty location ID to clear the website location.")
 
 
 # This replaces the old search-box + fixed-result-row XPaths. It runs inside the
@@ -686,6 +688,18 @@ const executeAction = () => {
         return w ? w.value() : e.value;
     }
     if (action === 'location_selected') return onlySelectedLocation(one(paths), value);
+    if (action === 'location_clear') {
+        const root = one(paths);
+        if (!root) return false;
+        const found = widget(root);
+        if (!found || found.kind !== 'kendoMultiSelect') return false;
+        const w = found.w;
+        if (w.element && w.element[0] && !editable(w.element[0]))
+            throw Error('The location selector is disabled or read-only.');
+        w.value([]);
+        w.trigger('change');
+        return Array.from(w.value() || []).length === 0;
+    }
     if (action === 'location_pick') return chooseLocation(one(paths), value);
     if (action === 'location_pick_id') {
         const root = one(paths);
@@ -1054,6 +1068,11 @@ class WebsiteUploader:
         progress(f"Selecting new location {target}…")
         self._select_location_id(product, new_id)
 
+    def _clear_location(self) -> None:
+        self._wait("finding the location field", lambda: self._dom("present", LOCATION_FIELD_XPATH))
+        if not self._dom("location_clear", LOCATION_FIELD_XPATH):
+            raise UploadError("The website location selector could not be cleared.")
+
     def _save_product(
         self,
         product: UploadProduct | LocationUpdate,
@@ -1084,7 +1103,7 @@ class WebsiteUploader:
         # reopens the product, then refreshes once more to close the form.
         self._pause()
 
-        if VERIFY_AFTER_SAVE:
+        if VERIFY_AFTER_SAVE and (not location_only or product.location_id):
             progress(
                 "Reloading the saved product to verify its location…"
                 if location_only else
@@ -1111,6 +1130,8 @@ class WebsiteUploader:
             return f"Uploaded and verified: {product.product_id} · qty {product.stock_qty} · {product.location_id}.{note}"
 
         if location_only:
+            if not product.location_id:
+                return f"Location cleared: {product.product_id}."
             return f"Location saved: {product.product_id} · {product.location_id}."
         return f"Uploaded: {product.product_id} · qty {product.stock_qty} · {product.location_id}."
 
@@ -1183,17 +1204,23 @@ class WebsiteUploader:
             progress(f"Finding product {product.product_id}…")
             self._open_product(product)
 
-            progress(f"Selecting location {product.location_id}…")
-            self._set_location(product, progress)
-            self._wait(
-                "checking product and location before Save",
-                lambda: self._location_values_match(product),
-                check_errors=True,
-            )
+            if product.location_id:
+                progress(f"Selecting location {product.location_id}…")
+                self._set_location(product, progress)
+                self._wait(
+                    "checking product and location before Save",
+                    lambda: self._location_values_match(product),
+                    check_errors=True,
+                )
+            else:
+                progress("Clearing the website location…")
+                self._clear_location()
 
             if should_save:
                 return self._save_product(product, progress, location_only=True)
 
+            if not product.location_id:
+                return "Location cleared in the edit form. Press Lưu manually in Chrome."
             return "Location filled. Stock was untouched. Press Lưu manually in Chrome."
 
         except UploadError:

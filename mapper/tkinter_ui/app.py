@@ -1883,13 +1883,19 @@ class WarehouseMapperApp:
             self.location_comparison.set_busy(True)
         if len(products) == 1:
             product = products[0]
-            action = "Updating location" if location_only else "Uploading"
-            status = f"{action} {product.product_id} → {product.location_id}…"
+            if location_only and not product.location_id:
+                status = f"Clearing web location for {product.product_id}…"
+            else:
+                action = "Updating location" if location_only else "Uploading"
+                status = f"{action} {product.product_id} → {product.location_id}…"
         else:
-            action = "Updating locations for" if location_only else "Uploading"
-            status = (
-                f"{action} {len(products)} products → {products[0].location_id}…"
-            )
+            if location_only and all(not product.location_id for product in products):
+                status = f"Clearing web locations for {len(products)} products…"
+            elif location_only and any(not product.location_id for product in products):
+                status = f"Resyncing web locations for {len(products)} products…"
+            else:
+                action = "Updating locations for" if location_only else "Uploading"
+                status = f"{action} {len(products)} products → {products[0].location_id}…"
         self.assignments.upload_status_text.set(status)
         if hasattr(self, "location_comparison") and source == "comparison":
             self.location_comparison.set_progress(status)
@@ -1970,7 +1976,10 @@ class WarehouseMapperApp:
                 summary = result
             elif location_only:
                 if len({item.location_id for item in products}) == 1:
-                    summary = f"Updated web locations for {total} products at {products[0].location_id}."
+                    if products[0].location_id:
+                        summary = f"Updated web locations for {total} products at {products[0].location_id}."
+                    else:
+                        summary = f"Cleared web locations for {total} products."
                 else:
                     summary = f"Updated web locations for {total} products."
             else:

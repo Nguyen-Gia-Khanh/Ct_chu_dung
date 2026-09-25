@@ -106,7 +106,7 @@ def compare_locations(
                     product_id,
                     web_locations[product_id],
                     ", ".join(local),
-                    len(local) == 1,
+                    len(local) <= 1,
                 )
             )
     return differences, missing

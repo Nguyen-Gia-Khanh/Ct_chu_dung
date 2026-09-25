@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Thread
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -120,6 +122,13 @@ class LocationComparisonView(ttk.Frame):
         self.missing_ids: list[str] = []
         self.resynced: dict[str, str] = {}
         self.busy = False
+        self._comparison_busy = False
+        self._web_busy = False
+        self._comparison_events: Queue = Queue()
+        self._comparison_action = ""
+        self._loading_after_id: str | None = None
+        self._loading_position = 0
+        self._loading_direction = 1
         self.summary = tk.StringVar(self, value="Import a KiotViet Excel export to compare locations.")
         self.file_label = tk.StringVar(self, value="No web data imported")
         self.progress = tk.StringVar(self, value="")
@@ -146,7 +155,15 @@ class LocationComparisonView(ttk.Frame):
         self.refresh_button.pack(side="left", padx=(8, 0))
         ttk.Label(self, textvariable=self.file_label, foreground="#555555").pack(anchor="w")
         ttk.Label(self, textvariable=self.summary).pack(anchor="w", pady=(4, 8))
-        ttk.Label(self, textvariable=self.progress, foreground="#0969da").pack(anchor="w", pady=(0, 6))
+        activity = ttk.Frame(self)
+        activity.pack(fill="x", pady=(0, 6))
+        ttk.Label(activity, textvariable=self.progress, foreground="#0969da").pack(anchor="w")
+        self.loading_bar = tk.Canvas(
+            activity, width=170, height=4, bd=0, highlightthickness=0, background="#e4e9ef"
+        )
+        self.loading_segment = self.loading_bar.create_rectangle(
+            0, 0, 44, 4, fill="#0969da", outline=""
+        )
 
         frame = ttk.Frame(self)
         frame.pack(fill="both", expand=True)
@@ -171,7 +188,7 @@ class LocationComparisonView(ttk.Frame):
         self.tree.tag_configure("resynced", foreground="#217046")
         ttk.Label(
             self,
-            text="Missing export IDs cannot be compared. Products with several or no local locations appear but need manual web review.",
+            text="Missing export IDs cannot be compared. Products with several local locations need manual web review; an empty local location clears the web location.",
             foreground="#555555",
         ).pack(anchor="w", pady=(8, 0))
 
@@ -205,51 +222,185 @@ class LocationComparisonView(ttk.Frame):
                 self.wait_window(dialog)
                 if dialog.result is None:
                     return
-                web_locations = read_web_locations(path, *dialog.result)
+                columns = dialog.result
             finally:
                 workbook.close()
         except Exception as error:
             messagebox.showerror("Excel import failed", str(error), parent=self)
             return
-        self.web_locations = web_locations
-        self.imported_path = Path(path)
-        self.file_label.set(f"Imported {self.imported_path.name}: {len(web_locations):,} website product IDs")
-        self.resynced.clear()
-        self.progress.set("")
-        self.refresh()
+        self._start_comparison("import", path=Path(path), columns=columns)
 
     def refresh(self) -> None:
-        self.tree.delete(*self.tree.get_children())
-        if self.web_locations is None:
+        if self.busy or self.web_locations is None:
             return
-        local_locations = self._local_locations()
-        self.differences, self.missing_ids = compare_locations(
-            local_locations, self.web_locations
-        )
-        for difference in self.differences:
+        self._start_comparison("refresh")
+
+    def _start_comparison(
+        self, action: str, *, path: Path | None = None,
+        columns: tuple[str, int, int, int] | None = None,
+    ) -> None:
+        if self.busy:
+            return
+        self._comparison_action = action
+        self._comparison_path = path
+        self._comparison_busy = True
+        self.progress.set({
+            "import": "Importing and comparing locations…",
+            "refresh": "Refreshing comparison…",
+            "resync": "Checking current local locations…",
+            "export": "Preparing comparison Excel…",
+        }[action])
+        self._set_busy_state()
+        Thread(
+            target=self._run_comparison,
+            args=(action, path, columns,
+                  None if action == "import" else dict(self.web_locations or {}),
+                  dict(self.resynced)),
+            daemon=True,
+        ).start()
+        self.after(50, self._poll_comparison)
+
+    def _run_comparison(
+        self, action: str, path: Path | None, columns: tuple[str, int, int, int] | None,
+        web_snapshot: dict[str, str] | None, resynced_snapshot: dict[str, str],
+    ) -> None:
+        # This worker only reads data and queues a result; all Tk updates stay on the UI thread.
+        try:
+            web_locations = read_web_locations(path, *columns) if columns is not None else web_snapshot
+            if web_locations is None:
+                raise ValueError("Import website data before comparing locations.")
+            local_locations = self._local_locations()
+            differences, missing_ids = compare_locations(local_locations, web_locations)
+            export_path = None
+            export_count = 0
+            if action == "export":
+                remaining = [row for row in differences
+                             if resynced_snapshot.get(row.product_id) != row.true_location]
+                export_count = len(remaining)
+                if remaining:
+                    result_dir = application_directory() / "xl" / "app_result"
+                    result_dir.mkdir(parents=True, exist_ok=True)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    export_path = result_dir / f"kiotviet_location_comparison_{timestamp}.xlsx"
+                    counter = 2
+                    while export_path.exists():
+                        export_path = result_dir / f"kiotviet_location_comparison_{timestamp}_{counter}.xlsx"
+                        counter += 1
+                    export_comparison(export_path, remaining)
+            self._comparison_events.put((
+                "done", web_locations, local_locations, differences, missing_ids,
+                export_path, export_count,
+            ))
+        except Exception as error:
+            self._comparison_events.put(("error", str(error)))
+
+    def _poll_comparison(self) -> None:
+        try:
+            event, *payload = self._comparison_events.get_nowait()
+        except Empty:
+            self.after(50, self._poll_comparison)
+            return
+        if event == "error":
+            self._comparison_busy = False
+            self._set_busy_state()
+            self.progress.set("")
+            messagebox.showerror(f"{self._comparison_action.title()} failed", payload[0], parent=self)
+            return
+
+        (web_locations, local_locations, self.differences, self.missing_ids,
+         self._export_path, self._export_count) = payload
+        self.web_locations = web_locations
+        if self._comparison_action == "import":
+            self.imported_path = self._comparison_path
+            self.file_label.set(
+                f"Imported {self.imported_path.name}: {len(web_locations):,} website product IDs"
+            )
+            self.resynced.clear()
+        self.tree.delete(*self.tree.get_children())
+        self._render_local_locations = local_locations
+        self._render_rows = ([('difference', row) for row in self.differences]
+                             + [('missing', product_id) for product_id in self.missing_ids])
+        self._render_index = 0
+        self._render_comparison_rows()
+
+    def _render_comparison_rows(self) -> None:
+        # Large exports paint incrementally so the loading animation keeps moving.
+        next_index = min(self._render_index + 200, len(self._render_rows))
+        for kind, item in self._render_rows[self._render_index:next_index]:
+            if kind == "missing":
+                product_id = item
+                self.tree.insert(
+                    "", "end", iid=f"missing::{product_id}",
+                    values=(product_id, "(not in export)",
+                            ", ".join(self._render_local_locations[product_id]), "Cannot compare"),
+                    tags=("missing",),
+                )
+                continue
+            difference = item
             if self.resynced.get(difference.product_id) == difference.true_location:
                 status, tag = "Saved; re-export to verify", "resynced"
             elif not difference.can_resync:
-                if not difference.true_location:
-                    status, tag = "No local location; review", "missing"
-                else:
-                    status, tag = "Several local locations; review", "missing"
+                status, tag = "Several local locations; review", "missing"
+            elif not difference.true_location:
+                status, tag = "Ready to clear web location", ""
             else:
                 status, tag = "Unsynced", ""
             self.tree.insert(
                 "", "end", iid=f"difference::{difference.product_id}",
                 values=(difference.product_id, difference.wrong_location,
-                        difference.true_location, status),
+                        difference.true_location or "(none)", status),
                 tags=(tag,) if tag else (),
             )
-        for product_id in self.missing_ids:
-            self.tree.insert(
-                "", "end", iid=f"missing::{product_id}",
-                values=(product_id, "(not in export)", ", ".join(local_locations[product_id]),
-                        "Cannot compare"),
-                tags=("missing",),
-            )
-        self._update_summary()
+        self._render_index = next_index
+        if next_index < len(self._render_rows):
+            self.after(1, self._render_comparison_rows)
+            return
+        self._comparison_busy = False
+        self._set_busy_state()
+        self.progress.set("")
+        if self._comparison_action == "resync":
+            self._resync_ready()
+        elif self._comparison_action == "export":
+            if self._export_path is None:
+                messagebox.showinfo("No differences", "There are no different locations to export.", parent=self)
+            else:
+                self.summary.set(
+                    f"Exported {self._export_count:,} unsynced location(s) to {self._export_path}."
+                )
+
+    def _set_busy_state(self) -> None:
+        self.busy = self._comparison_busy or self._web_busy
+        state = "disabled" if self.busy else "normal"
+        self.import_button.configure(state=state)
+        self.refresh_button.configure(state=state)
+        if self.web_locations is None:
+            self.resync_button.configure(state="disabled")
+            self.export_button.configure(state="disabled")
+        else:
+            self._update_summary()
+        if self.busy and self._loading_after_id is None:
+            self.loading_bar.pack(anchor="w", pady=(0, 6))
+            self._animate_loading()
+        elif not self.busy and self._loading_after_id is not None:
+            self.after_cancel(self._loading_after_id)
+            self._loading_after_id = None
+            self.loading_bar.pack_forget()
+
+    def _animate_loading(self) -> None:
+        if not self.busy:
+            self._loading_after_id = None
+            return
+        self._loading_position += self._loading_direction * 5
+        if self._loading_position >= 126:
+            self._loading_position = 126
+            self._loading_direction = -1
+        elif self._loading_position <= 0:
+            self._loading_position = 0
+            self._loading_direction = 1
+        self.loading_bar.coords(
+            self.loading_segment, self._loading_position, 0, self._loading_position + 44, 4
+        )
+        self._loading_after_id = self.after(30, self._animate_loading)
 
     def _update_summary(self) -> None:
         unsynced = self.exportable_differences()
@@ -266,7 +417,6 @@ class LocationComparisonView(ttk.Frame):
                 if self.resynced.get(row.product_id) != row.true_location]
 
     def pending_updates(self) -> list[LocationUpdate]:
-        self.refresh()
         return [
             LocationUpdate(row.product_id, row.true_location)
             for row in self.differences
@@ -274,6 +424,11 @@ class LocationComparisonView(ttk.Frame):
         ]
 
     def resync(self) -> None:
+        if self.busy or self.web_locations is None:
+            return
+        self._start_comparison("resync")
+
+    def _resync_ready(self) -> None:
         updates = self.pending_updates()
         if not updates:
             messagebox.showinfo("No unsynced locations", "There are no comparable unsynced products to upload.", parent=self)
@@ -288,40 +443,20 @@ class LocationComparisonView(ttk.Frame):
             if self.tree.exists(iid):
                 self.tree.item(
                     iid,
-                    values=(row.product_id, row.wrong_location, row.true_location,
+                    values=(row.product_id, row.wrong_location, row.true_location or "(none)",
                             "Saved; re-export to verify"),
                     tags=("resynced",),
                 )
             self._update_summary()
 
     def set_busy(self, busy: bool) -> None:
-        self.busy = busy
-        self.import_button.configure(state="disabled" if busy else "normal")
-        self.refresh_button.configure(state="disabled" if busy else "normal")
-        self.refresh()
+        self._web_busy = busy
+        self._set_busy_state()
 
     def set_progress(self, message: str) -> None:
         self.progress.set(message)
 
     def export_excel(self) -> None:
-        if self.busy:
+        if self.busy or self.web_locations is None:
             return
-        self.refresh()
-        differences = self.exportable_differences()
-        if not differences:
-            messagebox.showinfo("No differences", "There are no different locations to export.", parent=self)
-            return
-        try:
-            result_dir = application_directory() / "xl" / "app_result"
-            result_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            path = result_dir / f"kiotviet_location_comparison_{timestamp}.xlsx"
-            counter = 2
-            while path.exists():
-                path = result_dir / f"kiotviet_location_comparison_{timestamp}_{counter}.xlsx"
-                counter += 1
-            export_comparison(path, differences)
-        except Exception as error:
-            messagebox.showerror("Excel export failed", str(error), parent=self)
-            return
-        self.summary.set(f"Exported {len(differences):,} unsynced location(s) to {path}.")
+        self._start_comparison("export")
