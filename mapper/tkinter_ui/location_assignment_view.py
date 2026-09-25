@@ -35,6 +35,8 @@ class LocationAssignmentView(ttk.Frame):
         on_upload: Callable[[], object],
         on_modify_location: Callable[[], object],
         on_connect_chrome: Callable[[], object],
+        on_revert_shift: Callable[[], object] | None = None,
+        on_whole_mode_change: Callable[[bool], object] | None = None,
         barcode_scanner: BarcodeScanner | None = None,
     ):
         super().__init__(parent, padding=10)
@@ -52,6 +54,13 @@ class LocationAssignmentView(ttk.Frame):
             command=on_connect_chrome,
         )
         self.connect_chrome_button.pack(side="right")
+        self.revert_button = ttk.Button(
+            header,
+            text="Revert shift transfer",
+            command=on_revert_shift,
+            state="disabled",
+        )
+        self.revert_button.pack(side="right", padx=(0, 6))
 
         pane = ttk.Panedwindow(self, orient="horizontal")
         pane.pack(fill="both", expand=True)
@@ -88,6 +97,157 @@ class LocationAssignmentView(ttk.Frame):
             on_modify_location,
         )
         self.barcode_scanner = barcode_scanner
+        self.whole_mode = False
+        self._shift_clicked = False
+        self.on_assign_address = on_assign_address
+        self.on_catalog_to_queue = on_catalog_to_queue
+        self.on_queue_to_hand = on_queue_to_hand
+        self.on_whole_mode_change = on_whole_mode_change
+
+        style = ttk.Style(self)
+        style.configure(
+            "WholeMode.Commit.TButton",
+            font=("Segoe UI", 10, "bold italic"),
+            foreground="#b45309",
+            padding=(14, 7),
+        )
+        style.map(
+            "WholeMode.Commit.TButton",
+            foreground=[("disabled", "#a0a0a0"), ("active", "#92400e"), ("!disabled", "#b45309")],
+        )
+        style.configure(
+            "WholeMode.TButton",
+            font=("Segoe UI", 9, "bold italic"),
+            foreground="#b45309",
+        )
+        style.map(
+            "WholeMode.TButton",
+            foreground=[("disabled", "#a0a0a0"), ("active", "#92400e"), ("!disabled", "#b45309")],
+        )
+
+        self.bind_all("<KeyPress-Shift_L>", self._on_shift_press, add="+")
+        self.bind_all("<KeyPress-Shift_R>", self._on_shift_press, add="+")
+        self.bind_all("<KeyRelease-Shift_L>", self._on_shift_release, add="+")
+        self.bind_all("<KeyRelease-Shift_R>", self._on_shift_release, add="+")
+
+    def _is_active_tab(self) -> bool:
+        try:
+            return bool(self.winfo_ismapped())
+        except Exception:
+            return False
+
+    def _on_shift_press(self, event: tk.Event | None = None) -> None:
+        if not self._is_active_tab():
+            if self.whole_mode:
+                self.set_whole_mode(False)
+            return
+        self.set_whole_mode(True)
+
+    def _on_shift_release(self, event: tk.Event | None = None) -> None:
+        if self.whole_mode:
+            self.set_whole_mode(False)
+
+    def set_whole_mode(self, enabled: bool) -> None:
+        if self.whole_mode == enabled:
+            return
+        self.whole_mode = enabled
+        if getattr(self, "on_whole_mode_change", None) is not None:
+            try:
+                self.on_whole_mode_change(enabled)
+            except Exception:
+                pass
+        if hasattr(self, "assign_button"):
+            if enabled:
+                self.assign_button.configure(
+                    text="Transfer ALL on-hand → shelf (Whole mode)",
+                    style="WholeMode.Commit.TButton",
+                )
+            else:
+                self.assign_button.configure(
+                    text="Assign selected on-hand → loaded address",
+                    style="Commit.TButton",
+                )
+
+        if hasattr(self, "catalog_transfer_button"):
+            if enabled:
+                self.catalog_transfer_button.configure(
+                    text="Transfer selected → shelf (stock 999)",
+                    style="WholeMode.TButton",
+                )
+            else:
+                self.catalog_transfer_button.configure(
+                    text="Transfer selected to total queue",
+                    style="TButton",
+                )
+
+        if hasattr(self, "queue_move_button"):
+            if enabled:
+                self.queue_move_button.configure(
+                    text="Transfer queue → shelf (stock 999)",
+                    style="WholeMode.TButton",
+                )
+            else:
+                self.queue_move_button.configure(
+                    text="Move selected → on-hand",
+                    style="TButton",
+                )
+
+    def set_queue_button_clicks(self, remaining_clicks: int | None = None) -> None:
+        if not hasattr(self, "queue_move_button"):
+            return
+        if remaining_clicks is None or remaining_clicks <= 0:
+            if self.whole_mode:
+                self.queue_move_button.configure(
+                    text="Transfer queue → shelf (stock 999)",
+                    style="WholeMode.TButton",
+                )
+            else:
+                self.queue_move_button.configure(
+                    text="Move selected → on-hand",
+                    style="TButton",
+                )
+        else:
+            plural = "time" if remaining_clicks == 1 else "times"
+            self.queue_move_button.configure(
+                text=f"Click {remaining_clicks} more {plural} to transfer → shelf",
+                style="WholeMode.TButton",
+            )
+
+    def _on_assign_button_press(self, event: tk.Event) -> None:
+        if bool(event.state & 0x0001):
+            self._shift_clicked = True
+
+    def _handle_assign_click(self) -> None:
+        whole = self.whole_mode or getattr(self, "_shift_clicked", False)
+        self._shift_clicked = False
+        try:
+            self.on_assign_address(whole_mode=whole)
+        except TypeError:
+            self.on_assign_address()
+
+    def _on_catalog_transfer_button_press(self, event: tk.Event) -> None:
+        if bool(event.state & 0x0001):
+            self._shift_clicked = True
+
+    def _handle_catalog_transfer_click(self) -> None:
+        to_shelf = self.whole_mode or getattr(self, "_shift_clicked", False)
+        self._shift_clicked = False
+        try:
+            self.on_catalog_to_queue(to_shelf=to_shelf)
+        except TypeError:
+            self.on_catalog_to_queue()
+
+    def _on_queue_move_button_press(self, event: tk.Event) -> None:
+        if bool(event.state & 0x0001):
+            self._shift_clicked = True
+
+    def _handle_queue_move_click(self) -> None:
+        to_shelf = self.whole_mode or getattr(self, "_shift_clicked", False)
+        self._shift_clicked = False
+        try:
+            self.on_queue_to_hand(to_shelf=to_shelf)
+        except TypeError:
+            self.on_queue_to_hand()
 
     def _build_products_panel(
         self,
@@ -158,11 +318,13 @@ class LocationAssignmentView(ttk.Frame):
         ttk.Label(queue, textvariable=self.queue_count_text).grid(
             row=4, column=0, sticky="w", pady=(5, 0)
         )
-        ttk.Button(
+        self.queue_move_button = ttk.Button(
             queue,
             text="Move selected → on-hand",
-            command=on_queue_to_hand,
-        ).grid(row=5, column=0, sticky="ew", pady=(5, 0))
+            command=self._handle_queue_move_click,
+        )
+        self.queue_move_button.grid(row=5, column=0, sticky="ew", pady=(5, 0))
+        self.queue_move_button.bind("<Button-1>", self._on_queue_move_button_press)
 
         catalog.rowconfigure(0, weight=1)
         catalog.columnconfigure(0, weight=1)
@@ -196,11 +358,13 @@ class LocationAssignmentView(ttk.Frame):
         ttk.Label(catalog, textvariable=self.catalog_count_text).grid(
             row=1, column=0, sticky="w", pady=(5, 0)
         )
-        ttk.Button(
+        self.catalog_transfer_button = ttk.Button(
             catalog,
             text="Transfer selected to total queue",
-            command=on_catalog_to_queue,
-        ).grid(row=2, column=0, sticky="ew", pady=(5, 0))
+            command=self._handle_catalog_transfer_click,
+        )
+        self.catalog_transfer_button.grid(row=2, column=0, sticky="ew", pady=(5, 0))
+        self.catalog_transfer_button.bind("<Button-1>", self._on_catalog_transfer_button_press)
 
     @staticmethod
     def _configure_product_tree(tree: ttk.Treeview) -> None:
@@ -308,12 +472,15 @@ class LocationAssignmentView(ttk.Frame):
         ttk.Button(address, text="Load address →", command=on_load_address).grid(
             row=2, column=0, columnspan=5, sticky="ew", padx=2
         )
-        ttk.Button(
+        self.assign_button = ttk.Button(
             address,
             text="Assign selected on-hand → loaded address",
-            command=on_assign_address,
+            command=self._handle_assign_click,
             style="Commit.TButton",
-        ).grid(row=3, column=0, columnspan=5, sticky="ew", padx=2, pady=(6, 0))
+        )
+        self.assign_button.grid(row=3, column=0, columnspan=5, sticky="ew", padx=2, pady=(6, 0))
+        self.assign_button.bind("<Button-1>", self._on_assign_button_press)
+
         self.address_status_text = tk.StringVar(
             self, value="Enter an existing shelf address and load it."
         )
