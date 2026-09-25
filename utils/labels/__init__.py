@@ -1,0 +1,1 @@
+"""Warehouse label printing."""

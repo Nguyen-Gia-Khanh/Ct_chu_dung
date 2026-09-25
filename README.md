@@ -1,8 +1,7 @@
 # Warehouse Shelf Mapper
 
 A local Windows/Tkinter application for mapping products to irregular warehouse
-shelves. SQLite lives beside the Python entry point, so no Docker or database
-server is required.
+shelves. SQLite is local, so no Docker or database server is required.
 
 ## Even-side shelf orientation
 
@@ -42,12 +41,16 @@ states. A working product is in exactly one of them at a time.
 
 ## Run on Windows 11
 
-Keep `warehouse_mapper.py`, the `mapper` folder, and the `utils` folder together.
-From the activated virtual environment in the project folder:
+From the project folder, with the project's Python environment activated:
 
 ```powershell
 python warehouse_mapper.py
 ```
+
+`py warehouse_mapper.py` also works on Windows. The root script is a launcher;
+the Tkinter implementation is in `ui/desktop/`. The launcher uses an existing
+root `warehouse_locations.db` until it has been migrated. You can choose a
+database explicitly with `python warehouse_mapper.py --db path/to/file.db`.
 
 Selenium is only needed for the optional Chrome/KiotViet integration. Tab 7
 uses `openpyxl` to read and write `.xlsx` workbooks.
@@ -124,7 +127,7 @@ afterward when KiotViet must receive the new location IDs.
    creating a location. Stock quantities are untouched. Successfully resynced
    rows are excluded from another upload until a new export is imported.
 5. Press **Export comparison excel** to save the remaining mismatches under
-   `xl/app_result/` as an `.xlsx` file with exactly `product_id`,
+   `data/exports/location_comparison/` as an `.xlsx` file with exactly `product_id`,
    `wrong_location`, and `true_location`.
 
 Products with several local locations appear in the comparison and export,
@@ -148,7 +151,7 @@ An 11-character barcode such as `06410KFL850` is normalized to
 
 ## Location names
 
-The location rule is centralized in `mapper/common.py`. For Floor `1`, Side
+The location rule is centralized in `mapper/core/common.py`. For Floor `1`, Side
 `1`, Shelf `A`, Row `8`, Cell `10`, the generated ID is:
 
 ```text
@@ -175,46 +178,45 @@ shortened name. Extra CSV columns are allowed. Re-importing an existing product
 ID updates its names; it does not delete its shelf placement or historical
 assignment time.
 
-## Files
+## Code layout
 
-| File / Folder | Responsibility |
+| Path | Responsibility |
 | --- | --- |
-| `warehouse_mapper.py` | Application entry point. |
-| `mapper/database.py` | Pure backend SQLite schema and atomic queue/location operations. |
-| `mapper/csv_import.py` | Pure backend CSV reading and parsing (`read_csv`, `CSVData`). |
-| `mapper/common.py` | Location IDs, search normalization, and database path. |
-| `mapper/web_upload.py` | Optional Selenium/KiotViet integration. |
-| `mapper/tkinter_ui/` | Dedicated Tkinter Desktop UI package. |
-| `mapper/tkinter_ui/app.py` | Main window, tabs, and application controller (`WarehouseMapperApp`). |
-| `mapper/tkinter_ui/designer.py` | Tab 1: Shelf metadata and irregular row editor. |
-| `mapper/tkinter_ui/location_assignment_view.py` | Tab 2: Total queue, on-hand batch, address form, and address contents. |
-| `mapper/tkinter_ui/primal_queue_view.py` | Tab 3: Primal queue (hot sellers), catalog search, and shelf view. |
-| `mapper/tkinter_ui/shelf_browser.py` | Tab 4: Read-only shelf selector and front view. |
-| `mapper/tkinter_ui/cell_transfer_view.py` | Tab 5: Two-shelf cell switch/combine workspace. |
-| `mapper/tkinter_ui/assignment_view.py` | Shared shelf renderer plus stock quantity dialog. |
-| `mapper/tkinter_ui/widgets.py` | Shared custom UI widgets (`ScrollableFrame`). |
-| `mapper/tkinter_ui/csv_dialog.py` | Interactive column selection dialog for CSV import. |
-| `mapper/location_comparison.py` | KiotViet Excel import, location comparison, and three-column export. |
-| `mapper/tkinter_ui/location_comparison_view.py` | Tab 7 comparison and resync controls. |
+| `warehouse_mapper.py` | Stable Tkinter launcher. |
+| `ui/desktop/` | Tkinter window, tabs, widgets, and action handlers. |
+| `mapper/persistence/` | SQLite schema and catalog, shelf, inventory, and exception operations. |
+| `mapper/features/` | CSV import, location comparison, and optional KiotViet integration. |
+| `mapper/core/` | Shared location and search rules. |
+| `mapper/api/` | Local HTTP API for the deprecated web UI. |
+| `ui/web/` | Deprecated React/TypeScript UI, retained for reference. |
+| `utils/labels/` | Label printer (`python -m utils.labels`). |
+| `utils/laya/` | Laya extraction tools (`python -m utils.laya.year`, `.model`, or `.version --help`). |
+| `utils/icsparts/` | ICS Parts catalog and part master scrapers. |
+| `data/` | Local database and generated output, ignored by Git. |
+
+The supported interface is Tkinter. `python -m mapper --ui desktop` launches it
+directly. The web UI and its API remain available as deprecated code and are
+not part of the current optimization work.
 
 ## Data and backup
 
-The app creates `warehouse_locations.db` beside `warehouse_mapper.py`. Close the
-app and copy this one file to make a complete backup. Existing current-schema
-databases are upgraded automatically with the queue tables; shelves, placements,
-quantities, and timestamps are not rewritten.
+Close the application before moving or backing up its SQLite database. Existing
+databases at the project root continue to work through `warehouse_mapper.py`.
+To move an existing database and generated outputs into `data/`, preview the
+paths, then apply the migration:
 
-Deleting the database intentionally starts from an empty schema the next time
-the app runs.
+```powershell
+python -m utils.migrate_data
+python -m utils.migrate_data --apply
+```
+
+The migration makes a timestamped SQLite backup under `data/backups/` before
+moving the active database. Input CSV and XLSX files remain where they are.
+New installations create `data/warehouse_locations.db`. Copy the SQLite file
+with the application closed to make a backup.
 
 ## Checks
 
 ```powershell
-python -m unittest testers.test_on_hand_queue -v
-python -m unittest testers.test_cell_transfer -v
-python -m unittest testers.test_mapper_stock testers.test_web_upload testers.test_widgets -v
-python -m unittest testers.test_location_comparison testers.test_web_batch -v
+python -m unittest discover -s tests -v
 ```
-
-The on-hand tests cover persistence, exact-address assignment, shelf-to-on-hand
-returns, stock preservation, and transaction safety.

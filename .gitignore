@@ -24,3 +24,9 @@ xl/app_result/
 run.bat
 run.ps1
 test_flip/
+
+# Runtime data, local scratch space, and frontend dependencies
+data/*
+!data/README.md
+tmp/
+ui/web/node_modules/
