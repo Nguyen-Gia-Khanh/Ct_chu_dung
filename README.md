@@ -43,7 +43,8 @@ states. A working product is in exactly one of them at a time.
 
 Double-click `warehouse_mapper.exe` in the project folder to open the desktop
 app without VS Code or a Python installation. The executable is committed at
-the project root beside `warehouse_mapper.py`.
+the project root beside `warehouse_mapper.py`. Double-click
+`warehouse_label_printer.exe` there to open the label printer.
 
 To run the source instead, from the project folder with Python installed:
 
@@ -55,15 +56,16 @@ python warehouse_mapper.py
 `data/warehouse_locations.db`. To choose another database, run
 `python warehouse_mapper.py --db path/to/file.db`.
 
-To rebuild the executable after changing the source, run:
+To rebuild both executables after changing the source, run:
 
 ```powershell
-py -m pip install pyinstaller
+py -m pip install pyinstaller reportlab pypdf
 py utils/build_exe.py
 ```
 
-The build creates `warehouse_mapper.exe` at the project root. It is a single
-file, so opening it takes a few seconds while it unpacks its runtime.
+Use `py utils/build_exe.py --app mapper` or `--app labels` to rebuild just one.
+The builds create single-file executables at the project root, so opening them
+takes a few seconds while they unpack their runtimes.
 
 Selenium is only needed for the optional Chrome/KiotViet integration. Tab 7
 uses `openpyxl` to read and write `.xlsx` workbooks.
@@ -196,7 +198,7 @@ assignment time.
 | Path | Responsibility |
 | --- | --- |
 | `warehouse_mapper.py`, `warehouse_mapper.exe` | Root desktop launchers. Rebuild the executable after source changes. |
-| `warehouse_label_printer.py` | Root label printer launcher. |
+| `warehouse_label_printer.py`, `warehouse_label_printer.exe` | Root label printer launchers. |
 | `warehouse_web.py` | Root launcher for the deprecated web UI. |
 | `ui/desktop/` | Tkinter window, tabs, widgets, and action handlers. |
 | `mapper/persistence/` | SQLite schema and catalog, shelf, inventory, and exception operations. |
@@ -207,7 +209,7 @@ assignment time.
 | `utils/labels/` | Label printer implementation. |
 | `utils/laya/` | Laya extraction tools. |
 | `utils/icsparts/` | ICS Parts catalog and part master scrapers. |
-| `utils/build_exe.py` | Rebuilds the desktop executable. |
+| `utils/build_exe.py` | Rebuilds the desktop executables. |
 | `data/` | Local database and generated output, ignored by Git. |
 
 The supported interface is Tkinter. The web UI and its API remain available as
