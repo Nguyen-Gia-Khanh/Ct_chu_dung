@@ -665,6 +665,7 @@ class WarehouseMapperApp:
                 "prev_returned": prev_ret.stock_qty if prev_ret else None,
                 "was_in_returned": prev_ret is not None,
                 "was_in_products": pid in self.products,
+                "prev_transferred_stock": self.transferred_stock.get(pid),
             })
 
         transfer_data = {
@@ -692,7 +693,7 @@ class WarehouseMapperApp:
         for pid in queue_pids:
             self.staged_assignments.pop(pid, None)
             self.pending_unassignments.discard(pid)
-            self.transferred_stock[pid] = 999
+            self.transferred_stock.pop(pid, None)
 
         self.reload_database_state(reload_catalog=True)
         self.refresh_all_views()
@@ -965,7 +966,10 @@ class WarehouseMapperApp:
 
         for item in products:
             pid = item["product_id"]
-            self.transferred_stock.pop(pid, None)
+            if item.get("prev_transferred_stock") is not None:
+                self.transferred_stock[pid] = item["prev_transferred_stock"]
+            else:
+                self.transferred_stock.pop(pid, None)
 
         self.last_shift_transfer = None
         if hasattr(self.assignments, "revert_button"):
@@ -1458,6 +1462,7 @@ class WarehouseMapperApp:
                         "prev_returned": prev_ret.stock_qty if prev_ret else None,
                         "was_in_returned": prev_ret is not None,
                         "was_in_products": pid in self.products,
+                        "prev_transferred_stock": self.transferred_stock.get(pid),
                     }
                 ],
             }
@@ -1478,7 +1483,7 @@ class WarehouseMapperApp:
             for pid in product_ids:
                 self.staged_assignments.pop(pid, None)
                 self.pending_unassignments.discard(pid)
-                self.transferred_stock[pid] = 999
+                self.transferred_stock.pop(pid, None)
             self.reload_database_state(reload_catalog=True)
             self.refresh_all_views()
             if hasattr(self, "shelf_browser"):
