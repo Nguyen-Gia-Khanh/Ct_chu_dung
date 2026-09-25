@@ -171,13 +171,14 @@ class LocationComparisonView(ttk.Frame):
         self.tree.tag_configure("resynced", foreground="#217046")
         ttk.Label(
             self,
-            text="Missing export IDs cannot be compared. Products with several local locations appear but need manual web review.",
+            text="Missing export IDs cannot be compared. Products with several or no local locations appear but need manual web review.",
             foreground="#555555",
         ).pack(anchor="w", pady=(8, 0))
 
     def _local_locations(self) -> dict[str, list[str]]:
         local: dict[str, list[str]] = {}
         registered_ids = {row[0] for row in self.database.get_product_records()}
+        registered_ids.update(row[0] for row in self.database.get_catalog_products())
         for product_id, slot_name, _stock, _assigned_at in self.database.get_all_placement_items():
             if product_id not in registered_ids:
                 continue
@@ -229,7 +230,10 @@ class LocationComparisonView(ttk.Frame):
             if self.resynced.get(difference.product_id) == difference.true_location:
                 status, tag = "Saved; re-export to verify", "resynced"
             elif not difference.can_resync:
-                status, tag = "Several local locations; review", "missing"
+                if not difference.true_location:
+                    status, tag = "No local location; review", "missing"
+                else:
+                    status, tag = "Several local locations; review", "missing"
             else:
                 status, tag = "Unsynced", ""
             self.tree.insert(

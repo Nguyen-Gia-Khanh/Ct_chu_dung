@@ -92,12 +92,12 @@ def compare_locations(
     """Return mismatches and local assigned IDs missing from the export."""
     differences: list[LocationDifference] = []
     missing: list[str] = []
-    for product_id in sorted(local_locations, key=str.casefold):
-        local = location_parts(", ".join(local_locations[product_id]))
-        if not local:
-            continue
+    for product_id in sorted(set(local_locations) | set(web_locations), key=str.casefold):
+        local_slots = local_locations.get(product_id, [])
+        local = location_parts(", ".join(local_slots))
         if product_id not in web_locations:
-            missing.append(product_id)
+            if local:
+                missing.append(product_id)
             continue
         web = location_parts(web_locations[product_id])
         if set(local) != set(web):

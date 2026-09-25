@@ -82,6 +82,9 @@ class WarehouseMapperApp:
         self.web_upload_action = "upload"
         self.web_upload_after_id: str | None = None
         self.web_upload_events: Queue = Queue()
+        self.last_shift_transfer: dict[str, Any] | None = None
+        self.queue_shift_clicks: int = 0
+        self.queue_shift_timer: str | None = None
 
         self._configure_window()
         self._build_ui()
@@ -114,6 +117,25 @@ class WarehouseMapperApp:
         style.configure("Heading.TLabel", font=("Segoe UI", 10, "bold"))
         style.configure(
             "Commit.TButton", font=("Segoe UI", 10, "bold"), padding=(14, 7)
+        )
+        style.configure(
+            "WholeMode.Commit.TButton",
+            font=("Segoe UI", 10, "bold italic"),
+            foreground="#b45309",
+            padding=(14, 7),
+        )
+        style.map(
+            "WholeMode.Commit.TButton",
+            foreground=[("disabled", "#a0a0a0"), ("active", "#92400e"), ("!disabled", "#b45309")],
+        )
+        style.configure(
+            "WholeMode.TButton",
+            font=("Segoe UI", 9, "bold italic"),
+            foreground="#b45309",
+        )
+        style.map(
+            "WholeMode.TButton",
+            foreground=[("disabled", "#a0a0a0"), ("active", "#92400e"), ("!disabled", "#b45309")],
         )
 
     def _build_ui(self) -> None:
@@ -192,9 +214,12 @@ class WarehouseMapperApp:
             on_upload=self.upload_selected_product,
             on_modify_location=self.modify_selected_location,
             on_connect_chrome=self.connect_chrome,
+            on_revert_shift=self.revert_latest_shift_transfer,
+            on_whole_mode_change=self._on_whole_mode_change,
             barcode_scanner=self.barcode_scanner,
         )
         self.connect_chrome_button = self.assignments.connect_chrome_button
+        self.revert_button = self.assignments.revert_button
         self.notebook.add(self.designer_tab, text="1. Shelf Designer")
         self.notebook.add(self.assignments, text="2. Assign Locations")
         self.primal_view = PrimalQueueView(
@@ -229,6 +254,11 @@ class WarehouseMapperApp:
         self.notebook.add(self.location_comparison, text="7. Web Location Sync")
 
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+        self.root.bind(
+            "<FocusOut>",
+            lambda _e: hasattr(self, "assignments") and self.assignments.set_whole_mode(False),
+            add="+",
+        )
 
         self.status_text = tk.StringVar(value="Ready")
         self.exceptions_view.status_text = self.status_text
@@ -258,6 +288,8 @@ class WarehouseMapperApp:
             self.assignments.on_barcode_scan(barcode)
 
     def on_tab_changed(self, _event=None) -> None:
+        if hasattr(self, "assignments"):
+            self.assignments.set_whole_mode(False)
         current_tab = self.notebook.select()
         if current_tab == str(self.assignments):
             self.assignments.focus_search()
@@ -482,52 +514,192 @@ class WarehouseMapperApp:
             for slot_name in set(saved) | set(staged)
         }
 
-    def move_selected_to_on_hand(self) -> None:
-        selected_items = self.assignments.queue_tree.selection()
-        product_ids = [
-            item_id.removeprefix("product::")
-            for item_id in selected_items
-            if item_id.startswith("product::")
-            and item_id.removeprefix("product::") in self.products
-        ]
-        if not product_ids:
+    def _start_queue_shift_timer(self) -> None:
+        if self.queue_shift_timer is not None:
+            try:
+                self.root.after_cancel(self.queue_shift_timer)
+            except Exception:
+                pass
+        self.queue_shift_timer = self.root.after(3000, self._reset_queue_shift_clicks)
+
+    def _reset_queue_shift_clicks(self) -> None:
+        if self.queue_shift_timer is not None:
+            try:
+                self.root.after_cancel(self.queue_shift_timer)
+            except Exception:
+                pass
+            self.queue_shift_timer = None
+        self.queue_shift_clicks = 0
+        if hasattr(self, "assignments"):
+            self.assignments.set_queue_button_clicks(None)
+
+    def _on_whole_mode_change(self, enabled: bool) -> None:
+        if not enabled:
+            self._reset_queue_shift_clicks()
+
+    def move_selected_to_on_hand(self, to_shelf: bool = False) -> None:
+        is_to_shelf = to_shelf or getattr(self.assignments, "whole_mode", False)
+        if not is_to_shelf:
+            self._reset_queue_shift_clicks()
+            selected_items = self.assignments.queue_tree.selection()
+            product_ids = [
+                item_id.removeprefix("product::")
+                for item_id in selected_items
+                if item_id.startswith("product::")
+                and item_id.removeprefix("product::") in self.products
+            ]
+            if not product_ids:
+                messagebox.showinfo(
+                    "Choose products",
+                    "Select one or more products from the total queue first.",
+                    parent=self.root,
+                )
+                return
+
+            dialog = StockQuantityDialog(
+                self.root,
+                "On-hand queue",
+                [(product_id, self.products[product_id]) for product_id in product_ids],
+                initial_quantities={
+                    product_id: self.returned_queue_products[product_id].stock_qty
+                    for product_id in product_ids
+                    if product_id in self.returned_queue_products
+                },
+                title_text="Move products to on-hand",
+                destination_label="Persistent on-hand batch",
+                button_text="Move to on-hand",
+                footer_text="This move is saved to SQLite immediately.",
+            )
+            self.root.wait_window(dialog)
+            if dialog.result is None:
+                return
+
+            queued_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            try:
+                self.database.add_to_on_hand(dialog.result, queued_at)
+            except Exception as error:
+                messagebox.showerror(
+                    "Could not update on-hand", str(error), parent=self.root
+                )
+                return
+            self.reload_database_state()
+            self.refresh_all_views()
+            self.status_text.set(
+                f"Moved {len(dialog.result)} product(s) to on-hand. Saved immediately."
+            )
+            return
+
+        # Whole mode: Transfer total queue straight to shelf with stock 999
+        if self.selected_address is None:
             messagebox.showinfo(
-                "Choose products",
-                "Select one or more products from the total queue first.",
+                "Load an address",
+                "Enter the shelf address and press Load address first.",
                 parent=self.root,
             )
+            self._reset_queue_shift_clicks()
             return
 
-        dialog = StockQuantityDialog(
-            self.root,
-            "On-hand queue",
-            [(product_id, self.products[product_id]) for product_id in product_ids],
-            initial_quantities={
-                product_id: self.returned_queue_products[product_id].stock_qty
-                for product_id in product_ids
-                if product_id in self.returned_queue_products
-            },
-            title_text="Move products to on-hand",
-            destination_label="Persistent on-hand batch",
-            button_text="Move to on-hand",
-            footer_text="This move is saved to SQLite immediately.",
-        )
-        self.root.wait_window(dialog)
-        if dialog.result is None:
+        queue_items = self.assignments.queue_tree.get_children()
+        queue_pids = [
+            item_id.removeprefix("product::")
+            for item_id in queue_items
+            if item_id.startswith("product::")
+        ]
+        if not queue_pids:
+            if hasattr(self.assignments, "search_location_text"):
+                self.assignments.search_location_text.set(
+                    "No products in queue to transfer."
+                )
+            if hasattr(self.assignments, "search_location_label"):
+                self.assignments.search_location_label.configure(foreground="#c62828")
+            self._reset_queue_shift_clicks()
             return
 
-        queued_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        # Constraint: All products in queue must share the same first 5 characters
+        clean_prefixes = set()
+        for pid in queue_pids:
+            compact = pid.replace("-", "").strip().upper()
+            if len(compact) < 5:
+                clean_prefixes.add(compact)
+            else:
+                clean_prefixes.add(compact[:5])
+
+        if len(clean_prefixes) != 1 or any(len(p) < 5 for p in clean_prefixes):
+            if hasattr(self.assignments, "search_location_text"):
+                self.assignments.search_location_text.set(
+                    "Cannot transfer: Products in queue must share the same first 5 characters."
+                )
+            if hasattr(self.assignments, "search_location_label"):
+                self.assignments.search_location_label.configure(foreground="#c62828")
+            self._reset_queue_shift_clicks()
+            return
+
+        # Triple click requirement if > 1 product; single product bypasses
+        if len(queue_pids) > 1:
+            self.queue_shift_clicks += 1
+            if self.queue_shift_clicks < 3:
+                remaining = 3 - self.queue_shift_clicks
+                self.assignments.set_queue_button_clicks(remaining)
+                self._start_queue_shift_timer()
+                return
+
+        self._reset_queue_shift_clicks()
+
+        records = {}
+        for pid in queue_pids:
+            name = self.products.get(pid, "")
+            if not name and pid in self.catalog_products:
+                name = self.catalog_products[pid][0]
+            records[pid] = (name, "")
+
+        products_state = []
+        for pid in queue_pids:
+            prev_p = self.committed_placements.get(pid)
+            prev_oh = getattr(self, "on_hand_products", {}).get(pid)
+            prev_ret = getattr(self, "returned_queue_products", {}).get(pid)
+            products_state.append({
+                "product_id": pid,
+                "prev_placement": (prev_p.slot_name, prev_p.stock_qty, prev_p.assigned_at) if prev_p else None,
+                "prev_on_hand": prev_oh.stock_qty if prev_oh else None,
+                "was_in_on_hand": prev_oh is not None,
+                "prev_returned": prev_ret.stock_qty if prev_ret else None,
+                "was_in_returned": prev_ret is not None,
+                "was_in_products": pid in self.products,
+            })
+
+        transfer_data = {
+            "type": "queue",
+            "slot_id": self.selected_address.slot_id,
+            "products": products_state,
+        }
+
+        assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
         try:
-            self.database.add_to_on_hand(dialog.result, queued_at)
-        except Exception as error:
-            messagebox.showerror(
-                "Could not update on-hand", str(error), parent=self.root
+            moved = self.database.assign_catalog_direct_to_slot(
+                self.selected_address.slot_id,
+                assigned_at,
+                records,
+                default_stock=999,
             )
+        except Exception as error:
+            messagebox.showerror("Transfer failed", str(error), parent=self.root)
             return
-        self.reload_database_state()
+
+        self.last_shift_transfer = transfer_data
+        if hasattr(self.assignments, "revert_button"):
+            self.assignments.revert_button.configure(state="normal")
+
+        for pid in queue_pids:
+            self.staged_assignments.pop(pid, None)
+            self.pending_unassignments.discard(pid)
+            self.transferred_stock[pid] = 999
+
+        self.reload_database_state(reload_catalog=True)
         self.refresh_all_views()
+        if hasattr(self, "shelf_browser"):
+            self.shelf_browser.refresh()
         self.status_text.set(
-            f"Moved {len(dialog.result)} product(s) to on-hand. Saved immediately."
+            f"Transferred {moved} queue product(s) to {self.selected_address.slot_name} with stock 999. Saved immediately."
         )
 
     def refresh_on_hand_queue(self) -> None:
@@ -688,7 +860,7 @@ class WarehouseMapperApp:
                 ),
             )
 
-    def assign_on_hand_to_address(self) -> None:
+    def assign_on_hand_to_address(self, whole_mode: bool = False) -> None:
         if self.selected_address is None:
             messagebox.showinfo(
                 "Load an address",
@@ -696,20 +868,51 @@ class WarehouseMapperApp:
                 parent=self.root,
             )
             return
-        selected_items = self.assignments.on_hand_tree.selection()
-        product_ids = [
-            item_id.removeprefix("hand::")
-            for item_id in selected_items
-            if item_id.startswith("hand::")
-            and item_id.removeprefix("hand::") in self.on_hand_products
-        ]
-        if not product_ids:
-            messagebox.showinfo(
-                "Choose on-hand products",
-                "Select one or more on-hand products with Ctrl-click first.",
-                parent=self.root,
-            )
-            return
+
+        is_whole = whole_mode or getattr(self.assignments, "whole_mode", False)
+        transfer_data = None
+        if is_whole:
+            if not self.on_hand_products:
+                messagebox.showinfo(
+                    "On-hand queue empty",
+                    "There are no products in the on-hand queue to assign.",
+                    parent=self.root,
+                )
+                return
+            product_ids = None
+            affected_pids = list(self.on_hand_products.keys())
+            products_state = []
+            for pid in affected_pids:
+                prev_p = self.committed_placements.get(pid)
+                item = self.on_hand_products[pid]
+                products_state.append({
+                    "product_id": pid,
+                    "prev_placement": (prev_p.slot_name, prev_p.stock_qty, prev_p.assigned_at) if prev_p else None,
+                    "prev_on_hand": item.stock_qty,
+                    "was_in_on_hand": True,
+                    "was_in_products": pid in self.products,
+                })
+            transfer_data = {
+                "type": "on_hand",
+                "slot_id": self.selected_address.slot_id,
+                "products": products_state,
+            }
+        else:
+            selected_items = self.assignments.on_hand_tree.selection()
+            product_ids = [
+                item_id.removeprefix("hand::")
+                for item_id in selected_items
+                if item_id.startswith("hand::")
+                and item_id.removeprefix("hand::") in self.on_hand_products
+            ]
+            if not product_ids:
+                messagebox.showinfo(
+                    "Choose on-hand products",
+                    "Select one or more on-hand products with Ctrl-click first, or hold Shift for whole mode.",
+                    parent=self.root,
+                )
+                return
+
         address = self.selected_address
         assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
         try:
@@ -721,13 +924,57 @@ class WarehouseMapperApp:
         except Exception as error:
             messagebox.showerror("Assignment failed", str(error), parent=self.root)
             return
+
+        if is_whole and transfer_data:
+            self.last_shift_transfer = transfer_data
+            if hasattr(self.assignments, "revert_button"):
+                self.assignments.revert_button.configure(state="normal")
+
         self.reload_database_state()
         self.refresh_all_views()
         if hasattr(self, "shelf_browser"):
             self.shelf_browser.refresh()
-        self.status_text.set(
-            f"Assigned {moved} product(s) to {address.slot_name}. Saved immediately."
+        if is_whole:
+            self.status_text.set(
+                f"Assigned all {moved} on-hand product(s) to {address.slot_name}. Saved immediately."
+            )
+        else:
+            self.status_text.set(
+                f"Assigned {moved} product(s) to {address.slot_name}. Saved immediately."
+            )
+
+    def revert_latest_shift_transfer(self) -> None:
+        if not self.last_shift_transfer:
+            return
+        products = self.last_shift_transfer.get("products", [])
+        confirm = messagebox.askyesno(
+            "Revert shift transfer",
+            f"Revert the latest shift transfer of {len(products)} product(s)?",
+            parent=self.root,
         )
+        if not confirm:
+            return
+
+        try:
+            self.database.revert_shift_transfer(self.last_shift_transfer)
+        except Exception as error:
+            messagebox.showerror(
+                "Revert failed", f"Could not revert shift transfer: {error}", parent=self.root
+            )
+            return
+
+        for item in products:
+            pid = item["product_id"]
+            self.transferred_stock.pop(pid, None)
+
+        self.last_shift_transfer = None
+        if hasattr(self.assignments, "revert_button"):
+            self.assignments.revert_button.configure(state="disabled")
+        self.reload_database_state(reload_catalog=True)
+        self.refresh_all_views()
+        if hasattr(self, "shelf_browser"):
+            self.shelf_browser.refresh()
+        self.status_text.set("Successfully reverted the latest shift transfer.")
 
     def dequeue_selected_on_hand(self) -> None:
         selected_items = self.assignments.on_hand_tree.selection()
@@ -1157,7 +1404,7 @@ class WarehouseMapperApp:
             )
         return "break"
 
-    def transfer_catalog_selection_to_queue(self) -> None:
+    def transfer_catalog_selection_to_queue(self, to_shelf: bool = False) -> None:
         selected_items = self.assignments.catalog_tree.selection()
         product_ids = [
             item_id.removeprefix("catalog::")
@@ -1170,6 +1417,74 @@ class WarehouseMapperApp:
                 "Choose catalog products",
                 "Select one or more products from the full catalog first.",
                 parent=self.root,
+            )
+            return
+
+        is_to_shelf = to_shelf or getattr(self.assignments, "whole_mode", False)
+        if is_to_shelf:
+            if self.selected_address is None:
+                messagebox.showinfo(
+                    "Load an address",
+                    "Enter the shelf address and press Load address first.",
+                    parent=self.root,
+                )
+                return
+
+            if len(product_ids) > 1:
+                if hasattr(self.assignments, "search_location_text"):
+                    self.assignments.search_location_text.set(
+                        f"Cannot transfer: Catalog shift transfer only affects 1 product ID (selected {len(product_ids)})."
+                    )
+                if hasattr(self.assignments, "search_location_label"):
+                    self.assignments.search_location_label.configure(foreground="#c62828")
+                return
+
+            records = {
+                product_id: self.catalog_products[product_id] for product_id in product_ids
+            }
+            pid = product_ids[0]
+            prev_p = self.committed_placements.get(pid)
+            prev_oh = getattr(self, "on_hand_products", {}).get(pid)
+            prev_ret = getattr(self, "returned_queue_products", {}).get(pid)
+            transfer_data = {
+                "type": "catalog",
+                "slot_id": self.selected_address.slot_id,
+                "products": [
+                    {
+                        "product_id": pid,
+                        "prev_placement": (prev_p.slot_name, prev_p.stock_qty, prev_p.assigned_at) if prev_p else None,
+                        "prev_on_hand": prev_oh.stock_qty if prev_oh else None,
+                        "was_in_on_hand": prev_oh is not None,
+                        "prev_returned": prev_ret.stock_qty if prev_ret else None,
+                        "was_in_returned": prev_ret is not None,
+                        "was_in_products": pid in self.products,
+                    }
+                ],
+            }
+            assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            try:
+                moved = self.database.assign_catalog_direct_to_slot(
+                    self.selected_address.slot_id,
+                    assigned_at,
+                    records,
+                    default_stock=999,
+                )
+            except Exception as error:
+                messagebox.showerror("Transfer failed", str(error), parent=self.root)
+                return
+            self.last_shift_transfer = transfer_data
+            if hasattr(self.assignments, "revert_button"):
+                self.assignments.revert_button.configure(state="normal")
+            for pid in product_ids:
+                self.staged_assignments.pop(pid, None)
+                self.pending_unassignments.discard(pid)
+                self.transferred_stock[pid] = 999
+            self.reload_database_state(reload_catalog=True)
+            self.refresh_all_views()
+            if hasattr(self, "shelf_browser"):
+                self.shelf_browser.refresh()
+            self.status_text.set(
+                f"Assigned {moved} catalog product(s) directly to {self.selected_address.slot_name} with stock 999. Saved immediately."
             )
             return
 
@@ -1768,6 +2083,8 @@ class WarehouseMapperApp:
         if self.search_after_id:
             self.root.after_cancel(self.search_after_id)
             self.search_after_id = None
+        if getattr(self, "queue_shift_clicks", 0) > 0:
+            self._reset_queue_shift_clicks()
         raw_query = self.assignments.search_var.get().strip()
         query = normalize_search(raw_query)
         committed = set(self.committed_locations)

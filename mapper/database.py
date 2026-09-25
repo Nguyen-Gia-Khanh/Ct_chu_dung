@@ -1178,6 +1178,121 @@ class WarehouseDatabase:
                 )
         return len(rows)
 
+    def assign_catalog_direct_to_slot(
+        self,
+        slot_id: int,
+        assigned_at: str,
+        products: dict[str, tuple[str, str]],
+        default_stock: int = 999,
+    ) -> int:
+        """Import catalog products and assign them directly to slot_id with default_stock."""
+        if not products:
+            return 0
+        if not assigned_at or datetime.fromisoformat(assigned_at).utcoffset() is None:
+            raise ValueError("The assignment time must include a timezone.")
+        validate_stock_quantity(default_stock)
+        self.import_products(products)
+        product_ids = tuple(products.keys())
+        with closing(self.connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if (
+                connection.execute(
+                    "SELECT 1 FROM slots WHERE slot_id = ?", (slot_id,)
+                ).fetchone()
+                is None
+            ):
+                raise KeyError("That shelf address no longer exists.")
+            connection.executemany(
+                "DELETE FROM placements WHERE product_id = ?",
+                ((pid,) for pid in product_ids),
+            )
+            connection.executemany(
+                "DELETE FROM on_hand_queue WHERE product_id = ?",
+                ((pid,) for pid in product_ids),
+            )
+            connection.executemany(
+                "DELETE FROM returned_queue_products WHERE product_id = ?",
+                ((pid,) for pid in product_ids),
+            )
+            connection.executemany(
+                """
+                INSERT INTO placements (product_id, slot_id, stock_qty, assigned_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                ((pid, slot_id, default_stock, assigned_at) for pid in product_ids),
+            )
+        return len(product_ids)
+
+    def revert_shift_transfer(self, transfer_data: dict[str, Any]) -> int:
+        """Atomically undo the latest shift transfer and restore products to their prior state."""
+        slot_id = transfer_data.get("slot_id")
+        products = transfer_data.get("products", [])
+        if not products or slot_id is None:
+            return 0
+        now_ts = datetime.now().astimezone().isoformat(timespec="seconds")
+        with closing(self.connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for item in products:
+                pid = item["product_id"]
+                # 1. Delete the placement at the target slot
+                connection.execute(
+                    "DELETE FROM placements WHERE product_id = ? AND slot_id = ?",
+                    (pid, slot_id),
+                )
+                # 2. Restore previous placement if any
+                if item.get("prev_placement"):
+                    prev_slot_val, prev_stock, prev_assigned = item["prev_placement"]
+                    if isinstance(prev_slot_val, str):
+                        s_row = connection.execute(
+                            "SELECT slot_id FROM slots WHERE slot_name = ?", (prev_slot_val,)
+                        ).fetchone()
+                        prev_slot_id = s_row["slot_id"] if s_row else None
+                    else:
+                        prev_slot_id = prev_slot_val
+                    if prev_slot_id is not None:
+                        connection.execute(
+                            """
+                            INSERT INTO placements (product_id, slot_id, stock_qty, assigned_at)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(product_id) DO UPDATE SET
+                                slot_id = excluded.slot_id,
+                                stock_qty = excluded.stock_qty,
+                                assigned_at = excluded.assigned_at
+                            """,
+                            (pid, prev_slot_id, prev_stock, prev_assigned),
+                        )
+                # 3. Restore to on-hand queue if it was in on-hand
+                if item.get("prev_on_hand") is not None or item.get("was_in_on_hand"):
+                    stock = item.get("prev_on_hand")
+                    connection.execute(
+                        """
+                        INSERT INTO on_hand_queue (product_id, stock_qty, queued_at)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(product_id) DO UPDATE SET
+                            stock_qty = excluded.stock_qty
+                        """,
+                        (pid, stock, now_ts),
+                    )
+                # 4. Restore to returned_queue_products if it was in returned queue
+                if item.get("prev_returned") is not None or item.get("was_in_returned"):
+                    stock = item.get("prev_returned")
+                    connection.execute(
+                        """
+                        INSERT INTO returned_queue_products (product_id, stock_qty, returned_at)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(product_id) DO UPDATE SET
+                            stock_qty = excluded.stock_qty
+                        """,
+                        (pid, stock, now_ts),
+                    )
+                # 5. If product was newly imported into products table by catalog transfer, remove it
+                if not item.get("was_in_products", True):
+                    connection.execute(
+                        "DELETE FROM products WHERE product_id = ?",
+                        (pid,),
+                    )
+        return len(products)
+
     def move_slot_to_on_hand(
         self,
         slot_id: int,

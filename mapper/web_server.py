@@ -598,7 +598,8 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
 
         if path == "/api/assignments/assign-on-hand":
             slot_id = int(payload.get("slot_id", 0))
-            product_ids = [format_product_id(pid) for pid in payload.get("product_ids", [])]
+            raw_pids = payload.get("product_ids")
+            product_ids = [format_product_id(pid) for pid in raw_pids] if raw_pids is not None else None
             slot = db.get_slot_by_id(slot_id)
             if not slot:
                 self._send_error_json("Slot not found", 404)
@@ -643,6 +644,24 @@ class WarehouseApiHandler(BaseHTTPRequestHandler):
             try:
                 ins, upd = db.import_products(records)
                 self._send_json({"success": True, "message": f"Transferred {ins + upd} product(s) to total queue."})
+            except Exception as e:
+                self._send_error_json(str(e))
+            return
+
+        if path == "/api/catalog/transfer-to-shelf":
+            slot_id = int(payload.get("slot_id", 0))
+            product_ids = [format_product_id(pid) for pid in payload.get("product_ids", [])]
+            default_stock = int(payload.get("default_stock", 999))
+            slot = db.get_slot_by_id(slot_id)
+            if not slot:
+                self._send_error_json("Slot not found", 404)
+                return
+            catalog_rows = db.get_catalog_products()
+            catalog_map = {p[0]: (p[1], p[2]) for p in catalog_rows}
+            records = {pid: catalog_map[pid] for pid in product_ids if pid in catalog_map}
+            try:
+                count = db.assign_catalog_direct_to_slot(slot_id, now_iso, records, default_stock)
+                self._send_json({"success": True, "message": f"Assigned {count} catalog product(s) directly to {slot.slot_name} with stock {default_stock}."})
             except Exception as e:
                 self._send_error_json(str(e))
             return
