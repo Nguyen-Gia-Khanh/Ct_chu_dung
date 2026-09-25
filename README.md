@@ -4,6 +4,19 @@ A local Windows/Tkinter application for mapping products to irregular warehouse
 shelves. SQLite lives beside the Python entry point, so no Docker or database
 server is required.
 
+## Even-side shelf orientation
+
+Tkinter shelf views show each even-side row in descending cell order. Existing
+shelves start with `switched_state = 0`; new even-side shelves start at `1`.
+Changing a shelf between odd and even sides updates this state on commit.
+
+To add the column to an older database once, run `py test_flip/add_switched_state.py` in
+the project folder. The app also adds the missing column on startup. This does
+not move any products. To test the one-time location switch on a separate copy,
+run `py test_flip/flip_even_locations.py`. Re-running it on that copy skips
+already switched shelves. When ready to switch the main database, run
+`py test_flip/flip_even_locations.py --apply-to-main`.
+
 ## Seven tabs
 
 1. **Shelf Designer** — import CSV files, create or edit a shelf, and commit its
