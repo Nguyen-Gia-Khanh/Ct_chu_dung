@@ -10,5 +10,5 @@ planned as part of the desktop refactor.
 
 For historical development, run `npm install` and `npm run dev` from this
 directory. The Vite server proxies `/api` to the Python server on port 8000;
-start that server with `python -m mapper --ui web`. Node.js is required to
-rebuild the TypeScript source.
+start that server with `python warehouse_web.py` from the project root. Node.js
+is required to rebuild the TypeScript source.

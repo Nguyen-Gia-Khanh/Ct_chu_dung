@@ -41,16 +41,29 @@ states. A working product is in exactly one of them at a time.
 
 ## Run on Windows 11
 
-From the project folder, with the project's Python environment activated:
+Double-click `warehouse_mapper.exe` in the project folder to open the desktop
+app without VS Code or a Python installation. The executable is built locally
+and sits beside `warehouse_mapper.py`; Git ignores the generated `.exe`.
+
+To run the source instead, from the project folder with Python installed:
 
 ```powershell
 python warehouse_mapper.py
 ```
 
-`py warehouse_mapper.py` also works on Windows. The root script is a launcher;
-the Tkinter implementation is in `ui/desktop/`. The launcher uses an existing
-root `warehouse_locations.db` until it has been migrated. You can choose a
-database explicitly with `python warehouse_mapper.py --db path/to/file.db`.
+`py warehouse_mapper.py` also works on Windows. Both launchers use
+`data/warehouse_locations.db`. To choose another database, run
+`python warehouse_mapper.py --db path/to/file.db`.
+
+To rebuild the executable after changing the source, run:
+
+```powershell
+py -m pip install pyinstaller
+py utils/build_exe.py
+```
+
+The build creates `warehouse_mapper.exe` at the project root. It is a single
+file, so opening it takes a few seconds while it unpacks its runtime.
 
 Selenium is only needed for the optional Chrome/KiotViet integration. Tab 7
 uses `openpyxl` to read and write `.xlsx` workbooks.
@@ -182,38 +195,30 @@ assignment time.
 
 | Path | Responsibility |
 | --- | --- |
-| `warehouse_mapper.py` | Stable Tkinter launcher. |
+| `warehouse_mapper.py`, `warehouse_mapper.exe` | Root desktop launchers. The executable is generated locally. |
+| `warehouse_label_printer.py` | Root label printer launcher. |
+| `warehouse_web.py` | Root launcher for the deprecated web UI. |
 | `ui/desktop/` | Tkinter window, tabs, widgets, and action handlers. |
 | `mapper/persistence/` | SQLite schema and catalog, shelf, inventory, and exception operations. |
 | `mapper/features/` | CSV import, location comparison, and optional KiotViet integration. |
 | `mapper/core/` | Shared location and search rules. |
 | `mapper/api/` | Local HTTP API for the deprecated web UI. |
 | `ui/web/` | Deprecated React/TypeScript UI, retained for reference. |
-| `utils/labels/` | Label printer (`python -m utils.labels`). |
-| `utils/laya/` | Laya extraction tools (`python -m utils.laya.year`, `.model`, or `.version --help`). |
+| `utils/labels/` | Label printer implementation. |
+| `utils/laya/` | Laya extraction tools. |
 | `utils/icsparts/` | ICS Parts catalog and part master scrapers. |
+| `utils/build_exe.py` | Rebuilds the desktop executable. |
 | `data/` | Local database and generated output, ignored by Git. |
 
-The supported interface is Tkinter. `python -m mapper --ui desktop` launches it
-directly. The web UI and its API remain available as deprecated code and are
-not part of the current optimization work.
+The supported interface is Tkinter. The web UI and its API remain available as
+deprecated code. Package `__init__.py` files identify Python packages; they
+are not launchers.
 
 ## Data and backup
 
-Close the application before moving or backing up its SQLite database. Existing
-databases at the project root continue to work through `warehouse_mapper.py`.
-To move an existing database and generated outputs into `data/`, preview the
-paths, then apply the migration:
-
-```powershell
-python -m utils.migrate_data
-python -m utils.migrate_data --apply
-```
-
-The migration makes a timestamped SQLite backup under `data/backups/` before
-moving the active database. Input CSV and XLSX files remain where they are.
-New installations create `data/warehouse_locations.db`. Copy the SQLite file
-with the application closed to make a backup.
+The active database is `data/warehouse_locations.db`. Close the app before
+copying it for backup. The one-time move from the project root left a backup
+under `data/backups/`. Input CSV and XLSX files remain where they are.
 
 ## Checks
 

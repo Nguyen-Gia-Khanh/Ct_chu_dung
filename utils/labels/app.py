@@ -1,6 +1,6 @@
 """Separate Tkinter app for printing labels from the warehouse mapper database.
 
-Run with ``python -m utils.labels``. Existing root databases are supported.
+Run with ``python warehouse_label_printer.py`` from the project root.
 
 PDF generation needs ReportLab; reading previous PDFs needs pypdf:
     python -m pip install reportlab pypdf
