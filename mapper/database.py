@@ -102,6 +102,7 @@ class WarehouseDatabase:
                     floor       TEXT NOT NULL COLLATE NOCASE,
                     side        TEXT NOT NULL DEFAULT '1' COLLATE NOCASE CHECK (length(trim(side)) > 0),
                     shelf_code  TEXT NOT NULL COLLATE NOCASE,
+                    switched_state INTEGER NOT NULL DEFAULT 0 CHECK (switched_state IN (0, 1)),
                     created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE (floor, side, shelf_code)
@@ -202,6 +203,14 @@ class WarehouseDatabase:
             # before BEGIN. Check all references before the transaction commits.
             connection.execute("PRAGMA foreign_keys = OFF")
             connection.execute("BEGIN IMMEDIATE")
+            shelf_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(shelves)")
+            }
+            if "switched_state" not in shelf_columns:
+                connection.execute(
+                    "ALTER TABLE shelves ADD COLUMN switched_state INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK (switched_state IN (0, 1))"
+                )
             staging_columns = {
                 row["name"]
                 for row in connection.execute("PRAGMA table_info(wait_to_update_csv)")
@@ -242,6 +251,12 @@ class WarehouseDatabase:
                     "ALTER TABLE placements ADD COLUMN stock_qty INTEGER "
                     "CHECK (stock_qty IS NULL OR (stock_qty >= 0 AND typeof(stock_qty) = 'integer'))"
                 )
+            connection.execute(
+                "DELETE FROM on_hand_queue WHERE product_id IN (SELECT product_id FROM placements)"
+            )
+            connection.execute(
+                "DELETE FROM returned_queue_products WHERE product_id IN (SELECT product_id FROM placements)"
+            )
             self._migrate_continuous_cells(connection)
             if connection.execute("PRAGMA foreign_key_check").fetchall():
                 raise sqlite3.IntegrityError(
@@ -1171,9 +1186,16 @@ class WarehouseDatabase:
             )
             if selected_ids is None:
                 connection.execute("DELETE FROM on_hand_queue")
+                connection.execute(
+                    "DELETE FROM returned_queue_products WHERE product_id IN (SELECT product_id FROM placements)"
+                )
             else:
                 connection.executemany(
                     "DELETE FROM on_hand_queue WHERE product_id = ?",
+                    ((product_id,) for product_id in selected_ids),
+                )
+                connection.executemany(
+                    "DELETE FROM returned_queue_products WHERE product_id = ?",
                     ((product_id,) for product_id in selected_ids),
                 )
         return len(rows)
@@ -1536,6 +1558,7 @@ class WarehouseDatabase:
         side = clean_location_segment(side)
         if not floor or not shelf_code or not side:
             raise ValueError("Floor, side, and shelf code are required.")
+        even_side = int(side.isdigit() and int(side) % 2 == 0)
         for placement in staged_assignments.values():
             validate_stock_quantity(placement.stock_qty)
             if (
@@ -1561,15 +1584,22 @@ class WarehouseDatabase:
                         "That floor, side, and shelf code already identify another shelf."
                     )
                 cursor = connection.execute(
-                    "UPDATE shelves SET floor = ?, side = ?, shelf_code = ?, updated_at = CURRENT_TIMESTAMP WHERE shelf_id = ?",
-                    (floor, side, shelf_code, shelf_id),
+                    """UPDATE shelves
+                       SET floor = ?, side = ?, shelf_code = ?,
+                           switched_state = CASE
+                               WHEN (side <> '' AND side NOT GLOB '*[^0-9]*'
+                                     AND CAST(side AS INTEGER) % 2 = 0) <> ?
+                               THEN ? ELSE switched_state END,
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE shelf_id = ?""",
+                    (floor, side, shelf_code, even_side, even_side, shelf_id),
                 )
                 if cursor.rowcount != 1:
                     raise KeyError(f"Shelf {shelf_id} does not exist.")
             elif shelf is None:
                 cursor = connection.execute(
-                    "INSERT INTO shelves (floor, side, shelf_code) VALUES (?, ?, ?)",
-                    (floor, side, shelf_code),
+                    "INSERT INTO shelves (floor, side, shelf_code, switched_state) VALUES (?, ?, ?, ?)",
+                    (floor, side, shelf_code, even_side),
                 )
                 shelf_id = int(cursor.lastrowid)
             else:
