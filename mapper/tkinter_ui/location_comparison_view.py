@@ -153,16 +153,16 @@ class LocationComparisonView(ttk.Frame):
         self.export_button.pack(side="left", padx=(8, 0))
         self.refresh_button = ttk.Button(actions, text="Refresh comparison", command=self.refresh)
         self.refresh_button.pack(side="left", padx=(8, 0))
-        ttk.Label(self, textvariable=self.file_label, foreground="#555555").pack(anchor="w")
-        ttk.Label(self, textvariable=self.summary).pack(anchor="w", pady=(4, 8))
-        activity = ttk.Frame(self)
-        activity.pack(fill="x", pady=(0, 6))
-        ttk.Label(activity, textvariable=self.progress, foreground="#0969da").pack(anchor="w")
         self.loading_bar = tk.Canvas(
-            activity, width=170, height=4, bd=0, highlightthickness=0, background="#e4e9ef"
+            actions, width=170, height=4, bd=0, highlightthickness=0, background="#e4e9ef"
         )
         self.loading_segment = self.loading_bar.create_rectangle(
             0, 0, 44, 4, fill="#0969da", outline=""
+        )
+        ttk.Label(self, textvariable=self.file_label, foreground="#555555").pack(anchor="w")
+        ttk.Label(self, textvariable=self.summary).pack(anchor="w", pady=(4, 8))
+        ttk.Label(self, textvariable=self.progress, foreground="#0969da").pack(
+            anchor="w", pady=(0, 6)
         )
 
         frame = ttk.Frame(self)
@@ -379,12 +379,12 @@ class LocationComparisonView(ttk.Frame):
         else:
             self._update_summary()
         if self.busy and self._loading_after_id is None:
-            self.loading_bar.pack(anchor="w", pady=(0, 6))
+            self.loading_bar.place(relx=1.0, rely=0.5, anchor="e")
             self._animate_loading()
         elif not self.busy and self._loading_after_id is not None:
             self.after_cancel(self._loading_after_id)
             self._loading_after_id = None
-            self.loading_bar.pack_forget()
+            self.loading_bar.place_forget()
 
     def _animate_loading(self) -> None:
         if not self.busy:
