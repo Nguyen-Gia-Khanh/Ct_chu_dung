@@ -18,6 +18,7 @@ from xml.sax.saxutils import escape
 
 MARGIN_MM = 5
 LEFT_WIDTH_MM = 80
+THREE_CM_LOCATION_WIDTH_MM = 40
 PADDING_MM = 4
 LOCATION_PADDING_MM = 4
 LOCATION_FONT_SIZE = 140
@@ -69,6 +70,11 @@ def label_count(cells: list[Cell] | tuple[Cell, ...]) -> int:
     return len(cells)
 
 
+def _location_width_mm(label_height_cm: int | float) -> int:
+    # The 80 mm column leaves large blank sides around a two-line ID on 3 cm labels.
+    return THREE_CM_LOCATION_WIDTH_MM if label_height_cm == 3 else LEFT_WIDTH_MM
+
+
 def _font_files() -> tuple[Path, Path]:
     if FONT_REGULAR_PATH and FONT_BOLD_PATH:
         candidates = [(Path(FONT_REGULAR_PATH), Path(FONT_BOLD_PATH))]
@@ -106,7 +112,7 @@ def _compute_layout_slots(
 ) -> list[LabelSlot]:
     is_portrait = orientation.lower() == "portrait"
     margin = MARGIN_MM * mm_unit
-    left_w = LEFT_WIDTH_MM * mm_unit
+    left_w = _location_width_mm(label_height_cm) * mm_unit
     label_h = label_height_cm * 10 * mm_unit
 
     def fit(span: float, size: float) -> int:
@@ -240,7 +246,7 @@ def render_labels_pdf(
     page_w, page_h = page_size
     padding = PADDING_MM * mm
     location_padding = LOCATION_PADDING_MM * mm
-    left_w = LEFT_WIDTH_MM * mm
+    left_w = _location_width_mm(label_height_cm) * mm
 
     slots = _compute_layout_slots(
         page_w,
