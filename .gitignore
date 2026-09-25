@@ -12,7 +12,8 @@ __pycache__/
 
 # Virtual environments and IDE settings
 .venv/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 *.xlsx
 ~$*
 
