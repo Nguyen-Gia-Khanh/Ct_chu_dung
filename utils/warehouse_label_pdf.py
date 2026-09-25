@@ -17,7 +17,6 @@ from xml.sax.saxutils import escape
 
 
 MARGIN_MM = 5
-GAP_MM = 0
 LEFT_WIDTH_MM = 80
 PADDING_MM = 4
 LOCATION_PADDING_MM = 4
@@ -25,7 +24,7 @@ LOCATION_FONT_SIZE = 140
 MIN_LOCATION_FONT_SIZE = 20
 PRODUCT_FONT_SIZE = 28
 MIN_PRODUCT_FONT_SIZE = 7
-LABEL_HEIGHTS_MM = {4: 40, 7: 70, 14.5: 145, 15: 145}
+LABEL_HEIGHTS_CM = (3, 7, 14.5)
 
 # Normally discovered automatically. Set BOTH to override the system fonts.
 FONT_REGULAR_PATH = ""
@@ -79,10 +78,14 @@ def _font_files() -> tuple[Path, Path]:
         candidates = [
             (windows_fonts / "arial.ttf", windows_fonts / "arialbd.ttf"),
             (bundled / "DejaVuSans.ttf", bundled / "DejaVuSans-Bold.ttf"),
-            (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-             Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
-            (Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
-             Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf")),
+            (
+                Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+                Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+            ),
+            (
+                Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
+                Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+            ),
         ]
     for regular, bold in candidates:
         if regular.is_file() and bold.is_file():
@@ -104,157 +107,89 @@ def _compute_layout_slots(
     is_portrait = orientation.lower() == "portrait"
     margin = MARGIN_MM * mm_unit
     left_w = LEFT_WIDTH_MM * mm_unit
-    label_h = LABEL_HEIGHTS_MM[label_height_cm] * mm_unit
-    landscape_w = max(page_w, page_h)
-    primal_product_w = (landscape_w - 2 * margin) - left_w  # 207 * mm_unit
+    label_h = label_height_cm * 10 * mm_unit
+
+    def fit(span: float, size: float) -> int:
+        # Allow for tiny floating-point differences in A4 and millimetre conversions.
+        return max(0, math.floor((span + 1e-6) / size))
+
+    def grid(
+        x: float, y: float, cols: int, rows: int, w: float, h: float,
+        rotated: bool = False,
+    ) -> list[LabelSlot]:
+        box_w, box_h = (h, w) if rotated else (w, h)
+        return [
+            LabelSlot(x + col * box_w, y + (rows - row - 1) * box_h, w, h, rotated)
+            for row in range(rows)
+            for col in range(cols)
+        ]
 
     if print_mode == "full":
-        label_w = page_w - 2 * margin
-        labels_per_page = int(page_h // label_h)
-        stack_h = labels_per_page * label_h + (labels_per_page - 1) * (GAP_MM * mm_unit)
-        top_margin = (page_h - stack_h) / 2
-        slots = []
-        for row in range(labels_per_page):
-            y = page_h - top_margin - (row + 1) * label_h - row * (GAP_MM * mm_unit)
-            slots.append(LabelSlot(x=margin, y=y, w=label_w, h=label_h, rotated=False))
-        return slots
+        rows = fit(page_h, label_h)
+        return grid(
+            margin, (page_h - rows * label_h) / 2,
+            1, rows, page_w - 2 * margin, label_h,
+        )
 
-    elif print_mode == "product_only":
-        item_w = (page_w - 2 * margin) - left_w  # 120mm in portrait, 207mm in landscape
-        item_h = label_h
-        slots = []
-        if is_portrait and label_height_cm == 7:
-            # Portrait 7cm: smaller product list (120mm x 70mm)
-            # 4 upright items in the product column (x = 85mm .. 205mm)
-            # + 2 items rotated 90 deg in the 80mm column where location ID used to be (x = 10mm .. 80mm)
-            top_margin = (page_h - 4 * item_h) / 2  # 8.5mm
-            for row in range(4):
-                y = page_h - top_margin - (row + 1) * item_h
-                slots.append(LabelSlot(x=margin + left_w, y=y, w=item_w, h=item_h, rotated=False))
-            # 2 rotated items in the 80mm left column:
-            rot_x = margin + (left_w - item_h) / 2
-            y_top_rot = (page_h - top_margin - 2 * item_h) + (2 * item_h - item_w) / 2
-            y_bot_rot = top_margin + (2 * item_h - item_w) / 2
-            slots.append(LabelSlot(x=rot_x, y=y_top_rot, w=item_w, h=item_h, rotated=True))
-            slots.append(LabelSlot(x=rot_x, y=y_bot_rot, w=item_w, h=item_h, rotated=True))
-        elif not is_portrait and label_height_cm == 7:
-            # Landscape 7cm: default horizontal size where product list is long (207mm x 70mm)
-            # 3 unrotated stacked vertically + 1 rotated in the leftover 80mm column (fits 4 max)
-            for row in range(3):
-                y = (2 - row) * 70 * mm_unit
-                slots.append(LabelSlot(x=5 * mm_unit, y=y, w=item_w, h=item_h, rotated=False))
-            # 4th item rotated 90 deg: width on page is 70mm (222mm to 292mm), height is 207mm (1.5mm to 208.5mm)
-            slots.append(LabelSlot(x=222 * mm_unit, y=1.5 * mm_unit, w=item_w, h=item_h, rotated=True))
-        elif is_portrait and label_height_cm == 4:
-            # Portrait 4cm: item_w = 120mm, item_h = 40mm
-            # 7 upright in product column (x = 85mm .. 205mm)
-            top_margin = (page_h - 7 * item_h) / 2
-            for row in range(7):
-                y = page_h - top_margin - (row + 1) * item_h
-                slots.append(LabelSlot(x=margin + left_w, y=y, w=item_w, h=item_h, rotated=False))
-            # 4 rotated in the 80mm location column (2 cols of 40mm x 2 rows of 120mm = 4 total)
-            col_x0 = margin
-            col_x1 = margin + item_h
-            y_rot_margin = (page_h - 2 * item_w) / 2
-            for r in range(2):
-                y_rot = page_h - y_rot_margin - (r + 1) * item_w
-                slots.append(LabelSlot(x=col_x0, y=y_rot, w=item_w, h=item_h, rotated=True))
-                slots.append(LabelSlot(x=col_x1, y=y_rot, w=item_w, h=item_h, rotated=True))
-        elif not is_portrait and label_height_cm == 4:
-            # Landscape 4cm: item_w = 207mm, item_h = 40mm
-            # 5 upright stacked vertically (x = 5mm .. 212mm)
-            top_margin = (page_h - 5 * item_h) / 2
-            for row in range(5):
-                y = page_h - top_margin - (row + 1) * item_h
-                slots.append(LabelSlot(x=margin, y=y, w=item_w, h=item_h, rotated=False))
-            # 2 rotated in leftover 85mm column (2 cols of 40mm x 1 row of 207mm)
-            y_rot = (page_h - item_w) / 2
-            x_rot_margin = 212 * mm_unit + (page_w - 212 * mm_unit - 2 * item_h) / 2
-            slots.append(LabelSlot(x=x_rot_margin, y=y_rot, w=item_w, h=item_h, rotated=True))
-            slots.append(LabelSlot(x=x_rot_margin + item_h, y=y_rot, w=item_w, h=item_h, rotated=True))
-        elif is_portrait and label_height_cm in (14.5, 15):
-            # Portrait 14.5cm: 2 items in product column (120mm x 145mm)
-            top_margin = (page_h - 2 * item_h) / 2
-            for row in range(2):
-                y = page_h - top_margin - (row + 1) * item_h
-                slots.append(LabelSlot(x=margin + left_w, y=y, w=item_w, h=item_h, rotated=False))
-        else:
-            # Landscape 14.5cm: 2 items rotated 90 deg (each is 145mm wide x 207mm high on page)
-            x_margin = (page_w - 2 * item_h) / 2
-            y_margin = (page_h - item_w) / 2
-            for col in range(2):
-                slots.append(LabelSlot(x=x_margin + col * item_h, y=y_margin, w=item_w, h=item_h, rotated=True))
-        return slots
-
+    if print_mode == "product_only":
+        item_w = page_w - 2 * margin - left_w
+        upright_x = margin + left_w if is_portrait else margin
+        spare_x = margin if is_portrait else margin + item_w
+        upright_rows = fit(page_h, label_h)
+        slots = grid(
+            upright_x, (page_h - upright_rows * label_h) / 2,
+            1, upright_rows, item_w, label_h,
+        )
+        rotated_cols = fit(left_w, label_h)
+        rotated_rows = fit(page_h, item_w)
+        slots += grid(
+            spare_x + (left_w - rotated_cols * label_h) / 2,
+            (page_h - rotated_rows * item_w) / 2,
+            rotated_cols, rotated_rows, item_w, label_h, True,
+        )
     elif print_mode == "location_only":
-        item_w = left_w   # 80 mm
-        item_h = label_h  # 40 mm, 70 mm, or 145 mm
-        slots = []
-        if not is_portrait and label_height_cm == 7:
-            # Landscape 7cm: 3 cols x 3 rows = 9 slots unrotated
-            left_margin = (page_w - 3 * 80 * mm_unit) / 2
-            for r in range(3):
-                y = (2 - r) * 70 * mm_unit
-                for c in range(3):
-                    slots.append(LabelSlot(x=left_margin + c * 80 * mm_unit, y=y, w=item_w, h=item_h, rotated=False))
-        elif is_portrait and label_height_cm == 7:
-            # Portrait 7cm: 3 cols x 3 rows = 9 slots rotated 90 deg (each is 70mm wide x 80mm high on page)
-            top_margin = (page_h - 3 * 80 * mm_unit) / 2
-            for r in range(3):
-                y = page_h - top_margin - (r + 1) * 80 * mm_unit
-                for c in range(3):
-                    slots.append(LabelSlot(x=c * 70 * mm_unit, y=y, w=item_w, h=item_h, rotated=True))
-        elif not is_portrait and label_height_cm == 4:
-            # Landscape 4cm: 3 cols x 5 rows unrotated (80mm x 40mm) = 15 slots
-            # + 2 rotated in leftover 57mm column (40mm wide x 80mm high on page)
-            top_margin = (page_h - 5 * item_h) / 2
-            for r in range(5):
-                y = page_h - top_margin - (r + 1) * item_h
-                for c in range(3):
-                    slots.append(LabelSlot(x=margin + c * item_w, y=y, w=item_w, h=item_h, rotated=False))
-            rot_x = 245 * mm_unit + (page_w - 245 * mm_unit - item_h) / 2
-            rot_top_margin = (page_h - 2 * item_w) / 2
-            for r in range(2):
-                y = page_h - rot_top_margin - (r + 1) * item_w
-                slots.append(LabelSlot(x=rot_x, y=y, w=item_w, h=item_h, rotated=True))
-        elif is_portrait and label_height_cm == 4:
-            # Portrait 4cm: 2 cols x 7 rows unrotated (80mm x 40mm) = 14 slots
-            # + 3 rotated in leftover 50mm column (40mm wide x 80mm high on page)
-            top_margin = (page_h - 7 * item_h) / 2
-            for r in range(7):
-                y = page_h - top_margin - (r + 1) * item_h
-                for c in range(2):
-                    slots.append(LabelSlot(x=margin + c * item_w, y=y, w=item_w, h=item_h, rotated=False))
-            rot_x = 165 * mm_unit + (page_w - 165 * mm_unit - item_h) / 2
-            rot_top_margin = (page_h - 3 * item_w) / 2
-            for r in range(3):
-                y = page_h - rot_top_margin - (r + 1) * item_w
-                slots.append(LabelSlot(x=rot_x, y=y, w=item_w, h=item_h, rotated=True))
-        elif not is_portrait and label_height_cm in (14.5, 15):
-            # Landscape 14.5cm: 2 cols x 2 rows rotated 90 deg (each is 145mm wide x 80mm high on page)
-            left_margin = (page_w - 2 * 145 * mm_unit) / 2
-            top_margin = (page_h - 2 * 80 * mm_unit) / 2
-            for r in range(2):
-                y = page_h - top_margin - (r + 1) * 80 * mm_unit
-                for c in range(2):
-                    slots.append(LabelSlot(x=left_margin + c * 145 * mm_unit, y=y, w=item_w, h=item_h, rotated=True))
-        else:
-            # Portrait 14.5cm: 2 cols x 2 rows unrotated (each is 80mm wide x 145mm high on page)
-            left_margin = (page_w - 2 * 80 * mm_unit) / 2
-            top_margin = (page_h - 2 * 145 * mm_unit) / 2
-            for r in range(2):
-                y = page_h - top_margin - (r + 1) * 145 * mm_unit
-                for c in range(2):
-                    slots.append(LabelSlot(x=left_margin + c * 80 * mm_unit, y=y, w=item_w, h=item_h, rotated=False))
-        return slots
+        item_w = left_w
+        upright_cols = fit(page_w - 2 * margin, item_w)
+        upright_rows = fit(page_h, label_h)
+        spare_w = page_w - 2 * margin - upright_cols * item_w
+        rotated_cols = fit(spare_w, label_h)
+        rotated_rows = fit(page_h, item_w)
+        # Keep the upright grid centred unless the spare strip holds rotated labels.
+        upright_x = (
+            margin if rotated_cols and rotated_rows
+            else (page_w - upright_cols * item_w) / 2
+        )
+        slots = grid(
+            upright_x, (page_h - upright_rows * label_h) / 2,
+            upright_cols, upright_rows, item_w, label_h,
+        )
+        slots += grid(
+            margin + upright_cols * item_w + (spare_w - rotated_cols * label_h) / 2,
+            (page_h - rotated_rows * item_w) / 2,
+            rotated_cols, rotated_rows, item_w, label_h, True,
+        )
+    else:
+        raise ValueError(
+            f"Unknown print_mode: {print_mode!r}. Choose 'full', 'location_only', or 'product_only'."
+        )
 
-    raise ValueError(f"Unknown print_mode: {print_mode!r}. Choose 'full', 'location_only', or 'product_only'.")
+    # Large labels fit better rotated. For smaller labels, keep the mixed layout
+    # when both arrangements hold the same number of labels.
+    rotated_cols = fit(page_w, label_h)
+    rotated_rows = fit(page_h, item_w)
+    rotated_slots = grid(
+        (page_w - rotated_cols * label_h) / 2,
+        (page_h - rotated_rows * item_w) / 2,
+        rotated_cols, rotated_rows, item_w, label_h, True,
+    )
+    return rotated_slots if len(rotated_slots) > len(slots) else slots
 
 
 def render_labels_pdf(
     cells: list[Cell] | tuple[Cell, ...],
     output_path: Path,
-    *, label_height_cm: int | float = 7,
+    *,
+    label_height_cm: int | float = 7,
     orientation: str = "landscape",
     print_mode: str = "full",
     sample: bool = False,
@@ -262,15 +197,16 @@ def render_labels_pdf(
 ) -> PrintResult:
     """Render one label per warehouse cell using product IDs and shortened names.
 
-The product font and row spacing shrink automatically until every assigned product
-fits on the cell's label. The caller determines shelf/cell order and should pass the
-shortened product name in ``Product.name``. An empty cell receives a location label.
-Output is replaced only after every label has been laid out successfully.
-"""
+    The product font and row spacing shrink automatically until every assigned product
+    fits on the cell's label. The caller determines shelf/cell order and should pass the
+    shortened product name in ``Product.name``. An empty cell receives a location label.
+    Output is replaced only after every label has been laid out successfully.
+    """
     if not cells:
         raise ValueError("There are no cells to print.")
-    if label_height_cm not in LABEL_HEIGHTS_MM:
-        raise ValueError("Choose a 4 cm, 7 cm, or 14.5 cm label height.")
+    if label_height_cm not in LABEL_HEIGHTS_CM:
+        heights = ", ".join(f"{height:g}" for height in LABEL_HEIGHTS_CM)
+        raise ValueError(f"Choose a label height from {heights} cm.")
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4, landscape, portrait
@@ -291,7 +227,9 @@ Output is replaced only after every label has been laid out successfully.
     if regular not in pdfmetrics.getRegisteredFontNames():
         pdfmetrics.registerFont(TTFont(regular, str(regular_path)))
         pdfmetrics.registerFont(TTFont(bold, str(bold_path)))
-        pdfmetrics.registerFontFamily(regular, normal=regular, bold=bold, italic=regular, boldItalic=bold)
+        pdfmetrics.registerFontFamily(
+            regular, normal=regular, bold=bold, italic=regular, boldItalic=bold
+        )
 
     def clean(value: str) -> str:
         # Canonical combining marks and XML escaping preserve Vietnamese and &/<.
@@ -341,7 +279,9 @@ Output is replaced only after every label has been laid out successfully.
                 unicodedata.normalize("NFC", " ".join(str(product.product_id).split()))
                 for product in products
             ]
-            id_text_w = max(pdfmetrics.stringWidth(value, bold, size) for value in raw_ids)
+            id_text_w = max(
+                pdfmetrics.stringWidth(value, bold, size) for value in raw_ids
+            )
             id_col_w = id_text_w + column_gap
             name_col_w = target_w - id_col_w
             if name_col_w <= size:
@@ -403,7 +343,7 @@ Output is replaced only after every label has been laid out successfully.
 
         next_step = (
             "Choose a larger label height or shorten the product names further."
-            if label_height_cm < 14.5
+            if label_height_cm < max(LABEL_HEIGHTS_CM)
             else "Shorten the product names further."
         )
         raise ValueError(
@@ -413,8 +353,15 @@ Output is replaced only after every label has been laid out successfully.
 
     def draw_location_id(w, h, location_id):
         raw_location = unicodedata.normalize("NFC", " ".join(str(location_id).split()))
-        location_lines = (raw_location[:4], raw_location[4:]) if len(raw_location) > 4 else (raw_location,)
-        widest_location_line = max(location_lines, key=lambda line: pdfmetrics.stringWidth(line, bold, LOCATION_FONT_SIZE))
+        location_lines = (
+            (raw_location[:4], raw_location[4:])
+            if len(raw_location) > 4
+            else (raw_location,)
+        )
+        widest_location_line = max(
+            location_lines,
+            key=lambda line: pdfmetrics.stringWidth(line, bold, LOCATION_FONT_SIZE),
+        )
         loc_size = LOCATION_FONT_SIZE
         location_body_h = h - 2 * location_padding
         ascent, descent = pdfmetrics.getAscentDescent(bold, loc_size)
@@ -428,7 +375,9 @@ Output is replaced only after every label has been laid out successfully.
             ascent, descent = pdfmetrics.getAscentDescent(bold, loc_size)
             loc_h = (len(location_lines) - 1) * loc_size + ascent - descent
         if loc_h > location_body_h:
-            raise ValueError(f"Location ID {location_id!r} is too long for this label layout.")
+            raise ValueError(
+                f"Location ID {location_id!r} is too long for this label layout."
+            )
         first_baseline = (h + loc_h) / 2 - ascent
         canvas.setFillColor(colors.black)
         canvas.setFont(bold, loc_size)
@@ -499,7 +448,9 @@ Output is replaced only after every label has been laid out successfully.
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(dir=output_path.parent, prefix=".label_", suffix=".pdf", delete=False) as stream:
+        with tempfile.NamedTemporaryFile(
+            dir=output_path.parent, prefix=".label_", suffix=".pdf", delete=False
+        ) as stream:
             temporary = Path(stream.name)
             stream.write(buffer.getvalue())
         os.replace(temporary, output_path)
