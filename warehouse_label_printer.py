@@ -28,7 +28,13 @@ import unicodedata
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from utils.warehouse_label_pdf import Cell, Product, label_count, render_labels_pdf
+from utils.warehouse_label_pdf import (
+    LABEL_HEIGHTS_CM,
+    Cell,
+    Product,
+    label_count,
+    render_labels_pdf,
+)
 
 
 @dataclass(frozen=True)
@@ -341,9 +347,13 @@ class LabelPrinterApp:
         buttons = ttk.Frame(footer)
         buttons.pack(fill="x")
         ttk.Label(buttons, text="Label height:").pack(side="left")
-        ttk.Radiobutton(buttons, text="4 cm", variable=self.label_height, value=4.0).pack(side="left", padx=(6, 8))
-        ttk.Radiobutton(buttons, text="7 cm", variable=self.label_height, value=7.0).pack(side="left", padx=(0, 8))
-        ttk.Radiobutton(buttons, text="14.5 cm", variable=self.label_height, value=14.5).pack(side="left", padx=(0, 12))
+        for height in LABEL_HEIGHTS_CM:
+            ttk.Radiobutton(
+                buttons,
+                text=f"{height:g} cm",
+                variable=self.label_height,
+                value=float(height),
+            ).pack(side="left", padx=(6, 8))
         self.portrait_check = ttk.Checkbutton(
             buttons,
             text="Portrait orientation",
@@ -622,9 +632,8 @@ class LabelPrinterApp:
                         parent=self.root,
                     )
                     return
-            height_val = float(self.label_height.get())
-            height_cm = int(height_val) if height_val.is_integer() else height_val
-            height_label = f"{height_cm}"
+            height_cm = self.label_height.get()
+            height_label = f"{height_cm:g}"
             orientation = "portrait" if self.is_portrait.get() else "landscape"
             print_mode = (
                 "location_only" if self.location_only.get()
@@ -645,7 +654,7 @@ class LabelPrinterApp:
             "full": "",
         }[print_mode]
         self.status_text.set(
-            f"Preparing {label_count(cells)} labels ({height_cm} cm, {orientation}{mode_note}) from latest placements...{skip_note}"
+            f"Preparing {label_count(cells)} labels ({height_label} cm, {orientation}{mode_note}) from latest placements...{skip_note}"
         )
         Thread(target=self._generate_pdf, args=(cells, output, height_cm, orientation, print_mode), daemon=True).start()
         self.poll_id = self.root.after(100, self._poll)
