@@ -35,36 +35,32 @@ states. A working product is in exactly one of them at a time.
 ## Run on Windows 11
 
 Double-click `warehouse_mapper.exe` in the project folder to open the desktop
-app without VS Code or a Python installation. The executable is committed at
-the project root beside `warehouse_mapper.py`. Double-click
-`warehouse_label_printer.exe` there to open the label printer.
+app without VS Code. The small executable launches `warehouse_mapper.py` with
+`../../.venv/Scripts/python.exe` and loads the UI, features, libraries, and
+database from their existing folders. The project venv and source files must
+remain in place. `warehouse_label_printer.exe` works the same way for the label
+printer.
 
-To run the source instead, from the project folder with Python installed:
+To run the source directly from the project folder:
 
 ```powershell
-python warehouse_mapper.py
+& '..\..\.venv\Scripts\python.exe' warehouse_mapper.py
 ```
 
-`py warehouse_mapper.py` also works on Windows. Both launchers use
-`data/warehouse_locations.db`. To choose another database, run
-`python warehouse_mapper.py --db path/to/file.db`.
+Both launchers use `data/warehouse_locations.db`. To choose another database,
+run `warehouse_mapper.exe --db path/to/file.db` or pass the same argument to
+`warehouse_mapper.py`.
 
-The executable contains its own Python runtime and libraries. It does not load
-newly installed packages from a venv when you double-click it. To rebuild it
-with the packages from the shared `Auto/.venv`, install the build tool in that
-venv, then run:
+Changes to the Python source or packages in the venv take effect on the next
+launch. To rebuild the small executables themselves, use MinGW-w64 GCC:
 
 ```powershell
-& '..\..\.venv\Scripts\python.exe' -m pip install pyinstaller
 py utils/build_exe.py
 ```
 
 Use `py utils/build_exe.py --app mapper` or `--app labels` to rebuild just one.
-The build script selects `Auto/.venv` when present. Pass `--python` followed by
-another `python.exe` path to select a different environment. The mapper build
-includes Selenium's Chrome modules for the optional KiotViet connection.
-The builds create single-file executables at the project root, so opening them
-takes a few seconds while they unpack their runtimes.
+The executables contain only the Windows launcher, not Python, Selenium, UI
+code, or other app resources.
 
 Selenium is only needed for the optional Chrome/KiotViet integration. Tab 7
 uses `openpyxl` to read and write `.xlsx` workbooks.
@@ -196,8 +192,8 @@ assignment time.
 
 | Path | Responsibility |
 | --- | --- |
-| `warehouse_mapper.py`, `warehouse_mapper.exe` | Root desktop launchers. Rebuild the executable after source changes. |
-| `warehouse_label_printer.py`, `warehouse_label_printer.exe` | Root label printer launchers. |
+| `warehouse_mapper.py`, `warehouse_mapper.exe` | Root desktop script and small launcher; Python changes load on the next run. |
+| `warehouse_label_printer.py`, `warehouse_label_printer.exe` | Root label printer script and small launcher. |
 | `warehouse_web.py` | Root launcher for the deprecated web UI. |
 | `ui/desktop/` | Tkinter window, tabs, widgets, and action handlers. |
 | `mapper/persistence/` | SQLite schema and catalog, shelf, inventory, and exception operations. |
@@ -208,7 +204,7 @@ assignment time.
 | `utils/labels/` | Label printer implementation. |
 | `utils/laya/` | Laya extraction tools. |
 | `utils/icsparts/` | ICS Parts catalog and part master scrapers. |
-| `utils/build_exe.py` | Rebuilds the desktop executables. |
+| `utils/build_exe.py`, `utils/launcher.c` | Rebuild the small desktop launchers. |
 | `data/` | Local database and generated output, ignored by Git. |
 
 The supported interface is Tkinter. The web UI and its API remain available as
