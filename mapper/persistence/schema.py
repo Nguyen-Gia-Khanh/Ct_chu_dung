@@ -31,7 +31,6 @@ class SchemaOperations:
                     floor       TEXT NOT NULL COLLATE NOCASE,
                     side        TEXT NOT NULL DEFAULT '1' COLLATE NOCASE CHECK (length(trim(side)) > 0),
                     shelf_code  TEXT NOT NULL COLLATE NOCASE,
-                    switched_state INTEGER NOT NULL DEFAULT 0 CHECK (switched_state IN (0, 1)),
                     created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE (floor, side, shelf_code)
@@ -132,14 +131,6 @@ class SchemaOperations:
             # before BEGIN. Check all references before the transaction commits.
             connection.execute("PRAGMA foreign_keys = OFF")
             connection.execute("BEGIN IMMEDIATE")
-            shelf_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(shelves)")
-            }
-            if "switched_state" not in shelf_columns:
-                connection.execute(
-                    "ALTER TABLE shelves ADD COLUMN switched_state INTEGER NOT NULL DEFAULT 0 "
-                    "CHECK (switched_state IN (0, 1))"
-                )
             staging_columns = {
                 row["name"]
                 for row in connection.execute("PRAGMA table_info(wait_to_update_csv)")

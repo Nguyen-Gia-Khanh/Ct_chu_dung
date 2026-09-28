@@ -1,12 +1,9 @@
 from __future__ import annotations
-from .common import build_session, get_session, clean_text, is_icsparts_url
-
-from mapper.core.common import data_directory
 
 import json
 import math
 import re
-import threading
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -14,11 +11,13 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import pandas as pd
-import requests
 from bs4 import BeautifulSoup
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from mapper.core.common import data_directory
+from utils.icsparts.common import clean_text, get_session, is_icsparts_url
 
 # ============================================================
 # CONFIG
@@ -30,10 +29,10 @@ MASTER_URL = "https://icsparts.vn/danh-muc/ma-phu-tung/"
 #
 # You normally DO NOT need to paste any directory here.
 # Script #2 searches automatically in:
-#   1) the same folder as this .py file
-#   2) ./icsparts_output/ beside this .py file
-#   3) the current terminal folder
-#   4) ./icsparts_output/ under the current terminal folder
+#   1) the project's data/icsparts folder
+#   2) the existing icsparts_scrape/icsparts_output folder
+#   3) the same folder as this .py file or its icsparts_output child
+#   4) the current terminal folder or its icsparts_output child
 #
 # Both .xlsx and .xlsm are accepted.
 # Set this only if you deliberately keep the workbook somewhere else.
@@ -53,6 +52,7 @@ def resolve_excel_path() -> Path:
 
     bases = (
         data_directory() / "icsparts",
+        SCRIPT_DIR.parents[1] / "icsparts_scrape" / "icsparts_output",
         SCRIPT_DIR,
         SCRIPT_DIR / "icsparts_output",
         Path.cwd(),
@@ -80,9 +80,10 @@ EXCEL_PATH = resolve_excel_path()
 OUTPUT_DIR = EXCEL_PATH.parent
 CHECKPOINT_CSV = OUTPUT_DIR / "_part_master_checkpoint.csv"
 ERROR_CSV = OUTPUT_DIR / "part_master_errors.csv"
+RESTART_MARKER = OUTPUT_DIR / "_part_master_restart_in_progress"
 
 # Keep this modest. 4 workers is enough for ~4,440 listing pages.
-MAX_WORKERS = 4
+MAX_WORKERS = 8
 REQUEST_DELAY_SECONDS = 0.20
 REQUEST_TIMEOUT = (10, 45)
 
@@ -93,18 +94,13 @@ CHECKPOINT_EVERY_PAGES = 40
 # For a quick test, set MAX_PAGES = 5.
 MAX_PAGES: int | None = None
 
-# True = delete the old checkpoint and start scraper #2 from page 1.
-FORCE_RESTART = False
+# Start a fresh listing scrape on the next run. Interrupted runs resume automatically.
+FORCE_RESTART = True
 
 
 # ============================================================
 # HTTP
 # ============================================================
-
-
-
-
-
 
 
 def fetch(url: str) -> tuple[BeautifulSoup, str]:
@@ -120,9 +116,6 @@ def fetch(url: str) -> tuple[BeautifulSoup, str]:
 # ============================================================
 # TEXT / URL HELPERS
 # ============================================================
-
-
-
 
 
 def absolute_url(base_url: str, href: str | None) -> str:
@@ -214,11 +207,7 @@ def extract_label(text: str, label: str) -> str:
 
     extract_label(text, "ENG:") -> "COV FR TOP R263"
     """
-    escaped_others = [
-        re.escape(other)
-        for other in LABELS
-        if other != label
-    ]
+    escaped_others = [re.escape(other) for other in LABELS if other != label]
 
     pattern = (
         re.escape(label)
@@ -251,10 +240,7 @@ def find_smallest_product_card_text(anchor) -> str:
         except Exception:
             text = ""
 
-        if (
-            text.upper().count("MÃ PHỤ TÙNG:") == 1
-            and "BARCODE:" in text.upper()
-        ):
+        if text.upper().count("MÃ PHỤ TÙNG:") == 1 and "BARCODE:" in text.upper():
             return text
 
         node = getattr(node, "parent", None)
@@ -424,12 +410,14 @@ CHECKPOINT_COLUMNS = [
 
 
 def reset_if_requested() -> None:
-    if not FORCE_RESTART:
+    if not FORCE_RESTART or RESTART_MARKER.exists():
         return
 
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     for path in (CHECKPOINT_CSV, ERROR_CSV):
         if path.exists():
             path.unlink()
+    RESTART_MARKER.touch()
 
 
 def load_processed_pages() -> set[int]:
@@ -488,6 +476,7 @@ def save_errors(errors: list[str]) -> None:
 # MASTER DEDUPLICATION
 # ============================================================
 
+
 def first_nonblank(series: pd.Series):
     for value in series:
         if pd.notna(value) and str(value).strip():
@@ -516,12 +505,13 @@ def join_unique(series: pd.Series) -> str:
     return " | ".join(seen)
 
 
-def build_part_master() -> pd.DataFrame:
-    if not CHECKPOINT_CSV.exists():
+def build_part_master(checkpoint_csv: Path | None = None) -> pd.DataFrame:
+    checkpoint_csv = checkpoint_csv or CHECKPOINT_CSV
+    if not checkpoint_csv.exists():
         raise RuntimeError("No checkpoint data exists.")
 
     raw = pd.read_csv(
-        CHECKPOINT_CSV,
+        checkpoint_csv,
         dtype=str,
         encoding="utf-8-sig",
     )
@@ -536,31 +526,10 @@ def build_part_master() -> pd.DataFrame:
     raw["price_vnd"] = pd.to_numeric(raw["price_vnd"], errors="coerce")
     raw["source_page"] = pd.to_numeric(raw["source_page"], errors="coerce")
 
-    counts = (
-        raw.groupby("part_number", sort=False)
-        .size()
-        .rename("listing_occurrences")
-    )
-
-    conflict_columns = [
-        "part_name_vi",
-        "part_name_en",
-        "barcode",
-        "part_group",
-        "model_summary",
-        "model_code",
-    ]
-
-    conflict = (
-        raw.groupby("part_number")[conflict_columns]
-        .nunique(dropna=True)
-        .gt(1)
-        .any(axis=1)
-        .rename("metadata_conflict")
-    )
+    counts = raw.groupby("part_number", sort=False).size().rename("listing_occurrences")
 
     # Keep one row per exact Honda PN.
-    # For fields where duplicated cards disagree, preserve every distinct value.
+    # Preserve every distinct value from duplicate listing cards.
     grouped = raw.groupby("part_number", sort=False)
 
     master = grouped.agg(
@@ -584,12 +553,6 @@ def build_part_master() -> pd.DataFrame:
         how="left",
     )
 
-    master = master.merge(
-        conflict.reset_index(),
-        on="part_number",
-        how="left",
-    )
-
     return master
 
 
@@ -597,68 +560,65 @@ def build_part_master() -> pd.DataFrame:
 # JOIN AGAINST SCRAPER #1 + COLLAPSE APPLICATIONS
 # ============================================================
 
+
 def _clean_application_value(value) -> str:
     if pd.isna(value):
         return ""
     return clean_text(str(value))
 
 
-def _catalog_version_label(row: pd.Series) -> str:
-    """
-    Produce one compact, human-readable version/catalog label.
-
-    Priority:
-      - catalogue title is always retained because it is the safest context
-      - model code / figure variant hints are appended only when they add info
-
-    We do NOT infer compatibility here. Everything comes directly from raw_parts.
-    """
+def _catalog_model_and_version(row: pd.Series) -> tuple[str, str]:
+    """Separate the catalogue model name from its year and variant details."""
     catalog_title = _clean_application_value(row.get("catalog_title", ""))
     year_spec = _clean_application_value(row.get("year_spec", ""))
     model_codes = _clean_application_value(row.get("catalog_model_codes", ""))
     variant_hint = _clean_application_value(row.get("figure_variant_hint", ""))
 
-    label = catalog_title
+    model_name = catalog_title
 
-    # Remove a trailing "(YEAR)" from the label because YEAR is already the dict key.
-    if label and year_spec:
-        label = re.sub(
+    if model_name and year_spec:
+        model_name = re.sub(
             rf"\s*\(\s*{re.escape(year_spec)}\s*\)\s*$",
             "",
-            label,
+            model_name,
             flags=re.IGNORECASE,
         ).strip()
 
     extras = []
 
-    if model_codes and model_codes.casefold() not in label.casefold():
+    if model_codes and model_codes.casefold() not in model_name.casefold():
         extras.append(f"code:{model_codes}")
 
-    if variant_hint and variant_hint.casefold() not in label.casefold():
+    if variant_hint and variant_hint.casefold() not in model_name.casefold():
         extras.append(f"variant:{variant_hint}")
 
+    version = year_spec or "UNSPECIFIED"
     if extras:
-        if label:
-            label = f"{label} [{' ; '.join(extras)}]"
-        else:
-            label = " ; ".join(extras)
+        version += f" ({' ; '.join(extras)})"
 
-    return label or "UNSPECIFIED"
+    return model_name or "UNSPECIFIED", version
+
+
+def format_application_text(applications: dict[str, dict[str, list[str]]]) -> str:
+    return "\n".join(
+        f"{archetype}: "
+        + "; ".join(
+            f"{model} [{', '.join(versions)}]"
+            for model, versions in models.items()
+        )
+        for archetype, models in applications.items()
+    )
 
 
 def build_application_summary(raw_parts: pd.DataFrame) -> pd.DataFrame:
     """
-    Collapse raw_parts into one application dict/text per exact PN.
+    Collapse raw_parts into MODEL GROUP -> MODEL NAME -> [VERSIONS].
 
     Example JSON stored in ONE Excel cell:
 
     {
-      "AIR BLADE": {
-        "2020+": ["AIR BLADE 125 / AIR BLADE 150"],
-        "2023+": ["AIR BLADE 125 / AIR BLADE 160 K2Z K3A"]
-      },
-      "VARIO": {
-        "2023+": ["VARIO 160 ..."]
+      "VISION": {
+        "VISION 110": ["09/2014+", "2021+"]
       }
     }
 
@@ -683,11 +643,12 @@ def build_application_summary(raw_parts: pd.DataFrame) -> pd.DataFrame:
         unique_entries = set()
 
         for _, row in group.iterrows():
-            model = _clean_application_value(row.get("model_group", "")) or "UNSPECIFIED"
-            year = _clean_application_value(row.get("year_spec", "")) or "UNSPECIFIED"
-            version = _catalog_version_label(row)
+            model = (
+                _clean_application_value(row.get("model_group", "")) or "UNSPECIFIED"
+            )
+            catalog_model, version = _catalog_model_and_version(row)
 
-            key = (model, year, version)
+            key = (model, catalog_model, version)
 
             if key in unique_entries:
                 continue
@@ -695,10 +656,10 @@ def build_application_summary(raw_parts: pd.DataFrame) -> pd.DataFrame:
             unique_entries.add(key)
 
             applications.setdefault(model, {})
-            applications[model].setdefault(year, [])
+            applications[model].setdefault(catalog_model, [])
 
-            if version not in applications[model][year]:
-                applications[model][year].append(version)
+            if version not in applications[model][catalog_model]:
+                applications[model][catalog_model].append(version)
 
         # Compact JSON: machine-friendly and easy to parse back in Python/Power Query.
         application_dict = json.dumps(
@@ -707,22 +668,7 @@ def build_application_summary(raw_parts: pd.DataFrame) -> pd.DataFrame:
             separators=(",", ":"),
         )
 
-        # Human-readable version with line breaks so Excel can wrap it.
-        text_lines = []
-
-        for model, years in applications.items():
-            year_chunks = []
-
-            for year, versions in years.items():
-                year_chunks.append(
-                    f"{year}: [{', '.join(versions)}]"
-                )
-
-            text_lines.append(
-                f"{model} -> " + " ; ".join(year_chunks)
-            )
-
-        application_text = "\n".join(text_lines)
+        application_text = format_application_text(applications)
 
         rows.append(
             {
@@ -736,7 +682,65 @@ def build_application_summary(raw_parts: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def add_catalogue_presence(master: pd.DataFrame) -> pd.DataFrame:
+def build_group_summary(raw_parts: pd.DataFrame) -> pd.DataFrame:
+    """Keep the figure code, name, and URL together for each exact part number."""
+    columns = [
+        "part_number",
+        "group_ids",
+        "group_names",
+        "group_urls",
+        "group_details",
+        "catalog_product_urls",
+    ]
+    required = {"part_number", "figure_code", "figure_name", "figure_url", "part_url"}
+    if not required.issubset(raw_parts.columns):
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+    for part_number, group in raw_parts.groupby("part_number", sort=False):
+        details = []
+        seen_groups = set()
+        product_urls = []
+        seen_products = set()
+
+        for _, row in group.iterrows():
+            group_id = _clean_application_value(row["figure_code"])
+            group_name = _clean_application_value(row["figure_name"])
+            group_url = _clean_application_value(row["figure_url"])
+            product_url = _clean_application_value(row["part_url"])
+            group_key = (group_id, group_name, group_url)
+
+            if any(group_key) and group_key not in seen_groups:
+                seen_groups.add(group_key)
+                details.append({"id": group_id, "name": group_name, "url": group_url})
+
+            if product_url and product_url not in seen_products:
+                seen_products.add(product_url)
+                product_urls.append(product_url)
+
+        rows.append(
+            {
+                "part_number": part_number,
+                "group_ids": join_unique(pd.Series([item["id"] for item in details])),
+                "group_names": join_unique(
+                    pd.Series([item["name"] for item in details])
+                ),
+                "group_urls": join_unique(pd.Series([item["url"] for item in details])),
+                "group_details": json.dumps(
+                    details, ensure_ascii=False, separators=(",", ":")
+                )
+                if details
+                else "",
+                "catalog_product_urls": " | ".join(product_urls),
+            }
+        )
+
+    return pd.DataFrame(rows, columns=columns)
+
+
+def add_catalogue_presence(
+    master: pd.DataFrame, excel_path: Path | None = None
+) -> pd.DataFrame:
     """
     Read scraper #1's raw_parts sheet.
 
@@ -745,47 +749,41 @@ def add_catalogue_presence(master: pd.DataFrame) -> pd.DataFrame:
       - model groups seen in catalogues
       - application_dict: MODEL -> YEAR -> [VERSION/CATALOG LABELS]
       - application_text: same information, easier to read in Excel
+      - figure group IDs, names, URLs, and catalogue product URLs
 
     No compatibility is invented. All application data is derived only from
     exact occurrences of the same PN in raw_parts.
     """
-    if not EXCEL_PATH.exists():
+    excel_path = excel_path or EXCEL_PATH
+    if not excel_path.exists():
         raise FileNotFoundError(
-            f"Scraper #1 Excel not found:\n{EXCEL_PATH.resolve()}\n\n"
+            f"Scraper #1 Excel not found:\n{excel_path.resolve()}\n\n"
             "Put icsparts_catalog_data.xlsx beside this script, "
             "or inside an icsparts_output folder beside it."
         )
 
     try:
         raw_parts = pd.read_excel(
-            EXCEL_PATH,
+            excel_path,
             sheet_name="raw_parts",
             dtype=str,
         )
     except ValueError as exc:
         raise RuntimeError(
-            "Excel exists, but sheet 'raw_parts' was not found. "
-            "Run scraper #1 first."
+            "Excel exists, but sheet 'raw_parts' was not found. Run scraper #1 first."
         ) from exc
 
     if "part_number" not in raw_parts.columns:
-        raise RuntimeError(
-            "Sheet 'raw_parts' has no 'part_number' column."
-        )
+        raise RuntimeError("Sheet 'raw_parts' has no 'part_number' column.")
 
     raw_parts["part_number"] = (
-        raw_parts["part_number"]
-        .fillna("")
-        .str.strip()
-        .str.upper()
+        raw_parts["part_number"].fillna("").str.strip().str.upper()
     )
 
     raw_parts = raw_parts[raw_parts["part_number"] != ""].copy()
 
     occurrence_count = (
-        raw_parts.groupby("part_number")
-        .size()
-        .rename("catalogue_occurrences")
+        raw_parts.groupby("part_number").size().rename("catalogue_occurrences")
     )
 
     if "model_group" in raw_parts.columns:
@@ -800,7 +798,17 @@ def add_catalogue_presence(master: pd.DataFrame) -> pd.DataFrame:
             name="catalogue_model_groups",
         )
 
+    if "catalog_title" in raw_parts.columns:
+        catalogue_versions = (
+            raw_parts.groupby("part_number")["catalog_title"]
+            .apply(join_unique)
+            .rename("catalogue_versions")
+        )
+    else:
+        catalogue_versions = pd.Series(dtype="object", name="catalogue_versions")
+
     application_summary = build_application_summary(raw_parts)
+    group_summary = build_group_summary(raw_parts)
 
     master = master.merge(
         occurrence_count.reset_index(),
@@ -809,9 +817,7 @@ def add_catalogue_presence(master: pd.DataFrame) -> pd.DataFrame:
     )
 
     master["catalogue_occurrences"] = (
-        master["catalogue_occurrences"]
-        .fillna(0)
-        .astype(int)
+        master["catalogue_occurrences"].fillna(0).astype(int)
     )
 
     master["found_in_catalogue"] = master["catalogue_occurrences"] > 0
@@ -825,10 +831,18 @@ def add_catalogue_presence(master: pd.DataFrame) -> pd.DataFrame:
     else:
         master["catalogue_model_groups"] = ""
 
-    master["catalogue_model_groups"] = (
-        master["catalogue_model_groups"]
-        .fillna("")
-    )
+    master["catalogue_model_groups"] = master["catalogue_model_groups"].fillna("")
+
+    if not catalogue_versions.empty:
+        master = master.merge(
+            catalogue_versions.reset_index(),
+            on="part_number",
+            how="left",
+        )
+    else:
+        master["catalogue_versions"] = ""
+
+    master["catalogue_versions"] = master["catalogue_versions"].fillna("")
 
     if not application_summary.empty:
         master = master.merge(
@@ -843,11 +857,16 @@ def add_catalogue_presence(master: pd.DataFrame) -> pd.DataFrame:
 
     master["application_dict"] = master["application_dict"].fillna("")
     master["application_text"] = master["application_text"].fillna("")
-    master["application_count"] = (
-        master["application_count"]
-        .fillna(0)
-        .astype(int)
-    )
+    master["application_count"] = master["application_count"].fillna(0).astype(int)
+
+    if not group_summary.empty:
+        master = master.merge(group_summary, on="part_number", how="left")
+    else:
+        for column in group_summary.columns.drop("part_number"):
+            master[column] = ""
+
+    for column in group_summary.columns.drop("part_number"):
+        master[column] = master[column].fillna("")
 
     # Put the useful compatibility/application columns near the PN.
     preferred_order = [
@@ -860,6 +879,12 @@ def add_catalogue_presence(master: pd.DataFrame) -> pd.DataFrame:
         "application_dict",
         "application_text",
         "catalogue_model_groups",
+        "catalogue_versions",
+        "group_ids",
+        "group_names",
+        "group_urls",
+        "group_details",
+        "catalog_product_urls",
         "part_name_vi",
         "part_name_en",
         "barcode",
@@ -869,7 +894,6 @@ def add_catalogue_presence(master: pd.DataFrame) -> pd.DataFrame:
         "price_vnd",
         "product_url",
         "listing_occurrences",
-        "metadata_conflict",
         "first_source_page",
         "scraped_at",
     ]
@@ -882,18 +906,22 @@ def add_catalogue_presence(master: pd.DataFrame) -> pd.DataFrame:
 # WRITE INTO THE SAME EXCEL
 # ============================================================
 
-def write_part_master_sheet(master: pd.DataFrame) -> None:
+
+def write_part_master_sheet(
+    master: pd.DataFrame, excel_path: Path | None = None
+) -> None:
     """
     Add/replace ONLY the part_master sheet.
     Scraper #1 sheets are preserved.
     """
+    excel_path = excel_path or EXCEL_PATH
     writer_kwargs = {}
 
-    if EXCEL_PATH.suffix.lower() == ".xlsm":
+    if excel_path.suffix.lower() == ".xlsm":
         writer_kwargs["engine_kwargs"] = {"keep_vba": True}
 
     with pd.ExcelWriter(
-        EXCEL_PATH,
+        excel_path,
         engine="openpyxl",
         mode="a",
         if_sheet_exists="replace",
@@ -910,8 +938,8 @@ def write_part_master_sheet(master: pd.DataFrame) -> None:
     from openpyxl.utils import get_column_letter
 
     wb = load_workbook(
-        EXCEL_PATH,
-        keep_vba=(EXCEL_PATH.suffix.lower() == ".xlsm"),
+        excel_path,
+        keep_vba=(excel_path.suffix.lower() == ".xlsm"),
     )
     ws = wb["part_master"]
 
@@ -919,54 +947,39 @@ def write_part_master_sheet(master: pd.DataFrame) -> None:
     ws.auto_filter.ref = ws.dimensions
 
     widths = {
-        "A": 22,  # part_number
-        "B": 22,  # compact
-        "C": 12,  # family
-        "D": 18,  # found in catalogue
-        "E": 22,  # catalogue occurrences
-        "F": 18,  # application count
-        "G": 60,  # application_dict JSON
-        "H": 60,  # application_text
-        "I": 34,  # catalogue models
-        "J": 38,  # VN name
-        "K": 38,  # EN name
-        "L": 22,  # barcode
-        "M": 34,  # part group
-        "N": 34,  # model summary
-        "O": 24,  # model code
-        "P": 16,  # price
-        "Q": 48,  # product URL
+        "part_number": 22,
+        "part_number_compact": 22,
+        "part_family": 12,
+        "catalogue_model_groups": 34,
+        "catalogue_versions": 48,
+        "application_dict": 60,
+        "application_text": 60,
+        "group_ids": 24,
+        "group_names": 48,
+        "group_urls": 72,
+        "group_details": 72,
+        "catalog_product_urls": 72,
+        "part_name_vi": 38,
+        "part_name_en": 38,
+        "product_url": 72,
     }
+    wrap_columns = {"application_dict", "application_text", "group_details"}
 
-    for col_letter, width in widths.items():
-        ws.column_dimensions[col_letter].width = width
-
-    # application_dict / application_text are intentionally multi-value cells.
-    # Wrap them instead of merging Excel cells.
-    ws["G1"].alignment = ws["G1"].alignment.copy(wrap_text=True)
-    ws["H1"].alignment = ws["H1"].alignment.copy(wrap_text=True)
-
-    for row in range(2, ws.max_row + 1):
-        ws[f"G{row}"].alignment = ws[f"G{row}"].alignment.copy(
-            wrap_text=True,
-            vertical="top",
-        )
-        ws[f"H{row}"].alignment = ws[f"H{row}"].alignment.copy(
-            wrap_text=True,
-            vertical="top",
-        )
-
-    # Cap the remaining columns sensibly.
-    for col_idx in range(15, ws.max_column + 1):
+    for col_idx, name in enumerate(master.columns, start=1):
         letter = get_column_letter(col_idx)
-        ws.column_dimensions[letter].width = 20
+        ws.column_dimensions[letter].width = widths.get(name, 20)
+        if name in wrap_columns:
+            for row in ws.iter_rows(min_col=col_idx, max_col=col_idx):
+                cell = row[0]
+                cell.alignment = cell.alignment.copy(wrap_text=True, vertical="top")
 
-    wb.save(EXCEL_PATH)
+    wb.save(excel_path)
 
 
 # ============================================================
 # MAIN
 # ============================================================
+
 
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -990,11 +1003,7 @@ def main() -> None:
 
     processed_pages = load_processed_pages()
 
-    pages = [
-        page
-        for page in range(1, total_pages + 1)
-        if page not in processed_pages
-    ]
+    pages = [page for page in range(1, total_pages + 1) if page not in processed_pages]
 
     print(f"Already checkpointed: {len(processed_pages):,} pages")
     print(f"Remaining: {len(pages):,} pages")
@@ -1005,10 +1014,7 @@ def main() -> None:
 
     if pages:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            future_map = {
-                executor.submit(scrape_page, page): page
-                for page in pages
-            }
+            future_map = {executor.submit(scrape_page, page): page for page in pages}
 
             completed = 0
 
@@ -1025,18 +1031,14 @@ def main() -> None:
 
                 if error:
                     errors.append(error)
-                    print(
-                        f"[{completed}/{len(pages)}] "
-                        f"page {page_no}: ERROR"
-                    )
+                    print(f"[{completed}/{len(pages)}] page {page_no}: ERROR")
                     continue
 
                 batch_rows.extend(rows)
                 successful_since_checkpoint += 1
 
                 print(
-                    f"[{completed}/{len(pages)}] "
-                    f"page {page_no}: {len(rows)} products"
+                    f"[{completed}/{len(pages)}] page {page_no}: {len(rows)} products"
                 )
 
                 if successful_since_checkpoint >= CHECKPOINT_EVERY_PAGES:
@@ -1059,17 +1061,12 @@ def main() -> None:
     print(EXCEL_PATH.resolve())
 
     write_part_master_sheet(master)
+    RESTART_MARKER.unlink(missing_ok=True)
 
     print("\nDONE")
     print(f"Unique exact PNs: {len(master):,}")
-    print(
-        "Found in catalogue: "
-        f"{int(master['found_in_catalogue'].sum()):,}"
-    )
-    print(
-        "Not found in catalogue: "
-        f"{int((~master['found_in_catalogue']).sum()):,}"
-    )
+    print(f"Found in catalogue: {int(master['found_in_catalogue'].sum()):,}")
+    print(f"Not found in catalogue: {int((~master['found_in_catalogue']).sum()):,}")
     print(f"Listing-page errors: {len(errors):,}")
     print("\nFinal workbook:")
     print(EXCEL_PATH.resolve())

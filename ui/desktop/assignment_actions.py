@@ -15,7 +15,7 @@ class AssignmentActions:
         if self.queue_shift_timer is not None:
             try:
                 self.root.after_cancel(self.queue_shift_timer)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
         self.queue_shift_timer = self.root.after(3000, self._reset_queue_shift_clicks)
 
@@ -23,7 +23,7 @@ class AssignmentActions:
         if self.queue_shift_timer is not None:
             try:
                 self.root.after_cancel(self.queue_shift_timer)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
             self.queue_shift_timer = None
         self.queue_shift_clicks = 0

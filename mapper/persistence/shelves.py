@@ -342,7 +342,6 @@ class ShelfOperations:
         side = clean_location_segment(side)
         if not floor or not shelf_code or not side:
             raise ValueError("Floor, side, and shelf code are required.")
-        even_side = int(side.isdigit() and int(side) % 2 == 0)
         for placement in staged_assignments.values():
             validate_stock_quantity(placement.stock_qty)
             if (
@@ -369,21 +368,16 @@ class ShelfOperations:
                     )
                 cursor = connection.execute(
                     """UPDATE shelves
-                       SET floor = ?, side = ?, shelf_code = ?,
-                           switched_state = CASE
-                               WHEN (side <> '' AND side NOT GLOB '*[^0-9]*'
-                                     AND CAST(side AS INTEGER) % 2 = 0) <> ?
-                               THEN ? ELSE switched_state END,
-                           updated_at = CURRENT_TIMESTAMP
+                       SET floor = ?, side = ?, shelf_code = ?, updated_at = CURRENT_TIMESTAMP
                        WHERE shelf_id = ?""",
-                    (floor, side, shelf_code, even_side, even_side, shelf_id),
+                    (floor, side, shelf_code, shelf_id),
                 )
                 if cursor.rowcount != 1:
                     raise KeyError(f"Shelf {shelf_id} does not exist.")
             elif shelf is None:
                 cursor = connection.execute(
-                    "INSERT INTO shelves (floor, side, shelf_code, switched_state) VALUES (?, ?, ?, ?)",
-                    (floor, side, shelf_code, even_side),
+                    "INSERT INTO shelves (floor, side, shelf_code) VALUES (?, ?, ?)",
+                    (floor, side, shelf_code),
                 )
                 shelf_id = int(cursor.lastrowid)
             else:

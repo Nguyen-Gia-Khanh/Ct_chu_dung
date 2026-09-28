@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import re
 import unicodedata
+from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -18,21 +18,39 @@ class LocationDifference:
 
 def _plain_header(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or "").casefold())
-    return re.sub(r"[^a-z0-9]", "", "".join(c for c in text if not unicodedata.combining(c)))
+    return re.sub(
+        r"[^a-z0-9]", "", "".join(c for c in text if not unicodedata.combining(c))
+    )
 
 
 ID_HEADERS = (
-    "mahang", "masanpham", "masp", "productid", "productcode", "sku", "itemcode", "code"
+    "mahang",
+    "masanpham",
+    "masp",
+    "productid",
+    "productcode",
+    "sku",
+    "itemcode",
+    "code",
 )
 LOCATION_HEADERS = (
-    "vitri", "vitrikho", "vitriluutru", "vitriluutrukho", "locationid", "location",
-    "warehouselocation", "shelflocation", "shelf"
+    "vitri",
+    "vitrikho",
+    "vitriluutru",
+    "vitriluutrukho",
+    "locationid",
+    "location",
+    "warehouselocation",
+    "shelflocation",
+    "shelf",
 )
 
 
 def suggested_columns(headers: list[object]) -> tuple[int, int]:
     normalized = [_plain_header(header) for header in headers]
-    product_index = next((normalized.index(name) for name in ID_HEADERS if name in normalized), 0)
+    product_index = next(
+        (normalized.index(name) for name in ID_HEADERS if name in normalized), 0
+    )
     location_index = next(
         (normalized.index(name) for name in LOCATION_HEADERS if name in normalized),
         1 if len(headers) > 1 else 0,
@@ -45,27 +63,47 @@ def location_parts(value: object) -> tuple[str, ...]:
     if value is None:
         return ()
     text = str(value).strip()
-    return tuple(dict.fromkeys(part.strip() for part in re.split(r"[,;\n]+", text) if part.strip()))
+    return tuple(
+        dict.fromkeys(
+            part.strip() for part in re.split(r"[,;\n]+", text) if part.strip()
+        )
+    )
 
 
 def read_web_locations(
-    path: Path | str, sheet_name: str, header_row: int, id_column: int, location_column: int
+    path: Path | str,
+    sheet_name: str,
+    header_row: int,
+    id_column: int,
+    location_column: int,
 ) -> dict[str, str]:
     """Import the chosen worksheet without changing the local database."""
     try:
         from openpyxl import load_workbook
     except ImportError as error:
-        raise RuntimeError("Excel import needs openpyxl in the Python environment.") from error
+        raise RuntimeError(
+            "Excel import needs openpyxl in the Python environment."
+        ) from error
 
-    if header_row < 1 or id_column < 0 or location_column < 0 or id_column == location_column:
-        raise ValueError("Choose different product ID and location columns and a valid header row.")
+    if (
+        header_row < 1
+        or id_column < 0
+        or location_column < 0
+        or id_column == location_column
+    ):
+        raise ValueError(
+            "Choose different product ID and location columns and a valid header row."
+        )
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         if sheet_name not in workbook.sheetnames:
             raise ValueError(f"Worksheet {sheet_name!r} is not in the Excel file.")
         worksheet = workbook[sheet_name]
         locations: dict[str, str] = {}
-        for row_number, row in enumerate(worksheet.iter_rows(min_row=header_row + 1, values_only=True), header_row + 1):
+        for row_number, row in enumerate(
+            worksheet.iter_rows(min_row=header_row + 1, values_only=True),
+            header_row + 1,
+        ):
             product = row[id_column] if id_column < len(row) else None
             if product is None or not str(product).strip():
                 continue
@@ -74,13 +112,17 @@ def read_web_locations(
             product_id = str(product).strip()
             value = row[location_column] if location_column < len(row) else None
             location = str(value).strip() if value is not None else ""
-            if product_id in locations and set(location_parts(locations[product_id])) != set(location_parts(location)):
+            if product_id in locations and set(
+                location_parts(locations[product_id])
+            ) != set(location_parts(location)):
                 raise ValueError(
                     f"Product {product_id} has conflicting website locations at Excel row {row_number}."
                 )
             locations[product_id] = location
         if not locations:
-            raise ValueError("No product IDs were found in the selected worksheet and column.")
+            raise ValueError(
+                "No product IDs were found in the selected worksheet and column."
+            )
         return locations
     finally:
         workbook.close()
@@ -92,7 +134,9 @@ def compare_locations(
     """Return mismatches and local assigned IDs missing from the export."""
     differences: list[LocationDifference] = []
     missing: list[str] = []
-    for product_id in sorted(set(local_locations) | set(web_locations), key=str.casefold):
+    for product_id in sorted(
+        set(local_locations) | set(web_locations), key=str.casefold
+    ):
         local_slots = local_locations.get(product_id, [])
         local = location_parts(", ".join(local_slots))
         if product_id not in web_locations:
@@ -118,7 +162,9 @@ def export_comparison(path: Path | str, differences: list[LocationDifference]) -
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill
     except ImportError as error:
-        raise RuntimeError("Excel export needs openpyxl in the Python environment.") from error
+        raise RuntimeError(
+            "Excel export needs openpyxl in the Python environment."
+        ) from error
 
     workbook = Workbook()
     worksheet = workbook.active
@@ -128,7 +174,9 @@ def export_comparison(path: Path | str, differences: list[LocationDifference]) -
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="24476B")
     for difference in differences:
-        worksheet.append((difference.product_id, difference.wrong_location, difference.true_location))
+        worksheet.append(
+            (difference.product_id, difference.wrong_location, difference.true_location)
+        )
         for cell in worksheet[worksheet.max_row]:
             cell.data_type = "s"
     worksheet.column_dimensions["A"].width = 25

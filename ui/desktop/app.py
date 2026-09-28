@@ -7,13 +7,14 @@ shelf-structure edits still use the explicit Commit action on tab 1.
 
 from __future__ import annotations
 
+import tkinter as tk
 from pathlib import Path
 from queue import Queue
-import tkinter as tk
 from tkinter import messagebox, ttk
+from typing import Any
 
-from .cell_transfer_view import CellTransferView
 from mapper.core.common import APP_TITLE, default_database_path
+from mapper.features.web_upload import WebsiteUploader
 from mapper.persistence.database import (
     OnHandProduct,
     Placement,
@@ -21,29 +22,28 @@ from mapper.persistence.database import (
     SlotAddress,
     WarehouseDatabase,
 )
+from utils.barcode_scanner import BarcodeScanner
+
+from .assignment_actions import AssignmentActions
+from .catalog_actions import CatalogActions
+from .cell_transfer_view import CellTransferView
 from .designer import ShelfDesigner
 from .exceptions_view import ExceptionsView
 from .location_assignment_view import LocationAssignmentView
 from .location_comparison_view import LocationComparisonView
 from .primal_queue_view import PrimalQueueView
-from .shelf_browser import ShelfBrowserView
-from mapper.features.web_upload import WebsiteUploader
-from utils.barcode_scanner import BarcodeScanner
-
-
 from .shelf_actions import ShelfActions
-from .assignment_actions import AssignmentActions
-from .catalog_actions import CatalogActions
-from .web_actions import WebActions
+from .shelf_browser import ShelfBrowserView
 from .state_actions import StateActions
+from .web_actions import WebActions
 
 
-class WarehouseMapperApp(ShelfActions, AssignmentActions, CatalogActions, WebActions, StateActions):
+class WarehouseMapperApp(
+    ShelfActions, AssignmentActions, CatalogActions, WebActions, StateActions
+):
     def __init__(self, root: tk.Tk, database_path: Path | None = None):
         self.root = root
-        self.database = WarehouseDatabase(
-            database_path or default_database_path()
-        )
+        self.database = WarehouseDatabase(database_path or default_database_path())
         self.products: dict[str, str] = {}
         self.product_shortened_names: dict[str, str] = {}
         self.product_search: dict[str, str] = {}
@@ -119,7 +119,11 @@ class WarehouseMapperApp(ShelfActions, AssignmentActions, CatalogActions, WebAct
         )
         style.map(
             "WholeMode.Commit.TButton",
-            foreground=[("disabled", "#a0a0a0"), ("active", "#92400e"), ("!disabled", "#b45309")],
+            foreground=[
+                ("disabled", "#a0a0a0"),
+                ("active", "#92400e"),
+                ("!disabled", "#b45309"),
+            ],
         )
         style.configure(
             "WholeMode.TButton",
@@ -128,7 +132,11 @@ class WarehouseMapperApp(ShelfActions, AssignmentActions, CatalogActions, WebAct
         )
         style.map(
             "WholeMode.TButton",
-            foreground=[("disabled", "#a0a0a0"), ("active", "#92400e"), ("!disabled", "#b45309")],
+            foreground=[
+                ("disabled", "#a0a0a0"),
+                ("active", "#92400e"),
+                ("!disabled", "#b45309"),
+            ],
         )
 
     def _build_ui(self) -> None:
@@ -249,7 +257,9 @@ class WarehouseMapperApp(ShelfActions, AssignmentActions, CatalogActions, WebAct
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
         self.root.bind(
             "<FocusOut>",
-            lambda _e: hasattr(self, "assignments") and self.assignments.set_whole_mode(False),
+            lambda _e: (
+                hasattr(self, "assignments") and self.assignments.set_whole_mode(False)
+            ),
             add="+",
         )
 
@@ -297,10 +307,14 @@ class WarehouseMapperApp(ShelfActions, AssignmentActions, CatalogActions, WebAct
         elif current_tab == str(self.cell_transfer):
             self.cell_transfer.refresh()
             self.cell_transfer.focus_search()
-        elif hasattr(self, "exceptions_view") and current_tab == str(self.exceptions_view):
+        elif hasattr(self, "exceptions_view") and current_tab == str(
+            self.exceptions_view
+        ):
             self.exceptions_view.refresh()
             self.exceptions_view.focus_search()
-        elif hasattr(self, "location_comparison") and current_tab == str(self.location_comparison):
+        elif hasattr(self, "location_comparison") and current_tab == str(
+            self.location_comparison
+        ):
             self.location_comparison.refresh()
 
     def on_cell_transfer_changed(self, message: str) -> None:
