@@ -1,9 +1,8 @@
 from __future__ import annotations
-from .common import build_session, get_session, clean_text, is_icsparts_url
-
-from mapper.core.common import data_directory
 
 import re
+import shutil
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,6 +15,12 @@ import requests
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from mapper.core.common import data_directory
+from utils.icsparts.common import build_session, clean_text, is_icsparts_url
 
 
 # ============================================================
@@ -33,8 +38,25 @@ MAX_WORKERS = 4
 REQUEST_DELAY_SECONDS = 0.20
 REQUEST_TIMEOUT = (10, 45)
 
-OUTPUT_DIR = data_directory() / "icsparts"
+def resolve_output_dir() -> Path:
+    current = data_directory() / "icsparts"
+    legacy = Path(__file__).resolve().parents[2] / "icsparts_scrape" / "icsparts_output"
+    for directory in (current, legacy):
+        if all(
+            (directory / name).exists()
+            for name in (
+                "icsparts_catalog_index.csv",
+                "icsparts_figure_index.csv",
+                "icsparts_raw_parts.csv",
+            )
+        ):
+            return directory
+    return current
+
+
+OUTPUT_DIR = resolve_output_dir()
 CHECKPOINT_EVERY = 30  # save partial CSV every N figure pages
+MAX_ATTEMPTS = 2
 
 
 # ============================================================
@@ -52,7 +74,7 @@ PART_NUMBER_RE = re.compile(
 )
 
 FIGURE_RE = re.compile(
-    r"^\s*([EF]-\d+(?:-\d+)*)\s*\|",
+    r"^\s*([EF]-?\d+(?:-\d+)*)\s*\|",
     re.IGNORECASE,
 )
 
@@ -66,14 +88,17 @@ MODEL_CODE_RE = re.compile(r"\bK[A-Z0-9]{2,4}\b", re.IGNORECASE)
 # HTTP
 # ============================================================
 
-
-
-
-
-
+_catalog_thread_local = threading.local()
 
 def fetch(url: str) -> tuple[BeautifulSoup, str]:
-    session = get_session()
+    session = getattr(_catalog_thread_local, "session", None)
+    if session is None:
+        session = build_session()
+        # The scraper controls retries explicitly: one initial try and one retry.
+        adapter = HTTPAdapter(max_retries=Retry(total=0), pool_connections=8, pool_maxsize=8)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        _catalog_thread_local.session = session
     response = session.get(url, timeout=REQUEST_TIMEOUT)
     response.raise_for_status()
 
@@ -472,6 +497,56 @@ def scrape_figure(figure: dict) -> tuple[list[dict], str | None]:
         return [], f"{figure['url']} -> {type(exc).__name__}: {exc}"
 
 
+def discover_with_retries(discover, item: dict | None = None) -> tuple[list[dict], str | None]:
+    error = None
+    for _ in range(MAX_ATTEMPTS):
+        try:
+            found = discover() if item is None else discover(item)
+            if found:
+                return found, None
+            error = "No links detected"
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+    return [], error
+
+
+def scrape_figure_with_retries(figure: dict) -> tuple[list[dict], str | None]:
+    error = None
+    for _ in range(MAX_ATTEMPTS):
+        rows, error = scrape_figure(figure)
+        if rows:
+            return rows, None
+    return [], error
+
+
+def error_record(stage: str, item: dict, error: str) -> dict:
+    return {
+        "stage": stage,
+        "model_group": item.get("model_group", ""),
+        "catalog_title": item.get("catalog_title", ""),
+        "figure_code": item.get("figure_code", ""),
+        "url": item["url"],
+        "attempts": MAX_ATTEMPTS,
+        "error": error,
+    }
+
+
+def save_error_report(records: list[dict]) -> None:
+    report = OUTPUT_DIR / "icsparts_scrape_errors.xlsx"
+    if not records:
+        if report.exists():
+            report.unlink()
+        return
+    columns = ["stage", "model_group", "catalog_title", "figure_code", "url", "attempts", "error"]
+    with pd.ExcelWriter(report, engine="openpyxl") as writer:
+        pd.DataFrame(records, columns=columns).to_excel(writer, sheet_name="errors", index=False)
+        sheet = writer.sheets["errors"]
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        for column, width in {"A": 20, "B": 20, "C": 42, "D": 16, "E": 80, "F": 12, "G": 80}.items():
+            sheet.column_dimensions[column].width = width
+
+
 # ============================================================
 # OUTPUT
 # ============================================================
@@ -499,6 +574,7 @@ def save_outputs(
     parts_df = pd.DataFrame(rows)
 
     if not parts_df.empty:
+        parts_df["position"] = pd.to_numeric(parts_df["position"], errors="coerce")
         parts_df = parts_df.drop_duplicates(
             subset=[
                 "catalog_url",
@@ -546,15 +622,22 @@ def save_outputs(
         encoding="utf-8-sig",
     )
 
-    # Excel is convenient for inspection / Power Query.
-    with pd.ExcelWriter(
-        OUTPUT_DIR / "icsparts_catalog_data.xlsx",
-        engine="openpyxl",
-    ) as writer:
-        parts_df.to_excel(writer, sheet_name="raw_parts", index=False)
-        catalogs_df.to_excel(writer, sheet_name="catalogs", index=False)
-        figures_df.to_excel(writer, sheet_name="figures", index=False)
-        errors_df.to_excel(writer, sheet_name="errors", index=False)
+    # Preserve the part_master sheet when repairing an existing catalogue.
+    workbook = OUTPUT_DIR / "icsparts_catalog_data.xlsx"
+    temporary = workbook.with_name(f".{workbook.stem}.updating.xlsx")
+    if workbook.exists():
+        shutil.copy2(workbook, temporary)
+    writer_options = {"mode": "a", "if_sheet_exists": "replace"} if workbook.exists() else {}
+    try:
+        with pd.ExcelWriter(temporary, engine="openpyxl", **writer_options) as writer:
+            parts_df.to_excel(writer, sheet_name="raw_parts", index=False)
+            catalogs_df.to_excel(writer, sheet_name="catalogs", index=False)
+            figures_df.to_excel(writer, sheet_name="figures", index=False)
+            errors_df.to_excel(writer, sheet_name="errors", index=False)
+        temporary.replace(workbook)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 # ============================================================
@@ -565,9 +648,10 @@ def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Discovering model catalogues...")
-    models = discover_model_pages()
+    models, root_error = discover_with_retries(discover_model_pages)
 
     if not models:
+        save_error_report([error_record("models", {"url": ROOT_URL}, root_error or "No models found")])
         raise RuntimeError("No model catalogue pages found.")
 
     print(f"Found {len(models)} model groups:")
@@ -576,37 +660,37 @@ def main() -> None:
     catalog_index: list[dict] = []
     figure_index: list[dict] = []
     discovery_errors: list[str] = []
+    error_records: list[dict] = []
 
     for model_no, model in enumerate(models, start=1):
         print(f"\n[{model_no}/{len(models)}] {model['model_group']}")
 
-        try:
-            catalogs = discover_catalog_pages(model)
-        except Exception as exc:
-            msg = f"MODEL {model['url']} -> {type(exc).__name__}: {exc}"
+        catalogs, model_error = discover_with_retries(discover_catalog_pages, model)
+        if model_error:
+            msg = f"MODEL {model['url']} -> {model_error}"
             print("  ERROR:", msg)
             discovery_errors.append(msg)
+            error_records.append(error_record("model_catalogs", model, model_error))
             continue
 
         print(f"  Catalogues: {len(catalogs)}")
         catalog_index.extend(catalogs)
 
         for catalog_no, catalog in enumerate(catalogs, start=1):
-            try:
-                figures = discover_figure_pages(catalog)
-                figure_index.extend(figures)
-
-                print(
-                    f"    [{catalog_no}/{len(catalogs)}] "
-                    f"{catalog['catalog_title']} -> {len(figures)} figures"
-                )
-
-            except Exception as exc:
-                msg = f"CATALOG {catalog['url']} -> {type(exc).__name__}: {exc}"
-                print("      ERROR:", msg)
+            figures, error = discover_with_retries(discover_figure_pages, catalog)
+            if error:
+                msg = f"CATALOG {catalog['url']} -> {error}"
                 discovery_errors.append(msg)
+                error_records.append(error_record("catalog_figures", catalog, error))
+            figure_index.extend(figures)
+
+            print(
+                f"    [{catalog_no}/{len(catalogs)}] "
+                f"{catalog['catalog_title']} -> {len(figures)} figures"
+            )
 
     if not figure_index:
+        save_error_report(error_records)
         save_outputs([], catalog_index, [], discovery_errors)
         raise RuntimeError("No figure pages found.")
 
@@ -618,7 +702,7 @@ def main() -> None:
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_map = {
-            executor.submit(scrape_figure, figure): figure
+            executor.submit(scrape_figure_with_retries, figure): figure
             for figure in figure_index
         }
 
@@ -638,6 +722,7 @@ def main() -> None:
 
             if error:
                 errors.append(error)
+                error_records.append(error_record("figure_parts", figure, error))
 
             print(
                 f"[{completed}/{len(figure_index)}] "
@@ -649,6 +734,7 @@ def main() -> None:
             if completed % CHECKPOINT_EVERY == 0:
                 save_checkpoint(all_rows)
 
+    save_error_report(error_records)
     save_outputs(all_rows, catalog_index, figure_index, errors)
 
     print("\nDONE")

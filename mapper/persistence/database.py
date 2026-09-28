@@ -9,8 +9,13 @@ from .catalog import CatalogOperations
 from .exceptions import ExceptionOperations
 from .inventory import InventoryOperations
 from .models import (
-    LayoutConflictError, Placement, ProductLocation, OnHandProduct,
-    ReturnedQueueProduct, SlotAddress, validate_stock_quantity,
+    LayoutConflictError,
+    OnHandProduct,
+    Placement,
+    ProductLocation,
+    ReturnedQueueProduct,
+    SlotAddress,
+    validate_stock_quantity,
 )
 from .schema import SchemaOperations
 from .shelves import ShelfOperations

@@ -10,6 +10,7 @@ import io
 from dataclasses import dataclass
 from pathlib import Path
 
+
 @dataclass
 class CSVData:
     headers: list[str]
@@ -26,7 +27,9 @@ def read_csv(path: Path) -> CSVData:
         except UnicodeDecodeError:
             continue
     if decoded is None:
-        raise ValueError("The CSV encoding could not be read. Export it as UTF-8 CSV and try again.")
+        raise ValueError(
+            "The CSV encoding could not be read. Export it as UTF-8 CSV and try again."
+        )
 
     sample = decoded[:8192]
     try:
