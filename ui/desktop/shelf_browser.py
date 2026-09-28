@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from .assignment_view import AssignmentView
+from .shelf_address_lookup import ShelfAddressLookup
 from mapper.persistence.database import Placement, WarehouseDatabase
 
 
@@ -37,6 +38,11 @@ class ShelfBrowserView(ttk.Frame):
             text="Read-only view",
             foreground="#555555",
         ).pack(side="right")
+
+        self.shelf_address_lookup = ShelfAddressLookup(
+            self, self.database.list_shelves, self.show_saved_shelf
+        )
+        self.shelf_address_lookup.pack(fill="x", pady=(0, 8))
 
         self.view = AssignmentView(
             self,
@@ -94,6 +100,7 @@ class ShelfBrowserView(ttk.Frame):
             return
         self.current_shelf_id = shelf_id
         self.current_contents = contents
+        self.shelf_address_lookup.set_address(floor, side, shelf_code)
         self._show_layout(
             floor,
             side,
@@ -115,6 +122,7 @@ class ShelfBrowserView(ttk.Frame):
         """Show an editor preview without pretending it is already committed."""
         self.current_shelf_id = None
         self.shelf_selector.set("")
+        self.shelf_address_lookup.set_address(floor, side, shelf_code)
         self.current_contents = list(contents or [])
         self._show_layout(
             floor,
