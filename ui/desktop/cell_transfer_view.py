@@ -10,6 +10,7 @@ from tkinter import messagebox, ttk
 from mapper.core.common import clean_location_segment, make_slot_name, normalize_search
 from mapper.persistence.database import Placement, SlotAddress, WarehouseDatabase
 from mapper.features.web_upload import LocationUpdate
+from .shelf_address_lookup import ShelfAddressLookup
 from .widgets import ScrollableFrame
 from utils.barcode_scanner import (
     BarcodeScanner,
@@ -41,8 +42,8 @@ class CellTransferPane(ttk.LabelFrame):
         self.on_focus_callback: Callable[[CellTransferPane], object] | None = None
 
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=3)
-        self.rowconfigure(4, weight=2)
+        self.rowconfigure(3, weight=3)
+        self.rowconfigure(5, weight=2)
 
         cascade_frame = ttk.Frame(self)
         cascade_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
@@ -92,8 +93,13 @@ class CellTransferPane(ttk.LabelFrame):
         self.floor_var = tk.StringVar(self)
         self.side_var = tk.StringVar(self)
 
+        self.shelf_address_lookup = ShelfAddressLookup(
+            self, self.database.list_shelves, self.load_shelf
+        )
+        self.shelf_address_lookup.grid(row=1, column=0, sticky="ew", pady=(0, 5))
+
         search = ttk.Frame(self)
-        search.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        search.grid(row=2, column=0, sticky="ew", pady=(0, 6))
         search.columnconfigure(1, weight=1)
         ttk.Label(search, text="Find product ID:").grid(
             row=0, column=0, sticky="w", padx=(0, 6)
@@ -117,7 +123,7 @@ class CellTransferPane(ttk.LabelFrame):
         )
 
         shelf_frame = ttk.LabelFrame(self, text="Shelf — click a cell", padding=5)
-        shelf_frame.grid(row=2, column=0, sticky="nsew")
+        shelf_frame.grid(row=3, column=0, sticky="nsew")
         shelf_frame.rowconfigure(0, weight=1)
         shelf_frame.columnconfigure(0, weight=1)
         self.shelf_scroll = ScrollableFrame(
@@ -133,10 +139,10 @@ class CellTransferPane(ttk.LabelFrame):
             self,
             textvariable=self.selection_text,
             style="Heading.TLabel",
-        ).grid(row=3, column=0, sticky="w", pady=(6, 4))
+        ).grid(row=4, column=0, sticky="w", pady=(6, 4))
 
         contents_frame = ttk.Frame(self)
-        contents_frame.grid(row=4, column=0, sticky="nsew")
+        contents_frame.grid(row=5, column=0, sticky="nsew")
         contents_frame.rowconfigure(0, weight=1)
         contents_frame.columnconfigure(0, weight=1)
         self.contents_tree = ttk.Treeview(
@@ -345,6 +351,7 @@ class CellTransferPane(ttk.LabelFrame):
         self.selected_address = None
         self.floor_var.set(floor)
         self.side_var.set(side)
+        self.shelf_address_lookup.set_address(floor, side, shelf_code)
 
         label = self.shelf_id_to_label.get(
             shelf_id, f"Floor {floor} — Side {side} — Shelf {shelf_code}"
@@ -452,6 +459,7 @@ class CellTransferPane(ttk.LabelFrame):
         self.cell_var.set("")
         self.floor_var.set("")
         self.side_var.set("")
+        self.shelf_address_lookup.set_address("", "", "")
         self.row_selector.configure(values=())
         self.cell_selector.configure(values=())
 

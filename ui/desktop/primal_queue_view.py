@@ -8,6 +8,7 @@ from tkinter import messagebox, ttk
 
 from mapper.core.common import MAX_VISIBLE_PRODUCTS, clean_location_segment, make_slot_name, normalize_search
 from mapper.persistence.database import Placement, WarehouseDatabase
+from .shelf_address_lookup import ShelfAddressLookup
 from .widgets import ScrollableFrame
 from utils.barcode_scanner import (
     BarcodeScanner,
@@ -213,13 +214,19 @@ class PrimalQueueView(ttk.Frame):
         parent.rowconfigure(1, weight=3)
         parent.rowconfigure(3, weight=2)
 
-        chooser = ttk.Frame(parent)
-        chooser.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        controls = ttk.Frame(parent)
+        controls.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        chooser = ttk.Frame(controls)
+        chooser.pack(fill="x", pady=(0, 5))
         ttk.Label(chooser, text="Shelf:").pack(side="left")
         self.shelf_selector = ttk.Combobox(chooser, state="readonly", width=36)
         self.shelf_selector.pack(side="left", padx=(6, 5))
         self.shelf_selector.bind("<<ComboboxSelected>>", lambda _e: self.load_selected_shelf())
         ttk.Button(chooser, text="Load shelf", command=self.load_selected_shelf).pack(side="left")
+        self.shelf_address_lookup = ShelfAddressLookup(
+            controls, self.database.list_shelves, self._load_shelf_by_id
+        )
+        self.shelf_address_lookup.pack(fill="x")
 
         shelf_frame = ttk.LabelFrame(parent, text="Shelf 2D View — click cell to inspect", padding=4)
         shelf_frame.grid(row=1, column=0, sticky="nsew")
@@ -565,6 +572,11 @@ class PrimalQueueView(ttk.Frame):
         self.current_layout = layout
         self.current_contents = contents
         self.selected_slot_name = None
+        self.shelf_address_lookup.set_address(floor, side, shelf_code)
+        for label, choice_id in self.shelf_choices.items():
+            if choice_id == shelf_id:
+                self.shelf_selector.set(label)
+                break
 
         self._render_shelf(floor, side, shelf_code, layout, contents)
 
