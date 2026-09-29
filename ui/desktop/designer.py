@@ -23,6 +23,7 @@ class ShelfDesigner(ttk.Frame):
         self.on_rows_changed = on_rows_changed
         # Storage order is always bottom first: index 0 is physical Row 1.
         self.row_inputs: list[tk.StringVar] = []
+        self._row_trace_names: list[tuple[tk.StringVar, str]] = []
         self.floor_var = tk.StringVar(master=self, value="1")
         self.side_var = tk.StringVar(master=self, value="1")
         self.shelf_code_var = tk.StringVar(master=self, value="A")
@@ -102,6 +103,9 @@ class ShelfDesigner(ttk.Frame):
         old_values = [count.get() for count in self.row_inputs]
         values = layout if layout is not None else old_values[:row_count]
         values = list(values) + [4] * (row_count - len(values))
+        for variable, trace_name in self._row_trace_names:
+            variable.trace_remove("write", trace_name)
+        self._row_trace_names.clear()
         for child in self.row_editor_scroll.inner.winfo_children():
             child.destroy()
         self.row_inputs = [
@@ -131,7 +135,8 @@ class ShelfDesigner(ttk.Frame):
             def update_result(*_args: object, count=count_var, result=result_label) -> None:
                 result.configure(text=f"{count.get() or '0'} cells across the row")
 
-            count_var.trace_add("write", update_result)
+            trace_name = count_var.trace_add("write", update_result)
+            self._row_trace_names.append((count_var, trace_name))
             update_result()
 
         ttk.Separator(self.row_editor_scroll.inner).grid(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk
+from weakref import WeakSet
 
 
 class ScrollableFrame(ttk.Frame):
@@ -26,6 +27,7 @@ class ScrollableFrame(ttk.Frame):
         self.smooth = smooth
         self._scroll_remaining = {"x": 0, "y": 0}
         self._scroll_after_ids = {"x": None, "y": None}
+        self._wheel_bound_widgets: WeakSet[tk.Misc] = WeakSet()
         canvas_options = {"highlightthickness": 0, "background": "#ffffff"}
         if smooth:
             # Make one canvas scroll unit equal one pixel. Wheel input is then
@@ -58,6 +60,9 @@ class ScrollableFrame(ttk.Frame):
         pending = [self]
         while pending:
             widget = pending.pop()
+            pending.extend(widget.winfo_children())
+            if widget in self._wheel_bound_widgets:
+                continue
             if self.vertical:
                 widget.bind("<MouseWheel>", self._scroll_vertical)
                 widget.bind("<Button-4>", self._scroll_vertical)
@@ -66,7 +71,7 @@ class ScrollableFrame(ttk.Frame):
                 widget.bind("<Shift-MouseWheel>", self._shift_scroll_horizontal)
                 widget.bind("<Shift-Button-4>", self._shift_scroll_horizontal)
                 widget.bind("<Shift-Button-5>", self._shift_scroll_horizontal)
-            pending.extend(widget.winfo_children())
+            self._wheel_bound_widgets.add(widget)
 
     def _update_scroll_region(self, _event: tk.Event) -> None:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
