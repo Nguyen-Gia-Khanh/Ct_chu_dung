@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 import tkinter as tk
 from tkinter import ttk
 
+from mapper.core.common import make_slot_name
+from mapper.persistence.database import Placement
 from utils.barcode_scanner import (
     BarcodeScanner,
     bind_auto_highlight,
     format_product_id,
     select_all_entry_text,
 )
+from .widgets import ScrollableFrame
 
 
 class LocationAssignmentView(ttk.Frame):
@@ -34,41 +38,20 @@ class LocationAssignmentView(ttk.Frame):
         on_modify_stock: Callable[[], object],
         on_upload: Callable[[], object],
         on_modify_location: Callable[[], object],
-        on_connect_chrome: Callable[[], object],
+        on_preview_shelf: Callable[[], object],
         on_revert_shift: Callable[[], object] | None = None,
         on_whole_mode_change: Callable[[bool], object] | None = None,
         barcode_scanner: BarcodeScanner | None = None,
     ):
         super().__init__(parent, padding=10)
-
-        header = ttk.Frame(self)
-        header.pack(fill="x", pady=(0, 8))
-        ttk.Label(
-            header,
-            text="Build a persistent on-hand batch, then assign it to one exact shelf address.",
-            style="Heading.TLabel",
-        ).pack(side="left")
-        self.connect_chrome_button = ttk.Button(
-            header,
-            text="Connect Chrome",
-            command=on_connect_chrome,
-        )
-        self.connect_chrome_button.pack(side="right")
-        self.revert_button = ttk.Button(
-            header,
-            text="Revert shift transfer",
-            command=on_revert_shift,
-            state="disabled",
-        )
-        self.revert_button.pack(side="right", padx=(0, 6))
+        self.on_preview_shelf = on_preview_shelf
+        self.on_load_address = on_load_address
 
         pane = ttk.Panedwindow(self, orient="horizontal")
         pane.pack(fill="both", expand=True)
 
-        products_panel = ttk.LabelFrame(pane, text="Products", padding=8)
-        hand_panel = ttk.LabelFrame(
-            pane, text="On-hand queue and shelf address", padding=8
-        )
+        products_panel = ttk.Frame(pane, padding=8)
+        hand_panel = ttk.Frame(pane, padding=8)
         contents_panel = ttk.LabelFrame(pane, text="Loaded address contents", padding=8)
         pane.add(products_panel, weight=4)
         pane.add(hand_panel, weight=3)
@@ -80,6 +63,7 @@ class LocationAssignmentView(ttk.Frame):
             on_queue_to_hand,
             on_catalog_to_queue,
             on_catalog_activate,
+            on_revert_shift,
         )
         self._build_hand_panel(
             hand_panel,
@@ -251,12 +235,21 @@ class LocationAssignmentView(ttk.Frame):
 
     def _build_products_panel(
         self,
-        parent: ttk.LabelFrame,
+        parent: ttk.Frame,
         on_search: Callable[..., object],
         on_queue_to_hand: Callable[[], object],
         on_catalog_to_queue: Callable[[], object],
         on_catalog_activate: Callable[[tk.Event], object],
+        on_revert_shift: Callable[[], object] | None,
     ) -> None:
+        self.revert_button = ttk.Button(
+            parent,
+            text="Revert shift transfer",
+            command=on_revert_shift,
+            state="disabled",
+        )
+        self.revert_button.pack(side="bottom", fill="x", pady=(6, 0))
+
         split = ttk.Panedwindow(parent, orient="vertical")
         split.pack(fill="both", expand=True)
         queue = ttk.LabelFrame(split, text="Total unassigned product queue", padding=6)
@@ -280,9 +273,9 @@ class LocationAssignmentView(ttk.Frame):
             queue,
             textvariable=self.search_location_text,
             foreground="#555555",
-            wraplength=430,
+            width=1,
         )
-        self.search_location_label.grid(row=2, column=0, sticky="w", pady=(0, 5))
+        self.search_location_label.grid(row=2, column=0, sticky="ew", pady=(0, 5))
 
         queue_body = ttk.Frame(queue)
         queue_body.grid(row=3, column=0, sticky="nsew")
@@ -386,15 +379,58 @@ class LocationAssignmentView(ttk.Frame):
 
     def _build_hand_panel(
         self,
-        parent: ttk.LabelFrame,
+        parent: ttk.Frame,
         on_load_address: Callable[[], object],
         on_assign_address: Callable[[], object],
         on_dequeue_hand: Callable[[], object],
         on_modify_hand_stock: Callable[[], object],
     ) -> None:
-        parent.rowconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
         parent.columnconfigure(0, weight=1)
-        body = ttk.Frame(parent)
+
+        tabs = ttk.Frame(parent)
+        tabs.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        tabs.columnconfigure((0, 1), weight=1)
+        self.hand_view = tk.StringVar(self, value="queue")
+        ttk.Radiobutton(
+            tabs,
+            text="On-hand queue",
+            variable=self.hand_view,
+            value="queue",
+            style="Toolbutton",
+            command=self._show_hand_view,
+        ).grid(row=0, column=0, sticky="ew")
+        ttk.Radiobutton(
+            tabs,
+            text="Shelf Selection Pane",
+            variable=self.hand_view,
+            value="shelf",
+            style="Toolbutton",
+            command=self._show_hand_view,
+        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        self.hand_queue_page = ttk.Frame(parent)
+        self.hand_shelf_page = ttk.Frame(parent)
+        for page in (self.hand_queue_page, self.hand_shelf_page):
+            page.grid(row=1, column=0, sticky="nsew")
+            page.columnconfigure(0, weight=1)
+        queue_page = self.hand_queue_page
+        queue_page.rowconfigure(0, weight=1)
+        self.hand_shelf_page.rowconfigure(1, weight=1)
+        self.shelf_preview_text = tk.StringVar(
+            self, value="Enter Floor, Side, and Shelf below."
+        )
+        ttk.Label(
+            self.hand_shelf_page,
+            textvariable=self.shelf_preview_text,
+            width=1,
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        self.shelf_scroll = ScrollableFrame(
+            self.hand_shelf_page, horizontal=True, vertical=True
+        )
+        self.shelf_scroll.grid(row=1, column=0, sticky="nsew")
+        self.shelf_slot_buttons: dict[tuple[int, int], tk.Button] = {}
+        self._selected_shelf_cell: tuple[int, int] | None = None
+        body = ttk.Frame(queue_page)
         body.grid(row=0, column=0, sticky="nsew")
         body.rowconfigure(0, weight=1)
         body.columnconfigure(0, weight=1)
@@ -428,10 +464,10 @@ class LocationAssignmentView(ttk.Frame):
         hand_x_scroll.grid(row=1, column=0, sticky="ew")
 
         self.on_hand_count_text = tk.StringVar(self, value="0 products ready to assign")
-        ttk.Label(parent, textvariable=self.on_hand_count_text).grid(
+        ttk.Label(queue_page, textvariable=self.on_hand_count_text).grid(
             row=1, column=0, sticky="w", pady=(5, 0)
         )
-        hand_actions = ttk.Frame(parent)
+        hand_actions = ttk.Frame(queue_page)
         hand_actions.grid(row=2, column=0, sticky="ew", pady=(5, 8))
         hand_actions.columnconfigure(0, weight=1)
         hand_actions.columnconfigure(1, weight=1)
@@ -447,7 +483,8 @@ class LocationAssignmentView(ttk.Frame):
         ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
 
         address = ttk.LabelFrame(parent, text="Shelf address", padding=8)
-        address.grid(row=3, column=0, sticky="ew")
+        self.address_panel = address
+        address.grid(row=2, column=0, sticky="ew", pady=(6, 0))
         labels = ("Floor", "Side", "Shelf", "Row", "Col / cell")
         self.floor_var = tk.StringVar(self)
         self.side_var = tk.StringVar(self, value="1")
@@ -487,9 +524,137 @@ class LocationAssignmentView(ttk.Frame):
         ttk.Label(
             address,
             textvariable=self.address_status_text,
-            wraplength=370,
+            width=1,
             foreground="#555555",
-        ).grid(row=4, column=0, columnspan=5, sticky="w", padx=2, pady=(6, 0))
+        ).grid(row=4, column=0, columnspan=5, sticky="ew", padx=2, pady=(6, 0))
+
+        for variable in (self.floor_var, self.side_var, self.shelf_var):
+            variable.trace_add("write", self._on_shelf_address_changed)
+        self.clear_shelf_preview("Enter Floor, Side, and Shelf below.")
+        self._show_hand_view()
+
+    def _show_hand_view(self) -> None:
+        if self.hand_view.get() == "shelf":
+            self.hand_queue_page.grid_remove()
+            self.hand_shelf_page.grid()
+            self.on_preview_shelf()
+        else:
+            self.hand_shelf_page.grid_remove()
+            self.hand_queue_page.grid()
+
+    def _on_shelf_address_changed(self, *_args: object) -> None:
+        self.row_var.set("")
+        self.cell_var.set("")
+        self.refresh_shelf_preview()
+
+    def refresh_shelf_preview(self) -> None:
+        if self.hand_view.get() == "shelf":
+            self.on_preview_shelf()
+
+    def clear_shelf_preview(self, message: str) -> None:
+        for child in self.shelf_scroll.inner.winfo_children():
+            child.destroy()
+        self.shelf_slot_buttons.clear()
+        self.shelf_cell_colors = {}
+        self._selected_shelf_cell = None
+        self._shelf_preview_key = None
+        self.shelf_preview_text.set(message)
+        self.shelf_scroll.canvas.xview_moveto(0)
+        self.shelf_scroll.canvas.yview_moveto(0)
+
+    def render_shelf_preview(
+        self,
+        floor: str,
+        side: str,
+        shelf_code: str,
+        layout: list[int],
+        contents: list[tuple[str, str, Placement]],
+    ) -> None:
+        key = (floor, side, shelf_code)
+        same_shelf = getattr(self, "_shelf_preview_key", None) == key
+        x_position = self.shelf_scroll.canvas.xview()[0] if same_shelf else 0.0
+        y_position = self.shelf_scroll.canvas.yview()[0] if same_shelf else 0.0
+        self.clear_shelf_preview(
+            f"Floor {floor} · Side {side} · Shelf {shelf_code}"
+        )
+        self._shelf_preview_key = key
+        counts = Counter(placement.slot_name for _, _, placement in contents)
+        row_width = max(240, max(layout, default=1) * 34)
+        even_side = side.isdigit() and int(side) % 2 == 0
+        for row_number, count in enumerate(layout, start=1):
+            screen_row = len(layout) - row_number + 1
+            ttk.Label(self.shelf_scroll.inner, text=f"R{row_number}").grid(
+                row=screen_row, column=0, sticky="e", padx=(3, 5)
+            )
+            row_frame = tk.Frame(
+                self.shelf_scroll.inner,
+                width=row_width,
+                height=38,
+                background="#d0d0d0",
+                borderwidth=1,
+                relief="solid",
+            )
+            row_frame.grid(row=screen_row, column=1, sticky="nsew", pady=1)
+            row_frame.grid_propagate(False)
+            row_frame.rowconfigure(0, weight=1)
+            cells = range(count, 0, -1) if even_side else range(1, count + 1)
+            for display_column, cell in enumerate(cells):
+                row_frame.columnconfigure(
+                    display_column, weight=1, uniform=f"assign-r{row_number}"
+                )
+                slot_name = make_slot_name(
+                    floor, shelf_code, row_number, cell, side=side
+                )
+                product_count = counts.get(slot_name, 0)
+                color = "#d9ead3" if product_count else "#f7f7f7"
+                button = tk.Button(
+                    row_frame,
+                    text=f"{cell}\n{product_count}",
+                    command=lambda row=row_number, col=cell: self._select_shelf_cell(
+                        row, col
+                    ),
+                    background=color,
+                    activebackground="#cfe8ff",
+                    relief="solid",
+                    borderwidth=1,
+                    highlightthickness=0,
+                    font=("Segoe UI", 8),
+                    padx=0,
+                    pady=0,
+                )
+                button.grid(row=0, column=display_column, sticky="nsew", padx=1, pady=1)
+                self.shelf_slot_buttons[(row_number, cell)] = button
+                self.shelf_cell_colors[(row_number, cell)] = color
+        self.shelf_scroll.inner.update_idletasks()
+        self.shelf_scroll.canvas.configure(
+            scrollregion=self.shelf_scroll.canvas.bbox("all")
+        )
+        self.shelf_scroll.canvas.xview_moveto(x_position)
+        self.shelf_scroll.canvas.yview_moveto(y_position)
+        self.shelf_scroll.bind_wheel_events()
+        try:
+            self.highlight_shelf_cell(int(self.row_var.get()), int(self.cell_var.get()))
+        except ValueError:
+            pass
+
+    def highlight_shelf_cell(self, row: int, col: int) -> None:
+        previous = self._selected_shelf_cell
+        if previous is not None and previous in self.shelf_slot_buttons:
+            self.shelf_slot_buttons[previous].configure(
+                background=self.shelf_cell_colors[previous], borderwidth=1
+            )
+        cell = (row, col)
+        self._selected_shelf_cell = cell if cell in self.shelf_slot_buttons else None
+        if self._selected_shelf_cell is not None:
+            self.shelf_slot_buttons[cell].configure(
+                background="#cfe8ff", borderwidth=2
+            )
+
+    def _select_shelf_cell(self, row: int, col: int) -> None:
+        self.row_var.set(str(row))
+        self.cell_var.set(str(col))
+        self.highlight_shelf_cell(row, col)
+        self.on_load_address()
 
     def _build_contents_panel(
         self,
@@ -507,8 +672,8 @@ class LocationAssignmentView(ttk.Frame):
             parent,
             textvariable=self.selected_slot_text,
             style="Heading.TLabel",
-            wraplength=390,
-        ).grid(row=0, column=0, sticky="w", pady=(0, 6))
+            width=1,
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 6))
         body = ttk.Frame(parent)
         body.grid(row=1, column=0, sticky="nsew")
         body.rowconfigure(0, weight=1)
@@ -598,8 +763,8 @@ class LocationAssignmentView(ttk.Frame):
         self.upload_button.grid_remove()
         self.modify_location_button.grid_configure(columnspan=2, padx=0)
         self.upload_status_text = tk.StringVar(self, value="")
-        ttk.Label(footer, textvariable=self.upload_status_text, wraplength=390).grid(
-            row=4, column=0, columnspan=2, sticky="w", pady=(5, 0)
+        ttk.Label(footer, textvariable=self.upload_status_text, width=1).grid(
+            row=4, column=0, columnspan=2, sticky="ew", pady=(5, 0)
         )
         self.copy_status_text = tk.StringVar(
             self, value="Double-click a row to copy its Product ID."
