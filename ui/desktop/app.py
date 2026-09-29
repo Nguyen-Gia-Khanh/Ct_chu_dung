@@ -204,15 +204,16 @@ class WarehouseMapperApp(
             on_modify_stock=self.modify_selected_stock,
             on_upload=self.upload_selected_product,
             on_modify_location=self.modify_selected_location,
-            on_connect_chrome=self.connect_chrome,
+            on_preview_shelf=self.preview_assignment_shelf,
             on_revert_shift=self.revert_latest_shift_transfer,
             on_whole_mode_change=self._on_whole_mode_change,
             barcode_scanner=self.barcode_scanner,
         )
-        self.connect_chrome_button = self.assignments.connect_chrome_button
         self.revert_button = self.assignments.revert_button
         self.notebook.add(self.designer_tab, text="1. Shelf Designer")
         self.notebook.add(self.assignments, text="2. Assign Locations")
+        self.chrome_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.chrome_tab, text="Connect Chrome")
         self.primal_view = PrimalQueueView(
             self.notebook, self.database, barcode_scanner=self.barcode_scanner
         )
@@ -243,6 +244,7 @@ class WarehouseMapperApp(
             self.notebook, self.database, self.resync_web_locations
         )
         self.notebook.add(self.location_comparison, text="7. Web Location Sync")
+        self._last_content_tab = str(self.designer_tab)
 
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
         self.root.bind(
@@ -284,6 +286,11 @@ class WarehouseMapperApp(
         if hasattr(self, "assignments"):
             self.assignments.set_whole_mode(False)
         current_tab = self.notebook.select()
+        if current_tab == str(self.chrome_tab):
+            self.notebook.select(self._last_content_tab)
+            self.connect_chrome()
+            return
+        self._last_content_tab = current_tab
         if current_tab == str(self.assignments):
             self.assignments.focus_search()
         elif hasattr(self, "primal_view") and current_tab == str(self.primal_view):

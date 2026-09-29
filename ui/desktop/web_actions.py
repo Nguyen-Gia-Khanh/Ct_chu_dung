@@ -23,7 +23,7 @@ class WebActions:
             return
 
         self.chrome_connect_busy = True
-        self.connect_chrome_button.configure(text="Connecting…", state="disabled")
+        self.notebook.tab(self.chrome_tab, text="Connecting…", state="disabled")
         self.status_text.set("Connecting to the debugging Chrome session on port 9222…")
         self.chrome_connect_events = Queue()
         Thread(
@@ -56,15 +56,15 @@ class WebActions:
                 continue
 
             self.chrome_connect_busy = False
-            self.connect_chrome_button.configure(state="normal")
+            self.notebook.tab(self.chrome_tab, state="normal")
             if event == "error":
                 self.chrome_connected = False
-                self.connect_chrome_button.configure(text="Connect Chrome")
+                self.notebook.tab(self.chrome_tab, text="Connect Chrome")
                 self.status_text.set("Chrome connection needs attention.")
                 messagebox.showerror("Connect Chrome", text, parent=self.root)
             else:
                 self.chrome_connected = True
-                self.connect_chrome_button.configure(text="Reconnect Chrome")
+                self.notebook.tab(self.chrome_tab, text="Reconnect Chrome")
                 self.assignments.upload_status_text.set(text)
                 self.status_text.set(text)
             return
@@ -180,7 +180,7 @@ class WebActions:
             return True
         messagebox.showinfo(
             "Connect Chrome first",
-            "Press Connect Chrome in the on-hand pane of tab 2, then try again.",
+            "Press Connect Chrome on the main tab bar, then try again.",
             parent=self.root,
         )
         return False
@@ -401,7 +401,7 @@ class WebActions:
                     self.location_comparison.set_progress("Web resync stopped. See the error message.")
                 if metadata and not metadata[0]:
                     self.chrome_connected = False
-                    self.connect_chrome_button.configure(text="Connect Chrome")
+                    self.notebook.tab(self.chrome_tab, text="Connect Chrome")
                 self.assignments.upload_status_text.set(
                     f"{action_title} needs attention. See the message and check Chrome."
                 )

@@ -258,6 +258,30 @@ class AssignmentActions:
         self.refresh_all_views()
         self.status_text.set(f"Updated on-hand stock for {product_id} to {quantity}.")
 
+    def preview_assignment_shelf(self) -> None:
+        """Show the saved shelf matching tab 2's Floor, Side, and Shelf fields."""
+        floor = clean_location_segment(self.assignments.floor_var.get())
+        side = clean_location_segment(self.assignments.side_var.get())
+        shelf_code = clean_location_segment(self.assignments.shelf_var.get())
+        if not all((floor, side, shelf_code)):
+            self.assignments.clear_shelf_preview("Enter Floor, Side, and Shelf below.")
+            return
+        shelf_id = self.database.get_shelf_id(floor, shelf_code, side=side)
+        if shelf_id is None:
+            self.assignments.clear_shelf_preview(
+                f"No saved shelf at Floor {floor} / Side {side} / Shelf {shelf_code}."
+            )
+            return
+        try:
+            saved_floor, saved_side, saved_code, layout = self.database.get_shelf(shelf_id)
+            contents = self.database.get_shelf_contents(shelf_id)
+        except KeyError:
+            self.assignments.clear_shelf_preview("That shelf changed. Select it again.")
+            return
+        self.assignments.render_shelf_preview(
+            saved_floor, saved_side, saved_code, layout, contents
+        )
+
     def _read_address_inputs(self) -> tuple[str, str, str, int, int] | None:
         floor = clean_location_segment(self.assignments.floor_var.get())
         side = clean_location_segment(self.assignments.side_var.get())
@@ -296,6 +320,7 @@ class AssignmentActions:
         if address is None:
             floor, side, shelf_code, row_number, slot_number = address_parts
             self.selected_address = None
+            self.assignments.highlight_shelf_cell(0, 0)
             self.assignments.selected_slot_text.set("No valid address loaded")
             self.assignments.address_status_text.set(
                 f"No saved cell at Floor {floor} / Side {side} / Shelf {shelf_code} / "
@@ -306,6 +331,7 @@ class AssignmentActions:
             )
             return
         self.selected_address = address
+        self.assignments.highlight_shelf_cell(address.row_number, address.slot_number)
         self.refresh_address_contents()
         self.status_text.set(f"Loaded {address.slot_name}.")
 

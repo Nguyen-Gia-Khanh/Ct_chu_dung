@@ -83,11 +83,12 @@ uses `openpyxl` to read and write `.xlsx` workbooks.
 3. In the middle pane's **On-hand queue** view, enter each product's stock
    quantity. The on-hand batch is written to SQLite immediately and survives
    closing or restarting the app.
-4. Select **Shelf selection** in the same pane, enter Floor, Side, Shelf, Row,
-   and Cell, then press **Load address →**.
+4. Enter Floor, Side, and Shelf in the middle pane. Select **Shelf Selection
+   Pane** to view that shelf, then click a cell to fill Row and Col and load it.
+   You can also enter Row and Col manually and press **Load address →**.
 5. Check the current address contents in the right pane.
-6. Return to **On-hand queue**, Ctrl-click one or more rows, then select
-   **Shelf selection** and press **Assign selected on-hand →
+6. Select **On-hand queue**, Ctrl-click one or more rows, then press
+   **Assign selected on-hand →
    loaded address**. Only that selected subset moves; the rest stays on-hand.
    The move is saved immediately in one SQLite transaction.
 
@@ -100,8 +101,8 @@ partial transfer. **Shelf → on-hand (all)** remains available when the complet
 address must be emptied. These actions preserve each product's recorded stock
 quantity for reassignment.
 
-**Connect Chrome** in the middle pane's tab bar starts the browser connection
-without changing the selected view. Web actions default to one product: click
+**Connect Chrome** on the main tab bar starts the browser connection and returns
+to the current tab. Web actions default to one product: click
 exactly one row in the loaded address, then press **Modify selected product's
 web location**. Turn on **Process and save
 all products in loaded address** to ignore row selection and update the complete

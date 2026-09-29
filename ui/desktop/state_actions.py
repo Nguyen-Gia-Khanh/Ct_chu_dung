@@ -19,6 +19,8 @@ class StateActions:
         self.refresh_product_lists()
         self.refresh_on_hand_queue()
         self.refresh_address_contents()
+        if hasattr(self, "assignments"):
+            self.assignments.refresh_shelf_preview()
         self.refresh_change_summary()
         if hasattr(self, "exceptions_view"):
             self.exceptions_view.refresh()
