@@ -180,7 +180,7 @@ class WebActions:
             return True
         messagebox.showinfo(
             "Connect Chrome first",
-            "Press Connect Chrome at the top-right of tab 2, then try again.",
+            "Press Connect Chrome in the on-hand pane of tab 2, then try again.",
             parent=self.root,
         )
         return False

@@ -140,18 +140,8 @@ class WarehouseMapperApp(
         )
 
     def _build_ui(self) -> None:
-        toolbar = ttk.Frame(self.root, padding=(12, 10))
-        self.toolbar = toolbar
-        toolbar.pack(fill="x")
-        ttk.Label(toolbar, text=APP_TITLE, style="Title.TLabel").pack(side="left")
-        ttk.Label(
-            toolbar,
-            text="Shelf design · address assignment · primal queue · shelf browser · cell moves",
-            foreground="#555555",
-        ).pack(side="left", padx=(16, 0))
-
         self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        self.notebook.pack(fill="both", expand=True, padx=12, pady=(8, 8))
 
         self.designer_tab = ttk.Frame(self.notebook)
         designer_controls = ttk.Frame(self.designer_tab, padding=(12, 8))
