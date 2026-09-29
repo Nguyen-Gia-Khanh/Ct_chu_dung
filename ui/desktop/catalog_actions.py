@@ -565,7 +565,8 @@ class CatalogActions:
             f"New products: {inserted:,}\n"
             f"Existing products updated: {updated:,}\n"
             f"Blank/invalid rows skipped: {skipped:,}\n"
-            f"Duplicate IDs inside CSV: {duplicates:,}",
+            f"Duplicate IDs inside CSV: {duplicates:,}\n\n"
+            "Shelf assignments, stock, and stored catalog names were kept.",
         )
         self.status_text.set(
             f"Imported {len(records):,} product records from {Path(selected).name}."

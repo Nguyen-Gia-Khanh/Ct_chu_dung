@@ -151,10 +151,13 @@ product ID, full name, and shortened name without case or Vietnamese accents.
 An exact product ID also reports whether the product is on-hand, returned to the
 total queue, or already at a shelf address.
 
-The full catalog is a permanent reference list. **Transfer selected to total
-queue** copies catalog-only products into the working product list without
-removing their catalog rows. Products already assigned or on-hand stay in their
-current state.
+The full catalog view combines the working queue and warehouse catalog by
+product ID. Queue names take precedence for matching IDs; other products use
+their warehouse catalog names. The two CSV imports remain separate, so
+re-importing the queue does not overwrite stored warehouse catalog names.
+**Transfer selected to total queue** copies catalog-only products into the
+working product list without removing their catalog rows. Products already
+assigned or on-hand stay in their current state.
 
 An 11-character barcode such as `06410KFL850` is normalized to
 `06410-KFL-850` in the search field.
@@ -185,8 +188,10 @@ product record and any CSV file remain. The app asks for confirmation first.
 
 The import dialog asks which columns contain product ID, full name, and
 shortened name. Extra CSV columns are allowed. Re-importing an existing product
-ID updates its names; it does not delete its shelf placement or historical
-assignment time.
+ID updates its names; it does not delete its shelf placement, stock, or
+historical assignment time. IDs absent from a later CSV remain in the database.
+Re-importing the full catalog updates its stored names; queue names continue
+to take precedence in the combined view for IDs still in the working queue.
 
 ## Code layout
 
