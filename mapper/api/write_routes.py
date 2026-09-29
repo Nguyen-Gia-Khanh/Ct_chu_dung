@@ -220,17 +220,22 @@ class WriteRoutes:
             records: dict[str, tuple[str, str]] = {}
             for r in rows:
                 code = format_product_id(r.get(code_col, ""))
-                name = r.get(name_col, "")
-                if code:
+                name = str(r.get(name_col, "") or "").strip()
+                if code and name:
                     records[code] = (name, name)
+
+            if not records:
+                self._send_error_json("No valid product ID/name rows were found in the CSV.")
+                return
 
             try:
                 if mode == "new":
                     ins, upd = db.import_products(records)
-                    db.import_catalog_products(records)
+                    detail = "Queue names updated; shelf assignments, stock, and stored catalog names kept."
                 else:
                     ins, upd = db.import_catalog_products(records)
-                self._send_json({"success": True, "message": f"Imported {ins} new, {upd} updated items."})
+                    detail = "Catalog names updated; working queue and shelf assignments kept."
+                self._send_json({"success": True, "message": f"Imported {ins} new, {upd} updated items. {detail}"})
             except Exception as e:
                 self._send_error_json(str(e))
             return
@@ -321,7 +326,7 @@ class WriteRoutes:
 
         if path == "/api/catalog/transfer-to-queue":
             product_ids = [format_product_id(pid) for pid in payload.get("product_ids", [])]
-            catalog_rows = db.get_catalog_products()
+            catalog_rows = db.get_display_catalog_products()
             catalog_map = {p[0]: (p[1], p[2]) for p in catalog_rows}
             records = {pid: catalog_map[pid] for pid in product_ids if pid in catalog_map}
             try:
@@ -339,7 +344,7 @@ class WriteRoutes:
             if not slot:
                 self._send_error_json("Slot not found", 404)
                 return
-            catalog_rows = db.get_catalog_products()
+            catalog_rows = db.get_display_catalog_products()
             catalog_map = {p[0]: (p[1], p[2]) for p in catalog_rows}
             records = {pid: catalog_map[pid] for pid in product_ids if pid in catalog_map}
             try:

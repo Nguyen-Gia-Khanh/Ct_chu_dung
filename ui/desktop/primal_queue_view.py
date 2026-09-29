@@ -306,7 +306,7 @@ class PrimalQueueView(ttk.Frame):
         }
 
         if reload_catalog or not self.catalog_products:
-            catalog_rows = self.database.get_catalog_products()
+            catalog_rows = self.database.get_display_catalog_products()
             self.catalog_products = {
                 product_id: (product_name, shortened_name)
                 for product_id, product_name, shortened_name in catalog_rows

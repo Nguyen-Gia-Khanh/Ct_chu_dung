@@ -88,11 +88,38 @@ class CatalogOperations:
         return len(records) - len(existing), len(existing)
 
     def get_catalog_products(self) -> list[tuple[str, str, str]]:
+        """Return the warehouse catalog as stored, without queue name overrides."""
         with closing(self.connect()) as connection, connection:
             rows = connection.execute(
                 """
                 SELECT product_id, product_name, shortened_name
                 FROM catalog_products
+                ORDER BY product_id COLLATE NOCASE
+                """
+            ).fetchall()
+        return [
+            (row["product_id"], row["product_name"], row["shortened_name"])
+            for row in rows
+        ]
+
+    def get_display_catalog_products(self) -> list[tuple[str, str, str]]:
+        """Show every catalog or queue ID, preferring queue names on overlap."""
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT product_id, product_name, shortened_name
+                FROM (
+                    SELECT catalog.product_id,
+                           COALESCE(queue.product_name, catalog.product_name) AS product_name,
+                           COALESCE(queue.shortened_name, catalog.shortened_name) AS shortened_name
+                    FROM catalog_products AS catalog
+                    LEFT JOIN products AS queue ON queue.product_id = catalog.product_id
+                    UNION ALL
+                    SELECT queue.product_id, queue.product_name, queue.shortened_name
+                    FROM products AS queue
+                    LEFT JOIN catalog_products AS catalog ON catalog.product_id = queue.product_id
+                    WHERE catalog.product_id IS NULL
+                )
                 ORDER BY product_id COLLATE NOCASE
                 """
             ).fetchall()

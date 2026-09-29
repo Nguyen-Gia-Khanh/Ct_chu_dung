@@ -43,7 +43,7 @@ class ReadRoutes:
             placement_items = db.get_all_placement_items()
             products_map = {p[0]: p[1] for p in db.get_products()}
             # Also catalog names
-            for cid, cname, _ in db.get_catalog_products():
+            for cid, cname, _ in db.get_display_catalog_products():
                 if cid not in products_map:
                     products_map[cid] = cname
 
@@ -78,7 +78,7 @@ class ReadRoutes:
             return
 
         if path == "/api/products/catalog":
-            catalog_rows = db.get_catalog_products()
+            catalog_rows = db.get_display_catalog_products()
             placements = db.get_placements()
             placement_details = db.get_placement_details()
             result = []
@@ -141,7 +141,7 @@ class ReadRoutes:
 
             term = normalize_search(format_product_id(q))
             placements = db.get_placements()
-            catalog = db.get_catalog_products()
+            catalog = db.get_display_catalog_products()
             placement_details = db.get_placement_details()
             found = None
             for pid, pname, _ in catalog:
@@ -164,7 +164,7 @@ class ReadRoutes:
 
         if path == "/api/products/on-hand":
             on_hand = db.get_on_hand_products()
-            catalog = {p[0]: p[1] for p in db.get_catalog_products()}
+            catalog = {p[0]: p[1] for p in db.get_display_catalog_products()}
             products = {p[0]: p[1] for p in db.get_products()}
             result = []
             for pid, item in on_hand.items():

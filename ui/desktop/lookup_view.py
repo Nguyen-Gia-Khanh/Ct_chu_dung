@@ -57,7 +57,7 @@ class ProductLookupView(ttk.Frame):
     def refresh(self) -> None:
         """Called on tab entry; never load a shelf into the editing controller."""
         self._cancel_search()
-        catalog_rows = self.database.get_catalog_products()
+        catalog_rows = self.database.get_display_catalog_products()
         self.products = {
             product_id: product_name
             for product_id, product_name, _shortened_name in catalog_rows

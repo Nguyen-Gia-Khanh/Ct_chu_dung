@@ -14,7 +14,7 @@ class DesktopStateTests(TestCase):
         app = StateActions()
         app.database = Mock()
         app.database.get_product_records.return_value = [("P1", "Bolts", "Bolt")]
-        app.database.get_catalog_products.return_value = [("P1", "Bolts", "Bolt"), ("P2", "Washers", "Washer")]
+        app.database.get_display_catalog_products.return_value = [("P1", "Bolts", "Bolt"), ("P2", "Washers", "Washer")]
         app.database.get_placement_details.return_value = {}
         app.database.get_on_hand_products.return_value = {}
         app.database.get_returned_queue_products.return_value = {}

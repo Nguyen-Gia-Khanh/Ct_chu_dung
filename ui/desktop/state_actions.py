@@ -47,7 +47,7 @@ class StateActions:
             product_id.casefold(): product_id for product_id in self.products
         }
         if reload_catalog or not hasattr(self, "catalog_products") or not self.catalog_products:
-            catalog_rows = self.database.get_catalog_products()
+            catalog_rows = self.database.get_display_catalog_products()
             self.catalog_products = {
                 product_id: (product_name, shortened_name)
                 for product_id, product_name, shortened_name in catalog_rows
