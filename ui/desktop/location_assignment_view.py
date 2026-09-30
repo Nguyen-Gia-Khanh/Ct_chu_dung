@@ -579,22 +579,19 @@ class LocationAssignmentView(ttk.Frame):
         )
         self._shelf_preview_key = key
         counts = Counter(placement.slot_name for _, _, placement in contents)
-        row_width = max(240, max(layout, default=1) * 34)
+        row_width = max(240, max(layout, default=1) * 70)
         even_side = side.isdigit() and int(side) % 2 == 0
         for row_number, count in enumerate(layout, start=1):
             screen_row = len(layout) - row_number + 1
-            ttk.Label(self.shelf_scroll.inner, text=f"R{row_number}").grid(
-                row=screen_row, column=0, sticky="e", padx=(3, 5)
-            )
             row_frame = tk.Frame(
                 self.shelf_scroll.inner,
                 width=row_width,
-                height=38,
+                height=44,
                 background="#d0d0d0",
                 borderwidth=1,
                 relief="solid",
             )
-            row_frame.grid(row=screen_row, column=1, sticky="nsew", pady=1)
+            row_frame.grid(row=screen_row, column=0, sticky="nsew", pady=1)
             row_frame.grid_propagate(False)
             row_frame.rowconfigure(0, weight=1)
             cells = range(count, 0, -1) if even_side else range(1, count + 1)
@@ -609,7 +606,7 @@ class LocationAssignmentView(ttk.Frame):
                 color = "#d9ead3" if product_count else "#f7f7f7"
                 button = tk.Button(
                     row_frame,
-                    text=f"{cell}\n{product_count}",
+                    text=f"R{row_number}-C{cell:02d}\n{product_count} product{'s' if product_count != 1 else ''}",
                     command=lambda row=row_number, col=cell: self._select_shelf_cell(
                         row, col
                     ),
@@ -618,7 +615,7 @@ class LocationAssignmentView(ttk.Frame):
                     relief="solid",
                     borderwidth=1,
                     highlightthickness=0,
-                    font=("Segoe UI", 8),
+                    font=("Segoe UI", 8, "bold"),
                     padx=0,
                     pady=0,
                 )
