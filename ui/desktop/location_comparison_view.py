@@ -15,6 +15,7 @@ from mapper.features.location_comparison import (
     LocationDifference,
     compare_locations,
     export_comparison,
+    location_parts,
     read_web_locations,
     suggested_columns,
 )
@@ -188,8 +189,9 @@ class LocationComparisonView(ttk.Frame):
         self.tree.tag_configure("resynced", foreground="#217046")
         ttk.Label(
             self,
-            text="Missing export IDs cannot be compared. Products with several local locations need manual web review; an empty local location clears the web location.",
+            text="Web resync replaces each website location set with all saved local locations. Missing export IDs cannot be compared; an empty local set clears the website locations.",
             foreground="#555555",
+            wraplength=900,
         ).pack(anchor="w", pady=(8, 0))
 
     def _local_locations(self) -> dict[str, list[str]]:
@@ -341,6 +343,9 @@ class LocationComparisonView(ttk.Frame):
                 status, tag = "Saved; re-export to verify", "resynced"
             elif not difference.true_location:
                 status, tag = "Ready to clear web location", ""
+            elif len(location_parts(difference.true_location)) > 1:
+                count = len(location_parts(difference.true_location))
+                status, tag = f"Ready to sync {count} locations", ""
             else:
                 status, tag = "Unsynced", ""
             self.tree.insert(
@@ -416,7 +421,7 @@ class LocationComparisonView(ttk.Frame):
 
     def pending_updates(self) -> list[LocationUpdate]:
         return [
-            LocationUpdate(row.product_id, row.true_location)
+            LocationUpdate(row.product_id, location_parts(row.true_location))
             for row in self.differences
             if row.can_resync and self.resynced.get(row.product_id) != row.true_location
         ]

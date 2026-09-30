@@ -658,7 +658,11 @@ const executeAction = () => {
         const w = window.jQuery && window.jQuery(e).data('kendoNumericTextBox');
         return w ? w.value() : e.value;
     }
-    if (action === 'location_selected') return onlySelectedLocations(one(paths), value);
+    if (action === 'location_selected') {
+        const root = one(paths);
+        return value.length === 1 ? onlySelectedLocation(root, value[0]) :
+            onlySelectedLocations(root, value);
+    }
     if (action === 'location_clear') {
         const root = one(paths);
         if (!root) return false;
@@ -685,13 +689,23 @@ const executeAction = () => {
         const w = window.jQuery && select && window.jQuery(select).data('kendoMultiSelect');
         if (!w) return false;
 
-        const current = Array.from(w.value() || []).map(String);
-        if (current.length !== targetIds.length ||
-            targetIds.some(id => !current.includes(id))) {
-            // Replace the complete web selection with the saved local set.
-            w.value(targetIds);
-            w.trigger('change');
+        if (targetIds.length === 1) {
+            // Keep the established single-location update path.
+            const current = Array.from(w.value() || []).map(String);
+            if (current.length !== 1 || current[0] !== targetIds[0]) {
+                w.value(targetIds);
+                w.trigger('change');
+            }
+            return onlySelectedLocation(root, targetNames[0]);
         }
+
+        // Several locations: clear the old selection, then add the full local set.
+        // Every target shelf was resolved by the API before this action runs.
+        w.value([]);
+        w.trigger('change');
+        if (Array.from(w.value() || []).length) return false;
+        w.value(targetIds);
+        w.trigger('change');
 
         const selectedIds = Array.from(w.value() || []).map(String);
         return selectedIds.length === targetIds.length &&
@@ -996,7 +1010,6 @@ class WebsiteUploader:
         self._wait("finding the location field", lambda: self._dom("present", LOCATION_FIELD_XPATH))
         if not product.location_ids:
             self._clear_location()
-            self._wait("checking the cleared location", lambda: self._location_matches(product))
             return
 
         # The API response is the source of truth for whether each location exists.

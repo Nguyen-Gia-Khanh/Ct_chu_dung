@@ -11,6 +11,7 @@ from mapper.features.location_comparison import compare_locations
 from mapper.features.web_upload import LocationUpdate, UploadProduct, WebsiteUploader
 from mapper.persistence.database import Placement, WarehouseDatabase
 from tests.support import WorkspaceTestCase
+from ui.desktop.location_comparison_view import LocationComparisonView
 from ui.desktop.web_actions import WebActions
 
 
@@ -67,6 +68,11 @@ class MultiLocationTests(WorkspaceTestCase):
         self.assertEqual(missing, [])
         self.assertEqual(differences[0].true_location, "A, B")
         self.assertTrue(differences[0].can_resync)
+        view = SimpleNamespace(differences=differences, resynced={})
+        self.assertEqual(
+            LocationComparisonView.pending_updates(view)[0].location_ids,
+            ("A", "B"),
+        )
 
 
 class WebSelectionTests(unittest.TestCase):
