@@ -248,6 +248,13 @@ class ExceptionsView(ttk.Frame):
         self.cell_contents_tree.configure(yscrollcommand=slot_scroll.set)
         self.cell_contents_tree.pack(side="left", fill="both", expand=True)
         slot_scroll.pack(side="right", fill="y")
+        self.cell_contents_tree.bind("<<TreeviewSelect>>", self._on_cell_content_select)
+
+        ttk.Button(
+            slot_box,
+            text="Remove product exception from this cell",
+            command=self.remove_from_loaded_cell,
+        ).pack(anchor="w", pady=(6, 0))
 
         # Bottom: persistent exception staging
         pending_box = ttk.LabelFrame(parent, text="Staged Exceptions", padding=8)
@@ -359,6 +366,13 @@ class ExceptionsView(ttk.Frame):
             self.product_name_var.set(str(values[1]))
             self.find_product()
 
+    def _on_cell_content_select(self, _event=None) -> None:
+        selection = self.cell_contents_tree.selection()
+        if selection:
+            values = self.cell_contents_tree.item(selection[0], "values")
+            self.product_id_var.set(str(values[0]))
+            self.product_name_var.set(str(values[1]))
+
     def find_product(self) -> None:
         product_id = format_product_id(self.product_id_var.get().strip())
         self.product_id_var.set(product_id)
@@ -412,6 +426,9 @@ class ExceptionsView(ttk.Frame):
             row = int(self.row_var.get())
             col = int(self.cell_var.get())
         except ValueError:
+            self.selected_address = None
+            self.loaded_slot_text.set("No cell loaded. Enter a valid address.")
+            self.cell_contents_tree.delete(*self.cell_contents_tree.get_children())
             messagebox.showinfo("Invalid address", "Row and cell must be positive whole numbers.", parent=self)
             return
 
@@ -486,6 +503,36 @@ class ExceptionsView(ttk.Frame):
         # Keep the ID loaded so another address can be added to the same product.
         self.find_product()
         self.product_id_entry.focus_set()
+
+    def remove_from_loaded_cell(self) -> None:
+        product_id = format_product_id(self.product_id_var.get().strip())
+        if not product_id:
+            messagebox.showinfo(
+                "Select a product", "Enter a product ID or select a product in the loaded cell.", parent=self
+            )
+            return
+        # Resolve the current address fields so an edited address cannot remove
+        # a placement from the previously loaded cell.
+        self.load_address()
+        if not self.selected_address:
+            return
+        slot = self.selected_address
+        if not messagebox.askyesno(
+            "Remove exception from cell",
+            f"Remove {product_id} from {slot.slot_name} only?\n\n"
+            "Other saved locations, catalog registration, and CSV file will remain.",
+            parent=self,
+        ):
+            return
+        try:
+            self.database.remove_exception_from_slot(product_id, slot.slot_id)
+        except Exception as error:
+            messagebox.showerror("Removal failed", str(error), parent=self)
+            return
+        self._refresh_after_change()
+        self.find_product()
+        if self.status_text:
+            self.status_text.set(f"Removed {product_id} from {slot.slot_name} only.")
 
     def append_to_csv(self) -> None:
         selected_ids = self._selected_staged_ids()

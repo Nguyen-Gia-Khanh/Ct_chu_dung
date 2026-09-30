@@ -298,6 +298,29 @@ class ExceptionOperations:
                 "DELETE FROM exception_placements WHERE product_id = ?", (product_id,)
             )
 
+    def remove_exception_from_slot(self, product_id: str, slot_id: int) -> None:
+        """Remove one exception placement and its staging row for this cell only."""
+        clean_pid = format_product_id(product_id.strip())
+        with closing(self.connect()) as connection, connection:
+            slot = connection.execute(
+                "SELECT slot_name FROM slots WHERE slot_id = ?", (slot_id,)
+            ).fetchone()
+            if slot is None:
+                raise ValueError("The selected cell no longer exists.")
+            removed = connection.execute(
+                "DELETE FROM exception_placements WHERE product_id = ? AND slot_id = ?",
+                (clean_pid, slot_id),
+            )
+            if not removed.rowcount:
+                raise ValueError(f"{clean_pid} has no exception in {slot['slot_name']}.")
+            connection.execute(
+                """
+                DELETE FROM wait_to_update_csv
+                WHERE product_id = ? AND (slot_id = ? OR (slot_id IS NULL AND slot_name = ?))
+                """,
+                (clean_pid, slot_id, slot["slot_name"]),
+            )
+
     def clear_pending_csv_updates(self, ids: list[int] | None = None) -> int:
         with closing(self.connect()) as connection, connection:
             if ids is not None:
