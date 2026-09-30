@@ -339,8 +339,6 @@ class LocationComparisonView(ttk.Frame):
             difference = item
             if self.resynced.get(difference.product_id) == difference.true_location:
                 status, tag = "Saved; re-export to verify", "resynced"
-            elif not difference.can_resync:
-                status, tag = "Several local locations; review", "missing"
             elif not difference.true_location:
                 status, tag = "Ready to clear web location", ""
             else:

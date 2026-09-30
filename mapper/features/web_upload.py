@@ -11,7 +11,8 @@ deliberately leave the website quantity untouched.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from time import monotonic, sleep
 from typing import Callable
 
@@ -51,14 +52,23 @@ class WaitExpired(UploadError):
     pass
 
 
+def _location_ids(value: str | tuple[str, ...]) -> tuple[str, ...]:
+    parts = re.split(r"[,;\n]+", value) if isinstance(value, str) else value
+    return tuple(dict.fromkeys(part.strip() for part in parts if part.strip()))
+
+
 @dataclass(frozen=True)
 class UploadProduct:
     product_id: str
     stock_qty: int
-    location_id: str
+    location_id: str | tuple[str, ...]
+    location_ids: tuple[str, ...] = field(init=False)
 
     def __post_init__(self) -> None:
-        if not self.product_id.strip() or not self.location_id.strip():
+        ids = _location_ids(self.location_id)
+        object.__setattr__(self, "location_ids", ids)
+        object.__setattr__(self, "location_id", ", ".join(ids))
+        if not self.product_id.strip() or not ids:
             raise ValueError("A product ID and a location ID are required.")
         if type(self.stock_qty) is not int or not 0 <= self.stock_qty <= 2**53 - 1:
             raise ValueError("Upload needs a known whole-number quantity from 0 to 9,007,199,254,740,991.")
@@ -67,13 +77,17 @@ class UploadProduct:
 @dataclass(frozen=True)
 class LocationUpdate:
     product_id: str
-    location_id: str
+    location_id: str | tuple[str, ...]
+    location_ids: tuple[str, ...] = field(init=False)
 
     def __post_init__(self) -> None:
+        if isinstance(self.location_id, str) and self.location_id and not self.location_id.strip():
+            raise ValueError("Use an empty location ID to clear the website location.")
+        ids = _location_ids(self.location_id)
+        object.__setattr__(self, "location_ids", ids)
+        object.__setattr__(self, "location_id", ", ".join(ids))
         if not self.product_id.strip():
             raise ValueError("A product ID is required.")
-        if self.location_id and not self.location_id.strip():
-            raise ValueError("Use an empty location ID to clear the website location.")
 
 
 # This replaces the old search-box + fixed-result-row XPaths. It runs inside the
@@ -546,6 +560,16 @@ const onlySelectedLocation = (root, target) => {
     )).filter(visible).filter(e => exactText(e, target));
     return labels.length === 1;
 };
+const onlySelectedLocations = (root, targets) => {
+    if (!root || !Array.isArray(targets)) return false;
+    const found = widget(root);
+    if (!found || found.kind !== 'kendoMultiSelect') return false;
+    const selected = Array.from(found.w.dataItems() || [])
+        .map(item => clean(field(item, found.w.options.dataTextField)));
+    return selected.length === targets.length &&
+        new Set(selected).size === selected.length &&
+        targets.every(target => selected.includes(target));
+};
 const chooseLocation = (root, target) => {
     if (!root) return false;
     if (selectedLocation(root, target)) return true;
@@ -634,7 +658,7 @@ const executeAction = () => {
         const w = window.jQuery && window.jQuery(e).data('kendoNumericTextBox');
         return w ? w.value() : e.value;
     }
-    if (action === 'location_selected') return onlySelectedLocation(one(paths), value);
+    if (action === 'location_selected') return onlySelectedLocations(one(paths), value);
     if (action === 'location_clear') {
         const root = one(paths);
         if (!root) return false;
@@ -648,27 +672,31 @@ const executeAction = () => {
         return Array.from(w.value() || []).length === 0;
     }
     if (action === 'location_pick') return chooseLocation(one(paths), value);
-    if (action === 'location_pick_id') {
+    if (action === 'location_pick_ids') {
         const root = one(paths);
         if (!root || !value) return false;
 
-        const targetId = clean(value.id);
-        const targetName = clean(value.name);
-        if (!targetId || !targetName) return false;
+        const targetIds = Array.isArray(value.ids) ? value.ids.map(clean) : [];
+        const targetNames = Array.isArray(value.names) ? value.names.map(clean) : [];
+        if (!targetIds.length || targetIds.length !== targetNames.length ||
+            targetIds.some(id => !id) || targetNames.some(name => !name)) return false;
 
         const select = root.querySelector('select[data-role="multiselect"]');
         const w = window.jQuery && select && window.jQuery(select).data('kendoMultiSelect');
         if (!w) return false;
 
         const current = Array.from(w.value() || []).map(String);
-        if (current.length !== 1 || current[0] !== targetId) {
-            // A product has one location: replace the whole selection instead of
-            // clicking each old tag's close button or appending another location.
-            w.value([targetId]);
+        if (current.length !== targetIds.length ||
+            targetIds.some(id => !current.includes(id))) {
+            // Replace the complete web selection with the saved local set.
+            w.value(targetIds);
             w.trigger('change');
         }
 
-        return onlySelectedLocation(root, targetName);
+        const selectedIds = Array.from(w.value() || []).map(String);
+        return selectedIds.length === targetIds.length &&
+            targetIds.every(id => selectedIds.includes(id)) &&
+            onlySelectedLocations(root, targetNames);
     }
     if (action === 'location_search') {
         const root = one(paths);
@@ -878,7 +906,7 @@ class WebsiteUploader:
         return quantity == product.stock_qty or str(quantity).strip() == str(product.stock_qty)
 
     def _location_matches(self, product: UploadProduct | LocationUpdate) -> bool:
-        return bool(self._dom("location_selected", LOCATION_FIELD_XPATH, product.location_id))
+        return bool(self._dom("location_selected", LOCATION_FIELD_XPATH, list(product.location_ids)))
 
     def _location_values_match(self, product: UploadProduct | LocationUpdate) -> bool:
         return self._identity_matches(product) and self._location_matches(product)
@@ -938,16 +966,21 @@ class WebsiteUploader:
 
         return names, ids_by_name
 
-    def _select_location_id(self, product: UploadProduct | LocationUpdate, shelf_id: str) -> None:
+    def _select_location_ids(
+        self, product: UploadProduct | LocationUpdate, ids_by_name: dict[str, str]
+    ) -> None:
         selected = self._dom(
-            "location_pick_id",
+            "location_pick_ids",
             LOCATION_FIELD_XPATH,
-            {"id": str(shelf_id), "name": product.location_id},
+            {
+                "ids": [ids_by_name[name] for name in product.location_ids],
+                "names": list(product.location_ids),
+            },
         )
         if not selected:
             raise UploadError(
-                f"Location {product.location_id} exists in KiotViet as shelf ID {shelf_id}, "
-                "but the edit form could not select it."
+                f"Locations {product.location_id} exist in KiotViet, "
+                "but the edit form could not select the complete set."
             )
         self._wait(
             "checking the selected location",
@@ -960,54 +993,45 @@ class WebsiteUploader:
         product: UploadProduct | LocationUpdate,
         progress: Callable[[str], None],
     ) -> None:
-        target = product.location_id.strip()
         self._wait("finding the location field", lambda: self._dom("present", LOCATION_FIELD_XPATH))
-
-        # The API response is the source of truth for whether this location already exists.
-        location_names, ids_by_name = self._get_shelves_by_name()
-
-        if target in location_names:
-            progress(f"Selecting existing location {target}…")
-            self._select_location_id(product, ids_by_name[target])
+        if not product.location_ids:
+            self._clear_location()
+            self._wait("checking the cleared location", lambda: self._location_matches(product))
             return
 
-        # The location is genuinely absent from KiotViet, so create it once through
-        # the site's existing UI. Most warehouse slots are expected to take this path.
-        progress(f"Creating location {target}…")
-        self._click(CREATE_LOCATION_XPATH, "opening Add location")
-
-        try:
-            self._fill_input(NEW_LOCATION_XPATH, target)
-            self._click(SAVE_LOCATION_XPATH, "saving the new location")
-            self._wait(
-                "waiting for the new location dialog to close",
-                lambda: not self._dom("present", LOCATION_FORM_XPATH),
-                check_errors=True,
-            )
-        except UploadError as error:
-            raise UploadError(
-                f"Could not create location {target}. The product Save button has not been pressed.\n\n"
-                + str(error)
-            ) from error
-
-        # Re-read /api/shelves after creation so we use KiotViet's real new shelf ID,
-        # rather than assuming what the UI generated.
-        deadline = monotonic() + 5
-        new_id = None
-        while monotonic() < deadline:
-            location_names, ids_by_name = self._get_shelves_by_name()
+        # The API response is the source of truth for whether each location exists.
+        location_names, ids_by_name = self._get_shelves_by_name()
+        for target in product.location_ids:
             if target in location_names:
-                new_id = ids_by_name[target]
-                break
-            sleep(0.4)
+                continue
+            progress(f"Creating location {target}…")
+            self._click(CREATE_LOCATION_XPATH, "opening Add location")
+            try:
+                self._fill_input(NEW_LOCATION_XPATH, target)
+                self._click(SAVE_LOCATION_XPATH, "saving the new location")
+                self._wait(
+                    "waiting for the new location dialog to close",
+                    lambda: not self._dom("present", LOCATION_FORM_XPATH),
+                    check_errors=True,
+                )
+            except UploadError as error:
+                raise UploadError(
+                    f"Could not create location {target}. The product Save button has not been pressed.\n\n"
+                    + str(error)
+                ) from error
+            deadline = monotonic() + 5
+            while monotonic() < deadline:
+                location_names, ids_by_name = self._get_shelves_by_name()
+                if target in location_names:
+                    break
+                sleep(0.4)
+            if target not in location_names:
+                raise UploadError(
+                    f"KiotViet closed the Create location form, but {target!r} did not appear in /api/shelves."
+                )
 
-        if not new_id:
-            raise UploadError(
-                f"KiotViet closed the Create location form, but {target!r} did not appear in /api/shelves."
-            )
-
-        progress(f"Selecting new location {target}…")
-        self._select_location_id(product, new_id)
+        progress(f"Selecting locations {product.location_id}…")
+        self._select_location_ids(product, ids_by_name)
 
     def _clear_location(self) -> None:
         self._wait("finding the location field", lambda: self._dom("present", LOCATION_FIELD_XPATH))
@@ -1044,7 +1068,7 @@ class WebsiteUploader:
         # reopens the product, then refreshes once more to close the form.
         self._pause()
 
-        if VERIFY_AFTER_SAVE and (not location_only or product.location_id):
+        if VERIFY_AFTER_SAVE:
             progress(
                 "Reloading the saved product to verify its location…"
                 if location_only else
@@ -1067,6 +1091,8 @@ class WebsiteUploader:
                 note = " Close the verification form in Chrome before the next upload."
 
             if location_only:
+                if not product.location_id:
+                    return f"Location cleared and verified: {product.product_id}.{note}"
                 return f"Location updated and verified: {product.product_id} · {product.location_id}.{note}"
             return f"Uploaded and verified: {product.product_id} · qty {product.stock_qty} · {product.location_id}.{note}"
 
@@ -1155,7 +1181,7 @@ class WebsiteUploader:
                 )
             else:
                 progress("Clearing the website location…")
-                self._clear_location()
+                self._set_location(product, progress)
 
             if should_save:
                 return self._save_product(product, progress, location_only=True)
