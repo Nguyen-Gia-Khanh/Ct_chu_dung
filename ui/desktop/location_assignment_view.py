@@ -305,6 +305,7 @@ class LocationAssignmentView(ttk.Frame):
             xscrollcommand=queue_x_scroll.set,
         )
         self.queue_tree.grid(row=0, column=0, sticky="nsew")
+        self.queue_tree.bind("<Double-1>", self._on_queue_double_click)
         queue_scroll.grid(row=0, column=1, sticky="ns")
         queue_x_scroll.grid(row=1, column=0, sticky="ew")
         self.queue_count_text = tk.StringVar(self, value="0 products")
@@ -808,6 +809,16 @@ class LocationAssignmentView(ttk.Frame):
 
     def focus_search(self) -> None:
         self._select_search_entry(self.search_entry)
+
+    def _on_queue_double_click(self, event: tk.Event) -> str | None:
+        row_id = self.queue_tree.identify_row(event.y)
+        if not row_id.startswith("product::"):
+            return None
+        product_id = row_id.removeprefix("product::")
+        self.queue_tree.selection_set(row_id)
+        self.queue_tree.focus(row_id)
+        self._set_and_select_search(self.search_var, self.search_entry, product_id)
+        return "break"
 
     def _set_and_select_search(
         self,
