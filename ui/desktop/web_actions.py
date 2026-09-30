@@ -144,8 +144,16 @@ class WebActions:
             raise ValueError(f"{address.slot_name} does not contain any products.")
         return [(product_id, placement) for product_id, _name, placement in contents]
 
+    def _saved_location_sets(self, product_ids: set[str]) -> dict[str, tuple[str, ...]]:
+        locations: dict[str, list[str]] = {product_id: [] for product_id in product_ids}
+        for product_id, slot_name, _qty, _assigned_at in self.database.get_all_placement_items():
+            if product_id in locations and slot_name not in locations[product_id]:
+                locations[product_id].append(slot_name)
+        return {product_id: tuple(names) for product_id, names in locations.items()}
+
     def _upload_products(self) -> list[UploadProduct]:
         placements = self._web_placements("Upload to web")
+        locations = self._saved_location_sets({product_id for product_id, _ in placements})
         missing_quantities = [
             product_id
             for product_id, placement in placements
@@ -163,14 +171,16 @@ class WebActions:
                 "Return the product to on-hand and assign it again with a quantity."
             )
         return [
-            UploadProduct(product_id, placement.stock_qty, placement.slot_name)
+            UploadProduct(product_id, placement.stock_qty, locations[product_id])
             for product_id, placement in placements
         ]
 
     def _location_updates(self) -> list[LocationUpdate]:
+        placements = self._web_placements("Modify location")
+        locations = self._saved_location_sets({product_id for product_id, _ in placements})
         return [
-            LocationUpdate(product_id, placement.slot_name)
-            for product_id, placement in self._web_placements("Modify location")
+            LocationUpdate(product_id, locations[product_id])
+            for product_id, _placement in placements
         ]
 
     def _can_start_web_update(self) -> bool:
@@ -217,7 +227,11 @@ class WebActions:
                 parent=self.root,
             )
             return
-        self._start_web_update(updates, location_only=True)
+        locations = self._saved_location_sets({item.product_id for item in updates})
+        self._start_web_update(
+            [LocationUpdate(item.product_id, locations[item.product_id]) for item in updates],
+            location_only=True,
+        )
 
     def resync_web_locations(self, updates: list[LocationUpdate]) -> None:
         """Upload only mismatches from the imported KiotViet snapshot."""
@@ -267,7 +281,11 @@ class WebActions:
                 status = f"Resyncing web locations for {len(products)} products…"
             else:
                 action = "Updating locations for" if location_only else "Uploading"
-                status = f"{action} {len(products)} products → {products[0].location_id}…"
+                location_note = (
+                    f" → {products[0].location_id}"
+                    if len({item.location_id for item in products}) == 1 else ""
+                )
+                status = f"{action} {len(products)} products{location_note}…"
         self.assignments.upload_status_text.set(status)
         if hasattr(self, "location_comparison") and source == "comparison":
             self.location_comparison.set_progress(status)
@@ -355,10 +373,7 @@ class WebActions:
                 else:
                     summary = f"Updated web locations for {total} products."
             else:
-                summary = (
-                    f"Uploaded stock and web locations for {total} products at "
-                    f"{products[0].location_id}."
-                )
+                summary = f"Uploaded stock and web locations for {total} products."
             events.put(("done", summary))
 
     def _poll_web_upload(self) -> None:

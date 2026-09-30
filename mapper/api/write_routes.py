@@ -371,27 +371,32 @@ class WriteRoutes:
             product_ids = payload.get("product_ids", [])
             slot_name = payload.get("slot_name", "")
 
-            updates = []
+            requested_ids = []
             if items:
                 for it in items:
                     pid = format_product_id(it.get("product_id", ""))
-                    loc = clean_location_segment(it.get("slot_name", ""))
-                    if pid and loc:
-                        updates.append((pid, loc))
+                    if pid and pid not in requested_ids:
+                        requested_ids.append(pid)
             elif product_ids and slot_name:
-                clean_loc = clean_location_segment(slot_name)
                 for pid in product_ids:
                     clean_pid = format_product_id(pid)
-                    if clean_pid and clean_loc:
-                        updates.append((clean_pid, clean_loc))
+                    if clean_pid and clean_pid not in requested_ids:
+                        requested_ids.append(clean_pid)
+
+            # The saved placements, including exceptions, are the complete web target.
+            locations = {pid: [] for pid in requested_ids}
+            for pid, name, _qty, _assigned_at in db.get_all_placement_items():
+                if pid in locations and name not in locations[pid]:
+                    locations[pid].append(name)
+            updates = [(pid, tuple(locations[pid])) for pid in requested_ids if locations[pid]]
 
             uploader_note = ""
             try:
                 uploader = _get_uploader()
                 if uploader and uploader.is_connected():
                     from mapper.features.web_upload import LocationUpdate
-                    for pid, loc in updates:
-                        uploader.modify_location(LocationUpdate(pid, loc))
+                    for pid, names in updates:
+                        uploader.modify_location(LocationUpdate(pid, names))
                     uploader_note = " and synced to website via Chrome"
             except Exception as ex:
                 uploader_note = f" (Chrome note: {ex})"

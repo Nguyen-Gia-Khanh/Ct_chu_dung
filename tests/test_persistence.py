@@ -51,6 +51,29 @@ class PersistenceTests(WorkspaceTestCase):
         self.assertEqual(self.db.add_staged_to_catalog(["E1"]), 1)
         self.assertIn("E1", {row[0] for row in self.db.get_catalog_products()})
 
+    def test_remove_exception_from_one_cell_preserves_other_locations(self) -> None:
+        self.db.commit_shelf("1", "B", [1], {}, set(), side="1")
+        third = self.db.get_slot_address("1", "1", "B", 1, 1)
+        self.db.add_to_on_hand({"P1": 3}, FIRST)
+        self.db.assign_on_hand_to_slot(self.first.slot_id, SECOND, ["P1"])
+        self.db.assign_exception("P1", self.second.slot_id, stock_qty=2)
+        self.db.assign_exception("P1", third.slot_id, stock_qty=4)
+        self.db.add_staged_to_catalog(["P1"])
+
+        with self.assertRaisesRegex(ValueError, "no exception"):
+            self.db.remove_exception_from_slot("P1", self.first.slot_id)
+        self.assertEqual(len(self.db.get_exception_staging()), 2)
+
+        self.db.remove_exception_from_slot("P1", self.second.slot_id)
+        self.assertEqual(
+            self.db.get_product_locations("P1"), [self.first.slot_name, third.slot_name]
+        )
+        self.assertEqual(
+            [item["slot_name"] for item in self.db.get_exception_staging()], [third.slot_name]
+        )
+        self.assertIn("P1", {row[0] for row in self.db.get_catalog_products()})
+        self.assertEqual(self.db.get_slot_contents(self.second.slot_id), [])
+
     def test_csv_reimports_keep_locations_and_overlay_queue_names(self) -> None:
         self.db.import_catalog_products({
             "P1": ("Temporary warehouse name", "Temporary"),

@@ -13,6 +13,67 @@ from utils.barcode_scanner import format_product_id
 from .models import validate_stock_quantity
 
 class ExceptionOperations:
+    def find_product_locations(self, product_id: str) -> tuple[str, tuple[str, ...]] | None:
+        """Find a registered or staged ID and all its saved locations."""
+        with closing(self.connect()) as connection:
+            name_row = connection.execute(
+                """
+                SELECT product_name FROM products WHERE product_id = ?
+                UNION ALL
+                SELECT product_name FROM catalog_products WHERE product_id = ?
+                UNION ALL
+                SELECT product_name FROM wait_to_update_csv WHERE product_id = ?
+                LIMIT 1
+                """,
+                (product_id, product_id, product_id),
+            ).fetchone()
+            rows = connection.execute(
+                """
+                SELECT slots.slot_name FROM slots
+                JOIN placements ON placements.slot_id = slots.slot_id
+                WHERE placements.product_id = ?
+                UNION
+                SELECT slots.slot_name FROM slots
+                JOIN exception_placements ON exception_placements.slot_id = slots.slot_id
+                WHERE exception_placements.product_id = ?
+                ORDER BY slot_name COLLATE NOCASE
+                """,
+                (product_id, product_id),
+            ).fetchall()
+        if name_row is None and not rows:
+            return None
+        return (name_row["product_name"] if name_row else product_id,
+                tuple(row["slot_name"] for row in rows))
+
+    def get_multi_location_products(self) -> list[tuple[str, str, tuple[str, ...]]]:
+        """Group products with two or more distinct saved locations."""
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT saved.product_id, slots.slot_name,
+                       COALESCE(products.product_name, catalog_products.product_name, saved.product_id)
+                           AS product_name
+                FROM (
+                    SELECT product_id, slot_id FROM placements
+                    UNION
+                    SELECT product_id, slot_id FROM exception_placements
+                ) AS saved
+                JOIN slots ON slots.slot_id = saved.slot_id
+                LEFT JOIN products ON products.product_id = saved.product_id
+                LEFT JOIN catalog_products ON catalog_products.product_id = saved.product_id
+                ORDER BY saved.product_id COLLATE NOCASE, slots.slot_name COLLATE NOCASE
+                """
+            ).fetchall()
+        grouped: dict[str, tuple[str, list[str]]] = {}
+        for row in rows:
+            entry = grouped.setdefault(row["product_id"], (row["product_name"], []))
+            entry[1].append(row["slot_name"])
+        return [
+            (product_id, name, tuple(locations))
+            for product_id, (name, locations) in grouped.items()
+            if len(locations) > 1
+        ]
+
     def assign_exception(
         self,
         product_id: str,
@@ -235,6 +296,29 @@ class ExceptionOperations:
             )
             connection.execute(
                 "DELETE FROM exception_placements WHERE product_id = ?", (product_id,)
+            )
+
+    def remove_exception_from_slot(self, product_id: str, slot_id: int) -> None:
+        """Remove one exception placement and its staging row for this cell only."""
+        clean_pid = format_product_id(product_id.strip())
+        with closing(self.connect()) as connection, connection:
+            slot = connection.execute(
+                "SELECT slot_name FROM slots WHERE slot_id = ?", (slot_id,)
+            ).fetchone()
+            if slot is None:
+                raise ValueError("The selected cell no longer exists.")
+            removed = connection.execute(
+                "DELETE FROM exception_placements WHERE product_id = ? AND slot_id = ?",
+                (clean_pid, slot_id),
+            )
+            if not removed.rowcount:
+                raise ValueError(f"{clean_pid} has no exception in {slot['slot_name']}.")
+            connection.execute(
+                """
+                DELETE FROM wait_to_update_csv
+                WHERE product_id = ? AND (slot_id = ? OR (slot_id IS NULL AND slot_name = ?))
+                """,
+                (clean_pid, slot_id, slot["slot_name"]),
             )
 
     def clear_pending_csv_updates(self, ids: list[int] | None = None) -> int:

@@ -48,6 +48,7 @@ class ExceptionsView(ttk.Frame):
         self.cell_var = tk.StringVar(self, value="1")
 
         self.loaded_slot_text = tk.StringVar(self, value="No cell loaded. Enter address and click Load cell.")
+        self.found_locations_text = tk.StringVar(self, value="Find an ID to see all its saved locations.")
         self.pending_summary_text = tk.StringVar(self, value="0 staged exceptions")
         self.status_message = tk.StringVar(
             self,
@@ -71,7 +72,7 @@ class ExceptionsView(ttk.Frame):
         ).pack(anchor="w")
         ttk.Label(
             sub_header,
-            text="Assign exception locations, then register staged products in CSV and catalog independently.",
+            text="Find an existing ID and assign it to another cell to keep multiple locations. Register staged products separately.",
             foreground="#555555",
         ).pack(anchor="w")
 
@@ -110,6 +111,11 @@ class ExceptionsView(ttk.Frame):
         self.product_id_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
         self.product_id_entry.bind("<Return>", self._on_product_id_return)
         bind_auto_highlight(self.product_id_entry)
+        ttk.Button(id_frame, text="Find ID", command=self.find_product).pack(side="left")
+        ttk.Label(
+            assign_box, textvariable=self.found_locations_text,
+            foreground="#0969da", wraplength=470,
+        ).pack(anchor="w", pady=(0, 6))
 
         name_frame = ttk.Frame(assign_box)
         name_frame.pack(fill="x", pady=(0, 6))
@@ -161,9 +167,13 @@ class ExceptionsView(ttk.Frame):
             command=self.assign_exception,
         ).pack(side="left", fill="x", expand=True)
 
-        # Bottom Box: Shared On-Hand Queue
-        on_hand_box = ttk.LabelFrame(parent, text="Shared On-Hand Products", padding=8)
-        on_hand_box.pack(fill="both", expand=True)
+        # Browse both unassigned products and IDs already stored in several cells.
+        product_tabs = ttk.Notebook(parent)
+        product_tabs.pack(fill="both", expand=True)
+        on_hand_box = ttk.Frame(product_tabs, padding=8)
+        multi_box = ttk.Frame(product_tabs, padding=8)
+        product_tabs.add(on_hand_box, text="On-hand products")
+        product_tabs.add(multi_box, text="Multiple locations")
 
         on_hand_tree_frame = ttk.Frame(on_hand_box)
         on_hand_tree_frame.pack(fill="both", expand=True)
@@ -188,6 +198,27 @@ class ExceptionsView(ttk.Frame):
         on_hand_scroll.pack(side="right", fill="y")
 
         self.on_hand_tree.bind("<<TreeviewSelect>>", self._on_hand_select)
+
+        multi_tree_frame = ttk.Frame(multi_box)
+        multi_tree_frame.pack(fill="both", expand=True)
+        self.multi_location_tree = ttk.Treeview(
+            multi_tree_frame, columns=("product_id", "product_name", "locations"),
+            show="headings", selectmode="browse",
+        )
+        for column, title, width in (
+            ("product_id", "Product ID", 120),
+            ("product_name", "Product Name", 170),
+            ("locations", "Saved Locations", 240),
+        ):
+            self.multi_location_tree.heading(column, text=title)
+            self.multi_location_tree.column(column, width=width, anchor="w")
+        multi_scroll = ttk.Scrollbar(
+            multi_tree_frame, orient="vertical", command=self.multi_location_tree.yview
+        )
+        self.multi_location_tree.configure(yscrollcommand=multi_scroll.set)
+        self.multi_location_tree.pack(side="left", fill="both", expand=True)
+        multi_scroll.pack(side="right", fill="y")
+        self.multi_location_tree.bind("<<TreeviewSelect>>", self._on_multi_location_select)
 
     def _build_right_pane(self, parent: ttk.Frame) -> None:
         # Top: Current Shelf / Slot Contents
@@ -217,6 +248,13 @@ class ExceptionsView(ttk.Frame):
         self.cell_contents_tree.configure(yscrollcommand=slot_scroll.set)
         self.cell_contents_tree.pack(side="left", fill="both", expand=True)
         slot_scroll.pack(side="right", fill="y")
+        self.cell_contents_tree.bind("<<TreeviewSelect>>", self._on_cell_content_select)
+
+        ttk.Button(
+            slot_box,
+            text="Remove product exception from this cell",
+            command=self.remove_from_loaded_cell,
+        ).pack(anchor="w", pady=(6, 0))
 
         # Bottom: persistent exception staging
         pending_box = ttk.LabelFrame(parent, text="Staged Exceptions", padding=8)
@@ -245,7 +283,7 @@ class ExceptionsView(ttk.Frame):
         )
         self.pending_tree.heading("product_id", text="Product ID")
         self.pending_tree.heading("product_name", text="Product Name")
-        self.pending_tree.heading("slot_name", text="Target Cell")
+        self.pending_tree.heading("slot_name", text="Locations")
         self.pending_tree.heading("staged_status", text="Staged Status")
         self.pending_tree.heading("created_at", text="Staged At")
 
@@ -308,8 +346,15 @@ class ExceptionsView(ttk.Frame):
             self.product_id_var.set(str(values[0]))
             if len(values) >= 2:
                 self.product_name_var.set(str(values[1]))
+            self.find_product()
             if len(values) >= 3 and values[2] not in ("", "Unknown", None):
                 self.qty_var.set(str(values[2]))
+
+    def _on_multi_location_select(self, _event=None) -> None:
+        selection = self.multi_location_tree.selection()
+        if selection:
+            self.product_id_var.set(str(self.multi_location_tree.item(selection[0], "values")[0]))
+            self.find_product()
 
     def _on_staged_select(self, _event=None) -> None:
         selection = self.pending_tree.selection()
@@ -319,6 +364,33 @@ class ExceptionsView(ttk.Frame):
         if values:
             self.product_id_var.set(str(values[0]))
             self.product_name_var.set(str(values[1]))
+            self.find_product()
+
+    def _on_cell_content_select(self, _event=None) -> None:
+        selection = self.cell_contents_tree.selection()
+        if selection:
+            values = self.cell_contents_tree.item(selection[0], "values")
+            self.product_id_var.set(str(values[0]))
+            self.product_name_var.set(str(values[1]))
+
+    def find_product(self) -> None:
+        product_id = format_product_id(self.product_id_var.get().strip())
+        self.product_id_var.set(product_id)
+        if not product_id:
+            self.found_locations_text.set("Enter a product ID to find its saved locations.")
+            return
+        found = self.database.find_product_locations(product_id)
+        if found is None:
+            self.found_locations_text.set(f"{product_id} is not registered or assigned locally.")
+            return
+        name, locations = found
+        self.product_name_var.set(name)
+        self.qty_var.set("")
+        if locations:
+            label = "Multiple locations" if len(locations) > 1 else "Saved location"
+            self.found_locations_text.set(f"{label} for {product_id}: {', '.join(locations)}")
+        else:
+            self.found_locations_text.set(f"{product_id} exists locally but has no saved location.")
 
     def _selected_staged_ids(self) -> list[str] | None:
         selection = self.pending_tree.selection()
@@ -354,6 +426,9 @@ class ExceptionsView(ttk.Frame):
             row = int(self.row_var.get())
             col = int(self.cell_var.get())
         except ValueError:
+            self.selected_address = None
+            self.loaded_slot_text.set("No cell loaded. Enter a valid address.")
+            self.cell_contents_tree.delete(*self.cell_contents_tree.get_children())
             messagebox.showinfo("Invalid address", "Row and cell must be positive whole numbers.", parent=self)
             return
 
@@ -417,7 +492,7 @@ class ExceptionsView(ttk.Frame):
             messagebox.showerror("Assignment Failed", str(error), parent=self)
             return
 
-        msg = f"Assigned {clean_pid} to {slot_name}. Staged for CSV and catalog registration."
+        msg = f"Assigned {clean_pid} to {slot_name}."
         if self.status_text:
             self.status_text.set(msg)
 
@@ -425,10 +500,39 @@ class ExceptionsView(ttk.Frame):
         self.pending_tree.selection_remove(self.pending_tree.selection())
         self._refresh_after_change()
 
-        # Clear product ID input for next entry
-        self.product_id_var.set("")
-        self.product_name_var.set("")
+        # Keep the ID loaded so another address can be added to the same product.
+        self.find_product()
         self.product_id_entry.focus_set()
+
+    def remove_from_loaded_cell(self) -> None:
+        product_id = format_product_id(self.product_id_var.get().strip())
+        if not product_id:
+            messagebox.showinfo(
+                "Select a product", "Enter a product ID or select a product in the loaded cell.", parent=self
+            )
+            return
+        # Resolve the current address fields so an edited address cannot remove
+        # a placement from the previously loaded cell.
+        self.load_address()
+        if not self.selected_address:
+            return
+        slot = self.selected_address
+        if not messagebox.askyesno(
+            "Remove exception from cell",
+            f"Remove {product_id} from {slot.slot_name} only?\n\n"
+            "Other saved locations, catalog registration, and CSV file will remain.",
+            parent=self,
+        ):
+            return
+        try:
+            self.database.remove_exception_from_slot(product_id, slot.slot_id)
+        except Exception as error:
+            messagebox.showerror("Removal failed", str(error), parent=self)
+            return
+        self._refresh_after_change()
+        self.find_product()
+        if self.status_text:
+            self.status_text.set(f"Removed {product_id} from {slot.slot_name} only.")
 
     def append_to_csv(self) -> None:
         selected_ids = self._selected_staged_ids()
@@ -519,7 +623,21 @@ class ExceptionsView(ttk.Frame):
         selected = set(self.pending_tree.selection())
         self.pending_tree.delete(*self.pending_tree.get_children())
         staged = self.database.get_exception_staging()
+        grouped: dict[str, dict] = {}
         for item in staged:
+            product_id = item["product_id"]
+            if product_id not in grouped:
+                grouped[product_id] = {**item, "locations": []}
+            group = grouped[product_id]
+            if item["slot_name"] not in group["locations"]:
+                group["locations"].append(item["slot_name"])
+            group["csv_updated"] = group["csv_updated"] and item["csv_updated"]
+            group["catalog_updated"] = group["catalog_updated"] and item["catalog_updated"]
+        saved_locations: dict[str, list[str]] = {product_id: [] for product_id in grouped}
+        for product_id, slot_name, _qty, _assigned_at in self.database.get_all_placement_items():
+            if product_id in saved_locations and slot_name not in saved_locations[product_id]:
+                saved_locations[product_id].append(slot_name)
+        for item in grouped.values():
             created = item["created_at"].replace("T", " ") if item["created_at"] else ""
             missing = []
             if not item["csv_updated"]:
@@ -527,16 +645,29 @@ class ExceptionsView(ttk.Frame):
             if not item["catalog_updated"]:
                 missing.append("catalog")
             status = "Updated" if not missing else "Hasn't Add to: " + " + ".join(missing)
-            iid = f"stage-{item['id']}"
+            iid = f"stage-{item['product_id']}"
             self.pending_tree.insert(
                 "",
                 "end",
                 iid=iid,
-                values=(item["product_id"], item["product_name"], item["slot_name"], status, created),
+                values=(item["product_id"], item["product_name"],
+                        ", ".join(saved_locations[item["product_id"]] or item["locations"]),
+                        status, created),
             )
             if iid in selected:
                 self.pending_tree.selection_add(iid)
-        self.pending_summary_text.set(f"{len(staged):,} staged exception(s)")
+        self.pending_summary_text.set(f"{len(grouped):,} staged product(s)")
+
+    def refresh_multi_location_tree(self) -> None:
+        selected = set(self.multi_location_tree.selection())
+        self.multi_location_tree.delete(*self.multi_location_tree.get_children())
+        for product_id, name, locations in self.database.get_multi_location_products():
+            self.multi_location_tree.insert(
+                "", "end", iid=product_id,
+                values=(product_id, name, ", ".join(locations)),
+            )
+            if product_id in selected:
+                self.multi_location_tree.selection_add(product_id)
 
     def refresh_on_hand_tree(self) -> None:
         self.on_hand_tree.delete(*self.on_hand_tree.get_children())
@@ -559,5 +690,6 @@ class ExceptionsView(ttk.Frame):
         """Called whenever tab becomes active or database state changes."""
         self.refresh_on_hand_tree()
         self.refresh_pending_tree()
+        self.refresh_multi_location_tree()
         if self.selected_address:
             self.refresh_cell_contents()
