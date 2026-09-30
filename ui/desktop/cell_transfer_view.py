@@ -509,6 +509,7 @@ class CellTransferPane(ttk.LabelFrame):
         counts = Counter(placement.slot_name for _id, _name, placement in contents)
         row_width = max(320, max(layout, default=1) * 78)
         shelf_label = clean_location_segment(shelf_code)
+        side_label = clean_location_segment(side)
 
         ttk.Label(
             self.shelf_scroll.inner,
@@ -550,7 +551,7 @@ class CellTransferPane(ttk.LabelFrame):
                 product_count = counts.get(slot_name, 0)
                 button = tk.Button(
                     row_frame,
-                    text=f"R{row_number}-C{slot_number:02d} ({shelf_label}{row_number}-{slot_number})\n{product_count} product{'s' if product_count != 1 else ''}",
+                    text=f"{side_label}{shelf_label}{row_number}-{slot_number}\n{product_count} product{'s' if product_count != 1 else ''}",
                     command=lambda row=row_number, cell=slot_number: self._select_coordinates(
                         row, cell
                     ),
@@ -612,8 +613,13 @@ class CellTransferPane(ttk.LabelFrame):
             tree.see(target_item)
 
         count = len(visible)
+        address = self.selected_address
+        short_address = (
+            f"{address.side}{address.shelf_code}"
+            f"{address.row_number}-{address.slot_number}"
+        )
         self.selection_text.set(
-            f"{self.selected_address.slot_name} (R{self.selected_address.row_number}-C{self.selected_address.slot_number:02d}) · {count} product{'s' if count != 1 else ''}"
+            f"{short_address} · {count} product{'s' if count != 1 else ''}"
         )
 
 
