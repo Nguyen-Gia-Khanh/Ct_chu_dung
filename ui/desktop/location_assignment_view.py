@@ -606,7 +606,7 @@ class LocationAssignmentView(ttk.Frame):
                 color = "#d9ead3" if product_count else "#f7f7f7"
                 button = tk.Button(
                     row_frame,
-                    text=f"R{row_number}-C{cell:02d}\n{product_count} product{'s' if product_count != 1 else ''}",
+                    text=f"{row_number}-{cell:02d}\n{product_count} product{'s' if product_count != 1 else ''}",
                     command=lambda row=row_number, col=cell: self._select_shelf_cell(
                         row, col
                     ),
