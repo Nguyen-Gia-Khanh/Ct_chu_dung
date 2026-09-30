@@ -7,7 +7,13 @@ from tkinter import messagebox, simpledialog
 
 from .assignment_view import StockQuantityDialog
 from mapper.core.common import clean_location_segment
-from mapper.persistence.database import Placement, validate_stock_quantity
+from mapper.persistence.database import (
+    OnHandProduct,
+    Placement,
+    ReturnedQueueProduct,
+    validate_stock_quantity,
+)
+from .widgets import sync_tree_rows
 
 
 class AssignmentActions:
@@ -79,8 +85,13 @@ class AssignmentActions:
                     "Could not update on-hand", str(error), parent=self.root
                 )
                 return
-            self.reload_database_state()
-            self.refresh_all_views()
+            self.apply_inventory_changes(
+                on_hand={
+                    pid: OnHandProduct(pid, quantity, queued_at)
+                    for pid, quantity in dialog.result.items()
+                },
+                returned={pid: None for pid in dialog.result},
+            )
             self.status_text.set(
                 f"Moved {len(dialog.result)} product(s) to on-hand. Saved immediately."
             )
@@ -192,10 +203,9 @@ class AssignmentActions:
             self.pending_unassignments.discard(pid)
             self.transferred_stock.pop(pid, None)
 
-        self.reload_database_state(reload_catalog=True)
-        self.refresh_all_views()
-        if hasattr(self, "shelf_browser"):
-            self.shelf_browser.refresh()
+        self.reconcile_inventory_products(
+            queue_pids, affected_slots=(self.selected_address.slot_name,)
+        )
         self.status_text.set(
             f"Transferred {moved} queue product(s) to {self.selected_address.slot_name} with stock 999. Saved immediately."
         )
@@ -204,18 +214,21 @@ class AssignmentActions:
         if not hasattr(self.assignments, "on_hand_tree"):
             return
         tree = self.assignments.on_hand_tree
-        tree.delete(*tree.get_children())
-        for product_id, item in self.on_hand_products.items():
-            tree.insert(
-                "",
-                "end",
-                iid=f"hand::{product_id}",
-                values=(
+        rows = []
+        for product_id, item in sorted(
+            self.on_hand_products.items(),
+            key=lambda entry: (entry[1].queued_at, entry[0].casefold()),
+        ):
+            rows.append((
+                f"hand::{product_id}",
+                (
                     product_id,
                     self.products.get(product_id, ""),
                     item.stock_qty if item.stock_qty is not None else "Unknown",
                 ),
-            )
+                (),
+            ))
+        sync_tree_rows(tree, rows)
         self.assignments.on_hand_count_text.set(
             f"{len(self.on_hand_products):,} product(s) ready to assign"
         )
@@ -254,8 +267,11 @@ class AssignmentActions:
                 "Stock could not be updated", str(error), parent=self.root
             )
             return
-        self.reload_database_state()
-        self.refresh_all_views()
+        self.apply_inventory_changes(
+            on_hand={product_id: OnHandProduct(product_id, quantity, item.queued_at)},
+            queue_changed=False,
+            catalog_changed=False,
+        )
         self.status_text.set(f"Updated on-hand stock for {product_id} to {quantity}.")
 
     def preview_assignment_shelf(self) -> None:
@@ -335,14 +351,14 @@ class AssignmentActions:
         self.refresh_address_contents()
         self.status_text.set(f"Loaded {address.slot_name}.")
 
-    def refresh_address_contents(self) -> None:
+    def refresh_address_contents(self, contents=None) -> None:
         if not hasattr(self.assignments, "contents_tree") or not hasattr(
             self.assignments, "address_status_text"
         ):
             return
         tree = self.assignments.contents_tree
-        tree.delete(*tree.get_children())
         if self.selected_address is None:
+            sync_tree_rows(tree, [])
             self.assignments.selected_slot_text.set("No address loaded")
             return
         address = self.selected_address
@@ -354,6 +370,7 @@ class AssignmentActions:
             address.slot_number,
         )
         if current_address is None or current_address.slot_id != address.slot_id:
+            sync_tree_rows(tree, [])
             self.selected_address = None
             self.assignments.selected_slot_text.set("No address loaded")
             self.assignments.address_status_text.set(
@@ -362,17 +379,17 @@ class AssignmentActions:
             return
         address = current_address
         self.selected_address = current_address
-        contents = self.database.get_slot_contents(address.slot_id)
+        if contents is None:
+            contents = self.database.get_slot_contents(address.slot_id)
         self.assignments.selected_slot_text.set(address.slot_name)
         self.assignments.address_status_text.set(
             f"Loaded {address.slot_name} · {len(contents)} product(s)"
         )
+        rows = []
         for product_id, product_name, placement in contents:
-            tree.insert(
-                "",
-                "end",
-                iid=f"saved::{product_id}",
-                values=(
+            rows.append((
+                f"saved::{product_id}",
+                (
                     product_id,
                     product_name,
                     placement.stock_qty
@@ -382,7 +399,9 @@ class AssignmentActions:
                     if placement.assigned_at
                     else "Unknown",
                 ),
-            )
+                (),
+            ))
+        sync_tree_rows(tree, rows)
 
     def assign_on_hand_to_address(self, whole_mode: bool = False) -> None:
         if self.selected_address is None:
@@ -454,10 +473,8 @@ class AssignmentActions:
             if hasattr(self.assignments, "revert_button"):
                 self.assignments.revert_button.configure(state="normal")
 
-        self.reload_database_state()
-        self.refresh_all_views()
-        if hasattr(self, "shelf_browser"):
-            self.shelf_browser.refresh()
+        moved_ids = affected_pids if is_whole else product_ids
+        self.reconcile_inventory_products(moved_ids, affected_slots=(address.slot_name,))
         if is_whole:
             self.status_text.set(
                 f"Assigned all {moved} on-hand product(s) to {address.slot_name}. Saved immediately."
@@ -497,10 +514,7 @@ class AssignmentActions:
         self.last_shift_transfer = None
         if hasattr(self.assignments, "revert_button"):
             self.assignments.revert_button.configure(state="disabled")
-        self.reload_database_state(reload_catalog=True)
-        self.refresh_all_views()
-        if hasattr(self, "shelf_browser"):
-            self.shelf_browser.refresh()
+        self.reconcile_inventory_products(item["product_id"] for item in products)
         self.status_text.set("Successfully reverted the latest shift transfer.")
 
     def dequeue_selected_on_hand(self) -> None:
@@ -526,8 +540,13 @@ class AssignmentActions:
                 "Could not dequeue products", str(error), parent=self.root
             )
             return
-        self.reload_database_state()
-        self.refresh_all_views()
+        self.apply_inventory_changes(
+            on_hand={pid: None for pid in product_ids},
+            returned={
+                pid: ReturnedQueueProduct(pid, self.on_hand_products[pid].stock_qty, returned_at)
+                for pid in product_ids
+            },
+        )
         self.status_text.set(
             f"Returned {moved} selected product(s) to the total queue with stock retained."
         )
@@ -557,10 +576,10 @@ class AssignmentActions:
         except Exception as error:
             messagebox.showerror("Transfer failed", str(error), parent=self.root)
             return
-        self.reload_database_state()
-        self.refresh_all_views()
-        if hasattr(self, "shelf_browser"):
-            self.shelf_browser.refresh()
+        self.reconcile_inventory_products(
+            (pid for pid, _name, _placement in contents),
+            affected_slots=(address.slot_name,),
+        )
         self.status_text.set(
             f"Moved {moved} product(s) from {address.slot_name} to on-hand."
         )
@@ -598,10 +617,7 @@ class AssignmentActions:
         except Exception as error:
             messagebox.showerror("Transfer failed", str(error), parent=self.root)
             return
-        self.reload_database_state()
-        self.refresh_all_views()
-        if hasattr(self, "shelf_browser"):
-            self.shelf_browser.refresh()
+        self.reconcile_inventory_products(product_ids, affected_slots=(address.slot_name,))
         self.status_text.set(
             f"Moved {moved} selected product(s) from {address.slot_name} to on-hand."
         )
@@ -645,7 +661,7 @@ class AssignmentActions:
             )
             self.transferred_stock.pop(product_id, None)
 
-        self.refresh_all_views()
+        self.refresh_working_changes()
         self.status_text.set(
             f"Staged {len(selected_items)} product(s) in {self.selected_slot}. Press Commit to save."
         )
@@ -790,7 +806,7 @@ class AssignmentActions:
             quantity,
             placement.assigned_at,
         )
-        self.refresh_all_views()
+        self.refresh_working_changes()
         self.status_text.set(
             f"Staged stock change for {product_id}: {current_text} → {quantity}. Press Commit to save."
         )
@@ -846,8 +862,13 @@ class AssignmentActions:
                 "Stock could not be updated", str(error), parent=self.root
             )
             return
-        self.reload_database_state()
-        self.refresh_all_views()
+        self.reconcile_inventory_products(
+            (product_id,),
+            affected_slots=(address.slot_name,),
+            queue_changed=False,
+            catalog_changed=False,
+            hand_changed=False,
+        )
         self.status_text.set(
             f"Updated {product_id} stock at {address.slot_name}: {current_text} → {quantity}."
         )
@@ -895,7 +916,7 @@ class AssignmentActions:
             )
             return
 
-        self.refresh_all_views()
+        self.refresh_working_changes()
         self.status_text.set(
             f"Transferred {transferred_count} product(s) to queue with stock retained. Select a new slot to assign."
         )

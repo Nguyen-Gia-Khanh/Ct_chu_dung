@@ -8,6 +8,7 @@ from tkinter import messagebox, ttk
 
 from .assignment_view import AssignmentView
 from .shelf_address_lookup import ShelfAddressLookup
+from .widgets import sync_tree_rows
 from mapper.persistence.database import Placement, WarehouseDatabase
 
 
@@ -157,20 +158,44 @@ class ShelfBrowserView(ttk.Frame):
             None,
             side=side,
         )
-        self.view.contents_tree.delete(*self.view.contents_tree.get_children())
+        if self.view.selected_slot:
+            self.select_slot(self.view.selected_slot)
+        else:
+            sync_tree_rows(self.view.contents_tree, [])
+
+    def refresh_cell(
+        self, slot_name: str, contents: list[tuple[str, str, Placement]]
+    ) -> None:
+        if self.current_shelf_id is None or slot_name not in self.view.slot_buttons:
+            return
+        self.current_contents = [
+            item for item in self.current_contents if item[2].slot_name != slot_name
+        ] + list(contents)
+        self.view.refresh_cell(slot_name, (len(contents), 0))
+        if self.view.selected_slot == slot_name:
+            self.select_slot(slot_name)
+
+    def refresh_loaded_contents(self) -> None:
+        if self.current_shelf_id is None:
+            return
+        contents = self.database.get_shelf_contents(self.current_shelf_id)
+        self.current_contents = contents
+        counts = Counter(item[2].slot_name for item in contents)
+        for slot_name in self.view.slot_buttons:
+            self.view.refresh_cell(slot_name, (counts.get(slot_name, 0), 0))
+        if self.view.selected_slot:
+            self.select_slot(self.view.selected_slot)
 
     def select_slot(self, slot_name: str) -> None:
         self.view.mark_selected(slot_name)
         tree = self.view.contents_tree
-        tree.delete(*tree.get_children())
+        rows = []
         for product_id, product_name, placement in self.current_contents:
             if placement.slot_name != slot_name:
                 continue
-            tree.insert(
-                "",
-                "end",
-                iid=f"saved::{product_id}",
-                values=(
+            rows.append((
+                f"saved::{product_id}",
+                (
                     product_id,
                     product_name,
                     placement.stock_qty
@@ -181,7 +206,9 @@ class ShelfBrowserView(ttk.Frame):
                     else "Unknown",
                     "Saved",
                 ),
-            )
+                (),
+            ))
+        sync_tree_rows(tree, rows)
 
 
 ShelfBrowserFrame = ShelfBrowserView

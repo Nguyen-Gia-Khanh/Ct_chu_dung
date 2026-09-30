@@ -7,6 +7,7 @@ shelf-structure edits still use the explicit Commit action on tab 1.
 
 from __future__ import annotations
 
+from collections import Counter
 import tkinter as tk
 from pathlib import Path
 from queue import Queue
@@ -77,10 +78,11 @@ class WarehouseMapperApp(
         self.last_shift_transfer: dict[str, Any] | None = None
         self.queue_shift_clicks: int = 0
         self.queue_shift_timer: str | None = None
+        self._preview_dirty = False
 
         self._configure_window()
         self._build_ui()
-        self.reload_database_state(reload_catalog=True)
+        self.reload_database_state(reload_catalog=True, reload_shelves=True)
         self.refresh_all_views()
         self.saved_editor_state = self._editor_state()
 
@@ -292,15 +294,18 @@ class WarehouseMapperApp(
             return
         self._last_content_tab = current_tab
         if current_tab == str(self.assignments):
+            self.refresh_address_contents()
+            self.refresh_assignment_shelf_preview()
             self.assignments.focus_search()
         elif hasattr(self, "primal_view") and current_tab == str(self.primal_view):
             self.primal_view.refresh()
             self.primal_view.focus_search()
         elif current_tab == str(self.shelf_browser):
-            if self.shelf_browser.current_shelf_id is None:
-                self.shelf_browser.refresh()
-            else:
-                self.shelf_browser.show_saved_shelf(self.shelf_browser.current_shelf_id)
+            if self.shelf_browser.current_shelf_id is not None:
+                self.shelf_browser.refresh_loaded_contents()
+            elif self._preview_dirty and self.preview_key:
+                self.render_shelf()
+                self._preview_dirty = False
         elif current_tab == str(self.cell_transfer):
             self.cell_transfer.refresh()
             self.cell_transfer.focus_search()
@@ -314,10 +319,40 @@ class WarehouseMapperApp(
         ):
             self.location_comparison.refresh()
 
-    def on_cell_transfer_changed(self, message: str) -> None:
-        """Synchronize every other tab after an immediate cell operation."""
-        self.reload_database_state()
-        self.refresh_all_views()
+    def refresh_assignment_shelf_preview(self) -> None:
+        if self.assignments.hand_view.get() != "shelf":
+            return
+        key = getattr(self.assignments, "_shelf_preview_key", None)
+        if key is None:
+            return
+        floor, side, shelf_code = key
+        shelf_id = self.database.get_shelf_id(floor, shelf_code, side=side)
+        if shelf_id is None:
+            self.assignments.clear_shelf_preview("That shelf changed. Select it again.")
+            return
+        contents = self.database.get_shelf_contents(shelf_id)
+        counts = Counter(item[2].slot_name for item in contents)
+        for slot_name in self.assignments.shelf_slot_names:
+            self.assignments.refresh_shelf_cell(slot_name, counts.get(slot_name, 0))
+
+    def on_cell_transfer_changed(self, message: str, updates, slot_names) -> None:
+        """Apply known location changes and refresh the two visible cells."""
+        product_ids = set()
+        for update in updates:
+            product_ids.add(update.product_id)
+        for slot_name in slot_names:
+            address = self.database.get_slot_by_name(slot_name)
+            if address is not None:
+                product_ids.update(
+                    pid for pid, _name, _placement
+                    in self.database.get_slot_contents(address.slot_id)
+                )
+        self.reconcile_inventory_products(
+            product_ids,
+            affected_slots=slot_names,
+            queue_changed=False,
+            hand_changed=False,
+        )
         self.status_text.set(message)
 
     def on_close(self) -> None:

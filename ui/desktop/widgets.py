@@ -6,6 +6,45 @@ import tkinter as tk
 from tkinter import ttk
 
 
+def shelf_cell_visual(
+    label: str,
+    count: int,
+    *,
+    selected: bool = False,
+    staged: bool = False,
+    highlight_selected: bool = False,
+    font_size: int = 9,
+) -> dict[str, object]:
+    """One cell's appearance, shared by initial renders and content updates."""
+    background = "#fff2b2" if staged else "#d9ead3" if count else "#f7f7f7"
+    if selected and highlight_selected:
+        background = "#cfe8ff"
+    return {
+        "text": f"{label}\n{count} product{'s' if count != 1 else ''}",
+        "background": background,
+        "borderwidth": 3 if selected else 1,
+        "font": ("Segoe UI", font_size, "bold" if selected else "normal"),
+    }
+
+
+def sync_tree_rows(tree: ttk.Treeview, rows: list[tuple[str, tuple, tuple]]) -> None:
+    """Reconcile a filtered Treeview while retaining unchanged row widgets."""
+    wanted = {item_id for item_id, _values, _tags in rows}
+    for item_id in tree.get_children():
+        if item_id not in wanted:
+            tree.delete(item_id)
+    for index, (item_id, values, tags) in enumerate(rows):
+        if tree.exists(item_id):
+            if tuple(tree.item(item_id, "values")) != tuple(str(value) for value in values):
+                tree.item(item_id, values=values)
+            if tuple(tree.item(item_id, "tags")) != tags:
+                tree.item(item_id, tags=tags)
+            if tree.index(item_id) != index:
+                tree.move(item_id, "", index)
+        else:
+            tree.insert("", index, iid=item_id, values=values, tags=tags)
+
+
 class ScrollableFrame(ttk.Frame):
     _WHEEL_PIXELS = 72
     _MAX_ANIMATION_STEP = 18

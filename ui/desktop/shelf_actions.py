@@ -326,7 +326,7 @@ class ShelfActions:
         self.staged_assignments.clear()
         self.pending_unassignments.clear()
         self.saved_editor_state = self._editor_state()
-        self.reload_database_state()
+        self.reload_database_state(reload_shelves=True)
         self.refresh_all_views()
         if hasattr(self, "shelf_browser"):
             self.shelf_browser.show_saved_shelf(shelf_id)

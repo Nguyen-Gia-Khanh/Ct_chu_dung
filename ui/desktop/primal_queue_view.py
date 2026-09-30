@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from collections import Counter
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from mapper.core.common import MAX_VISIBLE_PRODUCTS, clean_location_segment, make_slot_name, normalize_search
+from mapper.core.common import MAX_VISIBLE_PRODUCTS, make_slot_name, normalize_search
 from mapper.persistence.database import Placement, WarehouseDatabase
 from .shelf_address_lookup import ShelfAddressLookup
-from .widgets import ScrollableFrame
+from .widgets import ScrollableFrame, shelf_cell_visual, sync_tree_rows
 from utils.barcode_scanner import (
     BarcodeScanner,
     bind_auto_highlight,
@@ -48,6 +47,8 @@ class PrimalQueueView(ttk.Frame):
         self.current_contents: list[tuple[str, str, Placement]] = []
         self.selected_slot_name: str | None = None
         self.slot_buttons: dict[str, tk.Button] = {}
+        self.slot_labels: dict[str, str] = {}
+        self.rendered_shelf_key: tuple | None = None
 
         self.search_after_id: str | None = None
 
@@ -323,11 +324,13 @@ class PrimalQueueView(ttk.Frame):
         self.returned_queue_products = self.database.get_returned_queue_products()
 
         self.shelves = self.database.list_shelves()
-        self.shelf_choices = {
+        choices = {
             f"Floor {floor} — Side {side} — Shelf {shelf_code}": shelf_id
             for shelf_id, floor, side, shelf_code in self.shelves
         }
-        self.shelf_selector.configure(values=list(self.shelf_choices))
+        if choices != self.shelf_choices:
+            self.shelf_selector.configure(values=list(choices))
+        self.shelf_choices = choices
 
         if self.current_shelf_id is not None:
             if self.current_shelf_id in self.shelf_choices.values():
@@ -343,14 +346,14 @@ class PrimalQueueView(ttk.Frame):
         else:
             self._render_empty_shelf("Choose a shelf above or search a product on the left.")
 
-        self.refresh_results()
+        self.refresh_results(navigate=False)
 
     def _schedule_search(self, *_args: object) -> None:
         if self.search_after_id:
             self.after_cancel(self.search_after_id)
         self.search_after_id = self.after(180, self.refresh_results)
 
-    def refresh_results(self) -> None:
+    def refresh_results(self, *, navigate: bool = True) -> None:
         if self.search_after_id:
             self.after_cancel(self.search_after_id)
             self.search_after_id = None
@@ -372,7 +375,7 @@ class PrimalQueueView(ttk.Frame):
             )
         )
 
-        self.primal_tree.delete(*self.primal_tree.get_children())
+        primal_rows = []
         for product_id in primal_matches[:MAX_VISIBLE_PRODUCTS]:
             name = self.products[product_id]
             if product_id in self.placements:
@@ -395,13 +398,8 @@ class PrimalQueueView(ttk.Frame):
                 qty = ""
                 tag = "unassigned"
 
-            self.primal_tree.insert(
-                "",
-                "end",
-                iid=f"primal::{product_id}",
-                values=(product_id, name, loc, qty),
-                tags=(tag,),
-            )
+            primal_rows.append((f"primal::{product_id}", (product_id, name, loc, qty), (tag,)))
+        sync_tree_rows(self.primal_tree, primal_rows)
 
         shown_primal = min(len(primal_matches), MAX_VISIBLE_PRODUCTS)
         self.primal_count_text.set(
@@ -421,14 +419,13 @@ class PrimalQueueView(ttk.Frame):
             )
         )
 
-        self.catalog_tree.delete(*self.catalog_tree.get_children())
+        catalog_rows = []
         for product_id, product_name, shortened_name in catalog_matches[:MAX_VISIBLE_PRODUCTS]:
-            self.catalog_tree.insert(
-                "",
-                "end",
-                iid=f"catalog::{product_id}",
-                values=(product_id, product_name, shortened_name),
-            )
+            catalog_rows.append((
+                f"catalog::{product_id}",
+                (product_id, product_name, shortened_name), (),
+            ))
+        sync_tree_rows(self.catalog_tree, catalog_rows)
 
         shown_cat = min(len(catalog_matches), MAX_VISIBLE_PRODUCTS)
         self.catalog_count_text.set(
@@ -436,9 +433,9 @@ class PrimalQueueView(ttk.Frame):
         )
 
         # 3. Status text & automatic shelf navigation for exact product ID query
-        self._update_search_status(raw_query)
+        self._update_search_status(raw_query, navigate=navigate)
 
-    def _update_search_status(self, raw_query: str) -> None:
+    def _update_search_status(self, raw_query: str, *, navigate: bool = True) -> None:
         if not raw_query:
             self.search_status_text.set("Type or scan a product ID to check if it is a hot seller.")
             return
@@ -455,7 +452,8 @@ class PrimalQueueView(ttk.Frame):
                 self.search_status_text.set(
                     f"✓ HOT SELLER (in Primal Queue): {exact_id} — {name} · Located at {placement.slot_name}{qty}"
                 )
-                self._highlight_product_location(exact_id)
+                if navigate:
+                    self._highlight_product_location(exact_id)
             elif exact_id in self.on_hand_products:
                 item = self.on_hand_products[exact_id]
                 qty = f" (Stock: {item.stock_qty})" if getattr(item, "stock_qty", None) is not None else ""
@@ -568,25 +566,34 @@ class PrimalQueueView(ttk.Frame):
             messagebox.showerror("Error loading shelf", str(error), parent=self)
             return
 
+        same_layout = self.rendered_shelf_key == (floor, side, shelf_code, tuple(layout))
         self.current_shelf_id = shelf_id
         self.current_layout = layout
         self.current_contents = contents
-        self.selected_slot_name = None
+        if not same_layout:
+            self.selected_slot_name = None
         self.shelf_address_lookup.set_address(floor, side, shelf_code)
         for label, choice_id in self.shelf_choices.items():
             if choice_id == shelf_id:
                 self.shelf_selector.set(label)
                 break
 
-        self._render_shelf(floor, side, shelf_code, layout, contents)
+        if same_layout:
+            for slot_name, button in self.slot_buttons.items():
+                button.configure(**self._cell_visual(slot_name))
+            self._refresh_slot_contents()
+        else:
+            self._render_shelf(floor, side, shelf_code, layout, contents)
 
-        if select_slot:
+        if select_slot and select_slot != self.selected_slot_name:
             self.select_slot(select_slot)
 
     def _render_empty_shelf(self, message: str) -> None:
         for child in self.shelf_scroll.inner.winfo_children():
             child.destroy()
         self.slot_buttons.clear()
+        self.slot_labels.clear()
+        self.rendered_shelf_key = None
         ttk.Label(
             self.shelf_scroll.inner,
             text=message,
@@ -605,13 +612,13 @@ class PrimalQueueView(ttk.Frame):
         layout: list[int],
         contents: list[tuple[str, str, Placement]],
     ) -> None:
+        self.rendered_shelf_key = (floor, side, shelf_code, tuple(layout))
         for child in self.shelf_scroll.inner.winfo_children():
             child.destroy()
         self.slot_buttons.clear()
+        self.slot_labels.clear()
 
-        counts = Counter(placement.slot_name for _id, _name, placement in contents)
         row_width = max(340, max(layout, default=1) * 82)
-        shelf_label = clean_location_segment(shelf_code)
 
         ttk.Label(
             self.shelf_scroll.inner,
@@ -653,17 +660,14 @@ class PrimalQueueView(ttk.Frame):
                     slot_number,
                     side=side,
                 )
-                product_count = counts.get(slot_name, 0)
+                self.slot_labels[slot_name] = f"R{row_number}-C{slot_number:02d}"
                 btn = tk.Button(
                     row_frame,
-                    text=f"R{row_number}-C{slot_number:02d}\n{product_count} product{'s' if product_count != 1 else ''}",
+                    **self._cell_visual(slot_name),
                     command=lambda s=slot_name: self.select_slot(s),
-                    background="#d9ead3" if product_count else "#f7f7f7",
                     activebackground="#cfe8ff",
                     relief="solid",
-                    borderwidth=1,
                     highlightthickness=0,
-                    font=("Segoe UI", 9),
                 )
                 btn.grid(
                     row=0,
@@ -682,6 +686,31 @@ class PrimalQueueView(ttk.Frame):
         )
         self.shelf_scroll.bind_wheel_events()
 
+    def _cell_visual(self, slot_name: str) -> dict[str, object]:
+        count = sum(
+            placement.slot_name == slot_name
+            for _pid, _name, placement in self.current_contents
+        )
+        return shelf_cell_visual(
+            self.slot_labels[slot_name], count,
+            selected=slot_name == self.selected_slot_name,
+            highlight_selected=True,
+        )
+
+    def refresh_cell(
+        self, slot_name: str, contents: list[tuple[str, str, Placement]] | None = None
+    ) -> None:
+        button = self.slot_buttons.get(slot_name)
+        if button is None:
+            return
+        if contents is not None:
+            self.current_contents = [
+                item for item in self.current_contents if item[2].slot_name != slot_name
+            ] + list(contents)
+        button.configure(**self._cell_visual(slot_name))
+        if slot_name == self.selected_slot_name:
+            self._refresh_slot_contents()
+
     def select_slot(self, slot_name: str) -> None:
         old_name = self.selected_slot_name
         self.selected_slot_name = slot_name
@@ -689,19 +718,7 @@ class PrimalQueueView(ttk.Frame):
         for name in (old_name, slot_name):
             btn = self.slot_buttons.get(name or "")
             if btn is not None:
-                is_selected = (name == slot_name)
-                btn.configure(
-                    borderwidth=3 if is_selected else 1,
-                    font=("Segoe UI", 9, "bold" if is_selected else "normal"),
-                )
-                if not is_selected:
-                    slot_count = sum(
-                        placement.slot_name == name
-                        for _id, _name, placement in self.current_contents
-                    )
-                    btn.configure(background="#d9ead3" if slot_count else "#f7f7f7")
-                else:
-                    btn.configure(background="#cfe8ff")
+                btn.configure(**self._cell_visual(name))
 
         selected_btn = self.slot_buttons.get(slot_name)
         if selected_btn is not None:
@@ -735,8 +752,8 @@ class PrimalQueueView(ttk.Frame):
             pass
 
     def _refresh_slot_contents(self) -> None:
-        self.contents_tree.delete(*self.contents_tree.get_children())
         if self.selected_slot_name is None:
+            sync_tree_rows(self.contents_tree, [])
             self.slot_header_text.set("No cell selected")
             return
 
@@ -748,17 +765,21 @@ class PrimalQueueView(ttk.Frame):
         self.slot_header_text.set(
             f"{self.selected_slot_name} — {len(slot_products)} product{'s' if len(slot_products) != 1 else ''}"
         )
-        for p_id, p_name, stock_qty in slot_products:
-            self.contents_tree.insert(
-                "",
-                "end",
-                iid=f"content::{p_id}",
-                values=(
-                    p_id,
-                    p_name,
-                    str(stock_qty) if stock_qty is not None else "Unknown",
-                ),
-            )
+        sync_tree_rows(
+            self.contents_tree,
+            [
+                (
+                    f"content::{p_id}",
+                    (
+                        p_id,
+                        p_name,
+                        str(stock_qty) if stock_qty is not None else "Unknown",
+                    ),
+                    (),
+                )
+                for p_id, p_name, stock_qty in slot_products
+            ],
+        )
 
     def on_barcode_scan(self, barcode: str) -> None:
         self._fill_search_bar(format_product_id(barcode))

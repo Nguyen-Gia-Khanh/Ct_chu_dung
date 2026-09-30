@@ -13,6 +13,80 @@ from .models import (
 )
 
 class InventoryOperations:
+    def get_product_inventory_states(self, product_ids) -> dict[str, dict]:
+        """Read only specified products after a write, including exception locations."""
+        ids = tuple(dict.fromkeys(product_ids))
+        states = {
+            pid: {"product": None, "placement": None, "on_hand": None, "returned": None}
+            for pid in ids
+        }
+        if not ids:
+            return states
+        with closing(self.connect()) as connection:
+            for offset in range(0, len(ids), 400):
+                batch = ids[offset:offset + 400]
+                marks = ",".join("?" for _ in batch)
+                for row in connection.execute(
+                    f"SELECT product_id, product_name, shortened_name FROM products WHERE product_id IN ({marks})",
+                    batch,
+                ):
+                    states[row["product_id"]]["product"] = (
+                        row["product_name"], row["shortened_name"]
+                    )
+                placement_rows = connection.execute(
+                    f"""SELECT placements.product_id, slots.slot_name,
+                               placements.stock_qty, placements.assigned_at
+                        FROM placements JOIN slots ON slots.slot_id = placements.slot_id
+                        WHERE placements.product_id IN ({marks})""",
+                    batch,
+                ).fetchall()
+                exception_rows = connection.execute(
+                    f"""SELECT exception_placements.product_id, slots.slot_name,
+                               exception_placements.stock_qty, exception_placements.assigned_at
+                        FROM exception_placements
+                        JOIN slots ON slots.slot_id = exception_placements.slot_id
+                        WHERE exception_placements.product_id IN ({marks})
+                        ORDER BY exception_placements.id""",
+                    batch,
+                ).fetchall()
+                placement_info: dict[str, dict] = {}
+                for is_exception, rows in ((False, placement_rows), (True, exception_rows)):
+                    for row in rows:
+                        pid = row["product_id"]
+                        info = placement_info.get(pid)
+                        if info is None:
+                            info = {"slots": [], "stock_qty": row["stock_qty"],
+                                    "assigned_at": row["assigned_at"]}
+                            placement_info[pid] = info
+                        else:
+                            if is_exception and row["stock_qty"] is not None:
+                                info["stock_qty"] = (info["stock_qty"] or 0) + row["stock_qty"]
+                            if row["assigned_at"] and (
+                                not info["assigned_at"] or row["assigned_at"] > info["assigned_at"]
+                            ):
+                                info["assigned_at"] = row["assigned_at"]
+                        if row["slot_name"] not in info["slots"]:
+                            info["slots"].append(row["slot_name"])
+                for pid, info in placement_info.items():
+                    states[pid]["placement"] = Placement(
+                        ", ".join(info["slots"]), info["stock_qty"], info["assigned_at"]
+                    )
+                for row in connection.execute(
+                    f"SELECT product_id, stock_qty, queued_at FROM on_hand_queue WHERE product_id IN ({marks})",
+                    batch,
+                ):
+                    pid = row["product_id"]
+                    states[pid]["on_hand"] = OnHandProduct(pid, row["stock_qty"], row["queued_at"])
+                for row in connection.execute(
+                    f"SELECT product_id, stock_qty, returned_at FROM returned_queue_products WHERE product_id IN ({marks})",
+                    batch,
+                ):
+                    pid = row["product_id"]
+                    states[pid]["returned"] = ReturnedQueueProduct(
+                        pid, row["stock_qty"], row["returned_at"]
+                    )
+        return states
+
     def get_placements(self) -> dict[str, str]:
         return {
             product_id: placement.slot_name

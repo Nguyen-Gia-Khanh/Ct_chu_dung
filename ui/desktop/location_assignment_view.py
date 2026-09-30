@@ -429,6 +429,7 @@ class LocationAssignmentView(ttk.Frame):
         )
         self.shelf_scroll.grid(row=1, column=0, sticky="nsew")
         self.shelf_slot_buttons: dict[tuple[int, int], tk.Button] = {}
+        self.shelf_slot_names: dict[str, tuple[int, int]] = {}
         self._selected_shelf_cell: tuple[int, int] | None = None
         body = ttk.Frame(queue_page)
         body.grid(row=0, column=0, sticky="nsew")
@@ -555,6 +556,7 @@ class LocationAssignmentView(ttk.Frame):
         for child in self.shelf_scroll.inner.winfo_children():
             child.destroy()
         self.shelf_slot_buttons.clear()
+        self.shelf_slot_names.clear()
         self.shelf_cell_colors = {}
         self._selected_shelf_cell = None
         self._shelf_preview_key = None
@@ -621,6 +623,7 @@ class LocationAssignmentView(ttk.Frame):
                 )
                 button.grid(row=0, column=display_column, sticky="nsew", padx=1, pady=1)
                 self.shelf_slot_buttons[(row_number, cell)] = button
+                self.shelf_slot_names[slot_name] = (row_number, cell)
                 self.shelf_cell_colors[(row_number, cell)] = color
         self.shelf_scroll.inner.update_idletasks()
         self.shelf_scroll.canvas.configure(
@@ -633,6 +636,23 @@ class LocationAssignmentView(ttk.Frame):
             self.highlight_shelf_cell(int(self.row_var.get()), int(self.cell_var.get()))
         except ValueError:
             pass
+
+    def refresh_shelf_cell(self, slot_name: str, count: int) -> None:
+        cell = self.shelf_slot_names.get(slot_name)
+        if cell is None:
+            return
+        color = "#d9ead3" if count else "#f7f7f7"
+        self.shelf_cell_colors[cell] = color
+        selected = cell == self._selected_shelf_cell
+        button = self.shelf_slot_buttons[cell]
+        count_label = str(count)
+        if "product" in button.cget("text").split("\n", 1)[-1]:
+            count_label += f" product{'s' if count != 1 else ''}"
+        button.configure(
+            text=f"{cell[0]}-{cell[1]:02d}\n{count_label}",
+            background="#cfe8ff" if selected else color,
+            borderwidth=2 if selected else 1,
+        )
 
     def highlight_shelf_cell(self, row: int, col: int) -> None:
         previous = self._selected_shelf_cell
