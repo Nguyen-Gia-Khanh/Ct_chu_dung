@@ -65,7 +65,7 @@ def location_parts(value: object) -> tuple[str, ...]:
     text = str(value).strip()
     return tuple(
         dict.fromkeys(
-            part.strip() for part in re.split(r"[,;\n]+", text) if part.strip()
+            part.strip() for part in re.split(r"[,;|\n]+", text) if part.strip()
         )
     )
 
