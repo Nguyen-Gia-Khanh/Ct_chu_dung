@@ -74,6 +74,14 @@ class MultiLocationTests(WorkspaceTestCase):
             ("A", "B"),
         )
 
+    def test_pipe_delimited_web_locations_match_local_locations(self) -> None:
+        differences, missing = compare_locations(
+            {"50605-KVR-600": ["L1-4D9-3", "L1-4D9-4"]},
+            {"50605-KVR-600": "L1-4D9-3|L1-4D9-4"},
+        )
+        self.assertEqual(differences, [])
+        self.assertEqual(missing, [])
+
 
 class WebSelectionTests(unittest.TestCase):
     def test_updates_normalize_distinct_location_sets(self) -> None:
