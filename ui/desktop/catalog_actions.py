@@ -14,6 +14,17 @@ from .widgets import sync_tree_rows
 
 
 class CatalogActions:
+    def is_queue_product_available(self, product_id: str) -> bool:
+        """Gray queue rows remain searchable but cannot be transferred again."""
+        return (
+            product_id not in self.staged_assignments
+            and product_id not in getattr(self, "on_hand_products", {})
+            and (
+                product_id not in self.committed_locations
+                or product_id in self.pending_unassignments
+            )
+        )
+
     def activate_catalog_product(self, event) -> str | None:
         tree = self.assignments.catalog_tree
         item_id = tree.identify_row(event.y)
@@ -133,27 +144,12 @@ class CatalogActions:
         records = {
             product_id: self.catalog_products[product_id] for product_id in product_ids
         }
-        try:
-            self.database.import_products(records)
-        except Exception as error:
-            messagebox.showerror("Transfer failed", str(error), parent=self.root)
-            return
-
         if hasattr(self.assignments, "on_hand_tree"):
             staged_stock: dict[str, int | None] = {}
             for product_id in product_ids:
-                staged = self.staged_assignments.pop(product_id, None)
+                staged = self.staged_assignments.get(product_id)
                 if staged is not None:
                     staged_stock[product_id] = staged.stock_qty
-                    if staged.stock_qty is not None:
-                        self.transferred_stock[product_id] = staged.stock_qty
-                self.pending_unassignments.discard(product_id)
-
-            # Sync transferred_stock for any products currently placed on a shelf
-            for product_id in product_ids:
-                saved = self.committed_placements.get(product_id)
-                if saved is not None and saved.stock_qty is not None:
-                    self.transferred_stock[product_id] = saved.stock_qty
 
             returned_at = datetime.now().astimezone().isoformat(timespec="seconds")
             try:
@@ -161,10 +157,16 @@ class CatalogActions:
                     product_ids,
                     returned_at,
                     extra_stock=staged_stock,
+                    catalog_records=records,
                 )
             except Exception as error:
                 messagebox.showerror("Transfer failed", str(error), parent=self.root)
                 return
+
+            for product_id in product_ids:
+                self.staged_assignments.pop(product_id, None)
+                self.pending_unassignments.discard(product_id)
+                self.transferred_stock.pop(product_id, None)
 
             new_products = sum(
                 product_id not in existing_products for product_id in product_ids
@@ -196,6 +198,12 @@ class CatalogActions:
             self.status_text.set(
                 f"Catalog transfer: {', '.join(summary) if summary else 'Done'}. Product(s) ready in total queue."
             )
+            return
+
+        try:
+            self.database.import_products(records)
+        except Exception as error:
+            messagebox.showerror("Transfer failed", str(error), parent=self.root)
             return
 
         new_products = 0
@@ -321,23 +329,12 @@ class CatalogActions:
             self._reset_queue_shift_clicks()
         raw_query = self.assignments.search_var.get().strip()
         query = normalize_search(raw_query)
-        committed = set(self.committed_locations)
-        staged = set(self.staged_assignments)
-        on_hand = set(getattr(self, "on_hand_products", {}))
+        persistent_queue = hasattr(self.assignments, "on_hand_tree")
         returned_queue = getattr(self, "returned_queue_products", {})
 
         available = []
         for product_id, product_name in self.products.items():
-            is_available = (
-                (
-                    product_id not in committed
-                    or product_id in self.pending_unassignments
-                    or product_id in self.transferred_stock
-                )
-                and product_id not in staged
-                and product_id not in on_hand
-            )
-            if not is_available:
+            if not persistent_queue and not self.is_queue_product_available(product_id):
                 continue
             if query and query not in self.product_search[product_id]:
                 continue
@@ -352,7 +349,7 @@ class CatalogActions:
 
         rows = []
         for product_id, product_name in available[:MAX_VISIBLE_PRODUCTS]:
-            if hasattr(self.assignments, "on_hand_tree"):
+            if persistent_queue:
                 returned = returned_queue.get(product_id)
                 if returned is None:
                     qty_text = ""
@@ -362,6 +359,18 @@ class CatalogActions:
                     qty_text = str(returned.stock_qty)
                 values = (product_id, product_name, qty_text)
                 tags = ("returned",) if returned is not None else ()
+                if not self.is_queue_product_available(product_id):
+                    item = (
+                        self.staged_assignments.get(product_id)
+                        or getattr(self, "on_hand_products", {}).get(product_id)
+                        or self.committed_placements.get(product_id)
+                    )
+                    qty_text = (
+                        str(item.stock_qty) if item and item.stock_qty is not None
+                        else "Unknown"
+                    )
+                    values = (product_id, product_name, qty_text)
+                    tags = ("assigned",)
             else:
                 stored_qty = self.transferred_stock.get(product_id)
                 tags = ("transferred",) if product_id in self.transferred_stock else ()
@@ -376,8 +385,10 @@ class CatalogActions:
             if len(available) > MAX_VISIBLE_PRODUCTS
             else ""
         )
+        ready_count = sum(self.is_queue_product_available(pid) for pid, _name in available)
         self.assignments.queue_count_text.set(
-            f"{len(available):,} matching · showing {shown:,}{suffix}"
+            f"{len(available):,} matching · {ready_count:,} ready · showing {shown:,}{suffix}"
+            if persistent_queue else f"{len(available):,} matching · showing {shown:,}{suffix}"
         )
 
     def refresh_catalog(self) -> None:

@@ -91,7 +91,8 @@ with Tab 4; see the [source guide](instruction.md#tab-1-shelf-designer).
 
 ### Assign products by address
 
-1. On tab 2, search the total unassigned queue.
+1. On tab 2, search the product queue. Products already on-hand or assigned stay
+   visible in gray; only ready rows can move through the queue transfer buttons.
 2. Select one or more products and press **Move selected → on-hand**.
 3. Enter each product's stock quantity in the dialog and confirm the move.
    The products appear in the middle pane's **On-hand queue** view. This batch
@@ -115,7 +116,7 @@ is held.
 | Button/source | Normal click | Hold Shift and click |
 | --- | --- | --- |
 | Full catalog transfer | Selected products → total queue, retaining stock when pulled from a shelf or on-hand. | One selected product → loaded cell, with stock **999**. |
-| Total queue transfer | Selected products → on-hand, with manually entered quantities. | All visible queue search results → loaded cell, with stock **999**. |
+| Total queue transfer | Selected ready products → on-hand, with manually entered quantities. | All visible ready queue search results → loaded cell, with stock **999**. |
 | On-hand assignment | Selected on-hand rows → loaded cell, retaining quantities. | All on-hand products → loaded cell, retaining quantities. |
 
 The queue shortcut requires IDs with the same first five characters after
@@ -132,10 +133,14 @@ when the app closes.
 
 ### Return products and modify stock
 
-Ctrl-click one or more on-hand rows and use **Dequeue selected → total queue**
-to return only that subset without assigning it. Returned products keep their
-stock in the total queue and appear first in bold yellow; moving them to on-hand
-again prefills that stock and removes the highlight. In the loaded address,
+Ctrl-click one or more on-hand rows and use **Dequeue selected → source**
+to return only that subset without assigning it. Products brought in from the
+catalog return to the catalog; shelf products return to their recorded source
+address with the original stock and shelf-added time. Products from the queue
+return there with stock retained and appear first in bold yellow; moving them
+to on-hand again prefills that stock. Sources survive restarting the app.
+Transfers made before source tracking was added return to the total queue.
+In the loaded address,
 Ctrl-click one or more rows and use **Selected product(s) → on-hand** for a
 partial transfer. **Shelf → on-hand (all)** remains available when the complete
 address must be emptied. These actions preserve each product's recorded stock

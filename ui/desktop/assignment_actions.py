@@ -10,7 +10,6 @@ from mapper.core.common import clean_location_segment
 from mapper.persistence.database import (
     OnHandProduct,
     Placement,
-    ReturnedQueueProduct,
     validate_stock_quantity,
 )
 from .widgets import sync_tree_rows
@@ -50,11 +49,12 @@ class AssignmentActions:
                 for item_id in selected_items
                 if item_id.startswith("product::")
                 and item_id.removeprefix("product::") in self.products
+                and self.is_queue_product_available(item_id.removeprefix("product::"))
             ]
             if not product_ids:
                 messagebox.showinfo(
                     "Choose products",
-                    "Select one or more products from the total queue first.",
+                    "Select one or more ready products from the total queue. Gray products are already on-hand or assigned.",
                     parent=self.root,
                 )
                 return
@@ -112,6 +112,7 @@ class AssignmentActions:
             item_id.removeprefix("product::")
             for item_id in queue_items
             if item_id.startswith("product::")
+            and self.is_queue_product_available(item_id.removeprefix("product::"))
         ]
         if not queue_pids:
             if hasattr(self.assignments, "search_location_text"):
@@ -534,21 +535,17 @@ class AssignmentActions:
             return
         returned_at = datetime.now().astimezone().isoformat(timespec="seconds")
         try:
-            moved = self.database.dequeue_on_hand(product_ids, returned_at)
+            moved = self.database.dequeue_on_hand(product_ids, returned_at, restore_origin=True)
         except Exception as error:
             messagebox.showerror(
                 "Could not dequeue products", str(error), parent=self.root
             )
             return
-        self.apply_inventory_changes(
-            on_hand={pid: None for pid in product_ids},
-            returned={
-                pid: ReturnedQueueProduct(pid, self.on_hand_products[pid].stock_qty, returned_at)
-                for pid in product_ids
-            },
-        )
+        for pid in product_ids:
+            self.transferred_stock.pop(pid, None)
+        self.reconcile_inventory_products(product_ids)
         self.status_text.set(
-            f"Returned {moved} selected product(s) to the total queue with stock retained."
+            f"Returned {moved} selected product(s) to their source. Saved immediately."
         )
 
     def move_address_to_on_hand(self) -> None:
