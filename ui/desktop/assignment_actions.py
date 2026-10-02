@@ -16,6 +16,48 @@ from .widgets import sync_tree_rows
 
 
 class AssignmentActions:
+    def assign_product_records_to_address(self, records) -> None:
+        """Normal queue/catalog assignment skips the on-hand holding area."""
+        if self.selected_address is None:
+            messagebox.showinfo(
+                "Load an address", "Load the destination shelf address first.", parent=self.root,
+            )
+            return
+        address = self.selected_address
+        initial_quantities = {}
+        for pid in records:
+            item = (
+                self.staged_assignments.get(pid)
+                or getattr(self, "on_hand_products", {}).get(pid)
+                or self.committed_placements.get(pid)
+                or getattr(self, "returned_queue_products", {}).get(pid)
+            )
+            if item is not None:
+                initial_quantities[pid] = item.stock_qty
+        dialog = StockQuantityDialog(
+            self.root, address.slot_name,
+            [(pid, name) for pid, (name, _short_name) in records.items()],
+            initial_quantities=initial_quantities,
+            footer_text="Assignment is saved immediately to the loaded shelf address.",
+        )
+        self.root.wait_window(dialog)
+        if dialog.result is None:
+            return
+        assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        try:
+            moved = self.database.assign_catalog_direct_to_slot(
+                address.slot_id, assigned_at, records, quantities=dialog.result,
+            )
+        except Exception as error:
+            messagebox.showerror("Assignment failed", str(error), parent=self.root)
+            return
+        for pid in records:
+            self.staged_assignments.pop(pid, None)
+            self.pending_unassignments.discard(pid)
+            self.transferred_stock.pop(pid, None)
+        self.reconcile_inventory_products(records, affected_slots=(address.slot_name,))
+        self.status_text.set(f"Assigned {moved} product(s) to {address.slot_name}. Saved immediately.")
+
     def _start_queue_shift_timer(self) -> None:
         if self.queue_shift_timer is not None:
             try:
@@ -39,7 +81,7 @@ class AssignmentActions:
         if not enabled:
             self._reset_queue_shift_clicks()
 
-    def move_selected_to_on_hand(self, to_shelf: bool = False) -> None:
+    def assign_queue_selection_to_address(self, to_shelf: bool = False) -> None:
         is_to_shelf = to_shelf or getattr(self.assignments, "whole_mode", False)
         if not is_to_shelf:
             self._reset_queue_shift_clicks()
@@ -59,42 +101,10 @@ class AssignmentActions:
                 )
                 return
 
-            dialog = StockQuantityDialog(
-                self.root,
-                "On-hand queue",
-                [(product_id, self.products[product_id]) for product_id in product_ids],
-                initial_quantities={
-                    product_id: self.returned_queue_products[product_id].stock_qty
-                    for product_id in product_ids
-                    if product_id in self.returned_queue_products
-                },
-                title_text="Move products to on-hand",
-                destination_label="Persistent on-hand batch",
-                button_text="Move to on-hand",
-                footer_text="This move is saved to SQLite immediately.",
-            )
-            self.root.wait_window(dialog)
-            if dialog.result is None:
-                return
-
-            queued_at = datetime.now().astimezone().isoformat(timespec="seconds")
-            try:
-                self.database.add_to_on_hand(dialog.result, queued_at)
-            except Exception as error:
-                messagebox.showerror(
-                    "Could not update on-hand", str(error), parent=self.root
-                )
-                return
-            self.apply_inventory_changes(
-                on_hand={
-                    pid: OnHandProduct(pid, quantity, queued_at)
-                    for pid, quantity in dialog.result.items()
-                },
-                returned={pid: None for pid in dialog.result},
-            )
-            self.status_text.set(
-                f"Moved {len(dialog.result)} product(s) to on-hand. Saved immediately."
-            )
+            self.assign_product_records_to_address({
+                pid: (self.products[pid], self.product_shortened_names.get(pid, ""))
+                for pid in product_ids
+            })
             return
 
         # Whole mode: Transfer total queue straight to shelf with stock 999

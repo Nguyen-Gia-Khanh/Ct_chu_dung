@@ -11,9 +11,9 @@ tab to its view, action handlers, persistence methods, and verification steps.
 1. [**Shelf Designer**](#tab-1-shelf-designer) — import CSV files, create or edit a shelf, and commit its
    structure. Rows count upward from the ground and may contain different cell
    counts.
-2. [**Assign Locations**](#tab-2-assign-locations) — search the total queue and full catalog, prepare a
-   persistent on-hand batch, enter an exact floor/side/shelf/row/cell address,
-   and move the batch into that address.
+2. [**Assign Locations**](#tab-2-assign-locations) — assign from the total queue or full catalog
+   directly to an exact shelf address; hold removed shelf products on-hand
+   for reassignment or return to their original list.
 3. [**Primal Queue / Shelves**](#tab-3-primal-queue--shelves) — search working products and the full catalog,
    inspect queue/on-hand/assigned state and stock, and navigate to saved shelves.
 4. [**Browse Shelves**](#tab-4-browse-shelves) — choose a committed shelf, view its 2D front layout, and
@@ -94,30 +94,30 @@ with Tab 4; see the [source guide](instruction.md#tab-1-shelf-designer).
 1. On tab 2, search the product queue. Unassigned matches appear first; assigned
    matches remain visible in gray below them. Gray applies only to this queue.
    Only ready rows can move through the queue transfer buttons.
-2. Select one or more products and press **Move selected → on-hand**.
-3. Enter each product's stock quantity in the dialog and confirm the move.
-   The products appear in the middle pane's **On-hand queue** view. This batch
-   is written to SQLite immediately and survives closing or restarting the app.
-   Use **Edit selected quantity** there to adjust one product's stock.
-4. Enter Floor, Side, and Shelf in the middle pane. Select **Shelf Selection
+2. Enter Floor, Side, and Shelf in the middle pane. Select **Shelf Selection
    Pane** to view that shelf, then click a cell to fill Row and Col and load it.
    You can also enter Row and Col manually and press **Load address →**.
-5. Check the current address contents in the right pane.
-6. Select **On-hand queue**, Ctrl-click one or more rows, then press
-   **Assign selected on-hand →
-   loaded address**. Only that selected subset moves; the rest stays on-hand.
-   The move is saved immediately in one SQLite transaction.
+3. Check the current address contents in the right pane.
+4. Select products from the total queue or full catalog and press
+   **Assign selected queue → loaded address** or
+   **Assign selected catalog → loaded address**. Enter each product's stock
+   quantity and confirm. Assignment saves immediately without passing through
+   on-hand. Catalog-only products are never added to the total queue.
+5. On-hand holds products removed from a shelf. To reassign those products,
+   select on-hand rows and use **Assign selected on-hand → loaded address**.
+   The batch survives restarting the app; **Edit selected quantity** adjusts
+   its stock before reassignment.
 
 ### Shift shortcuts
 
-Normal clicks prepare selected products in queues. Hold **Shift** to enable
+Normal clicks assign selected products directly. Hold **Shift** to enable
 the direct-transfer/whole-batch shortcuts; the button labels change while it
 is held.
 
 | Button/source | Normal click | Hold Shift and click |
 | --- | --- | --- |
-| Full catalog transfer | Selected products → total queue, retaining stock when pulled from a shelf or on-hand. | One selected product → loaded cell, with stock **999**. |
-| Total queue transfer | Selected ready products → on-hand, with manually entered quantities. | All visible ready queue search results → loaded cell, with stock **999**. |
+| Full catalog assignment | Selected products → loaded cell, with manually entered quantities and no total-queue copy. | One selected product → loaded cell, with stock **999**. |
+| Total queue assignment | Selected ready products → loaded cell, with manually entered quantities. | All visible ready queue search results → loaded cell, with stock **999**. |
 | On-hand assignment | Selected on-hand rows → loaded cell, retaining quantities. | All on-hand products → loaded cell, retaining quantities. |
 
 The queue shortcut requires IDs with the same first five characters after
@@ -151,7 +151,7 @@ quantity for reassignment.
 
 All these Tab 2 moves and stock edits save immediately; **Commit shelf design**
 is for the Shelf Designer's pending changes. To move a product while preserving
-its actual stock, use the ordinary on-hand workflow. Direct catalog/queue Shift
+its actual stock, use normal assignment with the prefilled quantities. Catalog/queue Shift
 transfers use stock **999**.
 
 ### Update website locations
@@ -177,9 +177,10 @@ The full catalog view combines the working queue and warehouse catalog by
 product ID. Queue names take precedence for matching IDs; other products use
 their warehouse catalog names. The two CSV imports remain separate, so
 re-importing the queue does not overwrite stored warehouse catalog names.
-**Transfer selected to total queue** copies catalog-only products into the
-working product list without removing their catalog rows. Products already
-assigned or on-hand are pulled back to the total queue with their stock retained.
+**Assign selected catalog → loaded address** assigns catalog products directly
+to the loaded shelf with entered stock. Catalog-only products remain outside
+the total queue throughout assignment and shelf removal. Shelf removal holds
+them on-hand until reassignment or Dequeue returns them to the catalog.
 Double-clicking a catalog or total-queue product only fills and selects its ID
 in the search field; it does not transfer the product.
 

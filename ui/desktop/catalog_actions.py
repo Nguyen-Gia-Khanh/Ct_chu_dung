@@ -25,6 +25,7 @@ class CatalogActions:
         return (
             not self.is_queue_product_assigned(product_id)
             and product_id not in getattr(self, "on_hand_products", {})
+            and product_id not in getattr(self, "catalog_only_products", set())
         )
 
     def activate_catalog_product(self, event) -> str | None:
@@ -58,7 +59,7 @@ class CatalogActions:
             )
         return "break"
 
-    def transfer_catalog_selection_to_queue(self, to_shelf: bool = False) -> None:
+    def assign_catalog_selection_to_address(self, to_shelf: bool = False) -> None:
         selected_items = self.assignments.catalog_tree.selection()
         product_ids = [
             item_id.removeprefix("catalog::")
@@ -142,105 +143,9 @@ class CatalogActions:
             )
             return
 
-        existing_products = set(self.products)
-        records = {
-            product_id: self.catalog_products[product_id] for product_id in product_ids
-        }
-        if hasattr(self.assignments, "on_hand_tree"):
-            staged_stock: dict[str, int | None] = {}
-            for product_id in product_ids:
-                staged = self.staged_assignments.get(product_id)
-                if staged is not None:
-                    staged_stock[product_id] = staged.stock_qty
-
-            returned_at = datetime.now().astimezone().isoformat(timespec="seconds")
-            try:
-                pulled_placements, pulled_on_hand = self.database.force_pull_to_queue(
-                    product_ids,
-                    returned_at,
-                    extra_stock=staged_stock,
-                    catalog_records=records,
-                )
-            except Exception as error:
-                messagebox.showerror("Transfer failed", str(error), parent=self.root)
-                return
-
-            for product_id in product_ids:
-                self.staged_assignments.pop(product_id, None)
-                self.pending_unassignments.discard(product_id)
-                self.transferred_stock.pop(product_id, None)
-
-            new_products = sum(
-                product_id not in existing_products for product_id in product_ids
-            )
-            already_waiting = (
-                len(product_ids)
-                - new_products
-                - pulled_placements
-                - pulled_on_hand
-                - len(staged_stock)
-            )
-            if already_waiting < 0:
-                already_waiting = 0
-
-            self.reconcile_inventory_products(product_ids)
-
-            summary: list[str] = []
-            if new_products:
-                summary.append(f"{new_products} added to queue")
-            if pulled_placements:
-                summary.append(f"{pulled_placements} pulled from shelf")
-            if pulled_on_hand:
-                summary.append(f"{pulled_on_hand} pulled from on-hand")
-            if staged_stock:
-                summary.append(f"{len(staged_stock)} pulled from staged slot")
-            if already_waiting:
-                summary.append(f"{already_waiting} already in queue")
-
-            self.status_text.set(
-                f"Catalog transfer: {', '.join(summary) if summary else 'Done'}. Product(s) ready in total queue."
-            )
-            return
-
-        try:
-            self.database.import_products(records)
-        except Exception as error:
-            messagebox.showerror("Transfer failed", str(error), parent=self.root)
-            return
-
-        new_products = 0
-        moved_assignments = 0
-        already_waiting = 0
-        for product_id in product_ids:
-            if product_id not in existing_products:
-                new_products += 1
-            staged = self.staged_assignments.pop(product_id, None)
-            saved = self.committed_placements.get(product_id)
-            was_pending = product_id in self.pending_unassignments
-            if staged is not None:
-                self.transferred_stock[product_id] = staged.stock_qty
-            elif saved is not None:
-                self.transferred_stock[product_id] = saved.stock_qty
-
-            if saved is not None:
-                self.pending_unassignments.add(product_id)
-            if staged is not None or (saved is not None and not was_pending):
-                moved_assignments += 1
-            elif product_id in existing_products:
-                already_waiting += 1
-
-        self.reconcile_inventory_products(product_ids)
-
-        summary = [f"{new_products} added"]
-        if moved_assignments:
-            summary.append(f"{moved_assignments} moved from a slot")
-        if already_waiting:
-            summary.append(f"{already_waiting} already in queue")
-        self.status_text.set(
-            "Catalog transfer: "
-            + ", ".join(summary)
-            + ". Catalog entries were kept. Press Commit to save slot removals."
-        )
+        self.assign_product_records_to_address({
+            pid: self.catalog_products[pid] for pid in product_ids
+        })
 
     def preassign_queue_stock(self) -> None:
         selected_items = self.assignments.queue_tree.selection()
@@ -336,6 +241,8 @@ class CatalogActions:
 
         available = []
         for product_id, product_name in self.products.items():
+            if persistent_queue and product_id in getattr(self, "catalog_only_products", set()):
+                continue
             if not persistent_queue and not self.is_queue_product_available(product_id):
                 continue
             if query and query not in self.product_search[product_id]:

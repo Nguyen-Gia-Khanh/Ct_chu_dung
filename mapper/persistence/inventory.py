@@ -14,6 +14,15 @@ from .models import (
 )
 
 class InventoryOperations:
+    def get_catalog_only_product_ids(self) -> set[str]:
+        """Catalog inventory records are separate from total-queue membership."""
+        with closing(self.connect()) as connection:
+            return {
+                row["product_id"]
+                for row in connection.execute("SELECT product_id, snapshot FROM queue_origins")
+                if not json.loads(row["snapshot"])["was_in_products"]
+            }
+
     def _remember_queue_origin(self, connection, product_id: str) -> dict | None:
         """Remember queue membership before temporarily importing a catalog item."""
         if connection.execute(
@@ -69,7 +78,8 @@ class InventoryOperations:
         """Read only specified products after a write, including exception locations."""
         ids = tuple(dict.fromkeys(product_ids))
         states = {
-            pid: {"product": None, "placement": None, "on_hand": None, "returned": None}
+            pid: {"product": None, "placement": None, "on_hand": None, "returned": None,
+                  "catalog_only": False}
             for pid in ids
         }
         if not ids:
@@ -78,6 +88,11 @@ class InventoryOperations:
             for offset in range(0, len(ids), 400):
                 batch = ids[offset:offset + 400]
                 marks = ",".join("?" for _ in batch)
+                for row in connection.execute(
+                    f"SELECT product_id, snapshot FROM queue_origins WHERE product_id IN ({marks})",
+                    batch,
+                ):
+                    states[row["product_id"]]["catalog_only"] = not json.loads(row["snapshot"])["was_in_products"]
                 for row in connection.execute(
                     f"SELECT product_id, product_name, shortened_name FROM products WHERE product_id IN ({marks})",
                     batch,
@@ -723,13 +738,20 @@ class InventoryOperations:
         assigned_at: str,
         products: dict[str, tuple[str, str]],
         default_stock: int = 999,
+        *,
+        quantities: dict[str, int] | None = None,
     ) -> int:
-        """Import catalog products and assign them directly to slot_id with default_stock."""
+        """Assign directly, preserving product-list membership and per-product stock."""
         if not products:
             return 0
         if not assigned_at or datetime.fromisoformat(assigned_at).utcoffset() is None:
             raise ValueError("The assignment time must include a timezone.")
         validate_stock_quantity(default_stock)
+        if quantities is not None:
+            if set(quantities) != set(products):
+                raise ValueError("Enter stock for every selected product.")
+            for quantity in quantities.values():
+                validate_stock_quantity(quantity)
         product_ids = tuple(products.keys())
         with closing(self.connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -758,7 +780,8 @@ class InventoryOperations:
                 INSERT INTO placements (product_id, slot_id, stock_qty, assigned_at)
                 VALUES (?, ?, ?, ?)
                 """,
-                ((pid, slot_id, default_stock, assigned_at) for pid in product_ids),
+                ((pid, slot_id, quantities[pid] if quantities is not None else default_stock, assigned_at)
+                 for pid in product_ids),
             )
         return len(product_ids)
 

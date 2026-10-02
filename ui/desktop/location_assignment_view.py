@@ -19,7 +19,7 @@ from .widgets import ScrollableFrame
 
 
 class LocationAssignmentView(ttk.Frame):
-    """Tab 2: search products, prepare a batch, then move it by address."""
+    """Tab 2: assign by address and hold removed shelf products on-hand."""
 
     def __init__(
         self,
@@ -160,7 +160,7 @@ class LocationAssignmentView(ttk.Frame):
                 )
             else:
                 self.catalog_transfer_button.configure(
-                    text="Transfer selected to total queue",
+                    text="Assign selected catalog → loaded address",
                     style="TButton",
                 )
 
@@ -172,7 +172,7 @@ class LocationAssignmentView(ttk.Frame):
                 )
             else:
                 self.queue_move_button.configure(
-                    text="Move selected → on-hand",
+                    text="Assign selected queue → loaded address",
                     style="TButton",
                 )
 
@@ -187,7 +187,7 @@ class LocationAssignmentView(ttk.Frame):
                 )
             else:
                 self.queue_move_button.configure(
-                    text="Move selected → on-hand",
+                    text="Assign selected queue → loaded address",
                     style="TButton",
                 )
         else:
@@ -310,7 +310,7 @@ class LocationAssignmentView(ttk.Frame):
         )
         self.queue_move_button = ttk.Button(
             queue,
-            text="Move selected → on-hand",
+            text="Assign selected queue → loaded address",
             command=self._handle_queue_move_click,
         )
         self.queue_move_button.grid(row=5, column=0, sticky="ew", pady=(5, 0))
@@ -350,7 +350,7 @@ class LocationAssignmentView(ttk.Frame):
         )
         self.catalog_transfer_button = ttk.Button(
             catalog,
-            text="Transfer selected to total queue",
+            text="Assign selected catalog → loaded address",
             command=self._handle_catalog_transfer_click,
         )
         self.catalog_transfer_button.grid(row=2, column=0, sticky="ew", pady=(5, 0))

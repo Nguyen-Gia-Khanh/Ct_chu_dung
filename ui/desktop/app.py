@@ -194,8 +194,8 @@ class WarehouseMapperApp(
         self.assignments = LocationAssignmentView(
             self.notebook,
             on_search=self.schedule_queue_refresh,
-            on_queue_to_hand=self.move_selected_to_on_hand,
-            on_catalog_to_queue=self.transfer_catalog_selection_to_queue,
+            on_queue_to_hand=self.assign_queue_selection_to_address,
+            on_catalog_to_queue=self.assign_catalog_selection_to_address,
             on_catalog_activate=self.activate_catalog_product,
             on_load_address=self.load_assignment_address,
             on_assign_address=self.assign_on_hand_to_address,
