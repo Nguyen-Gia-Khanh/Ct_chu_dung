@@ -79,7 +79,7 @@ uses `openpyxl` to read and write `.xlsx` workbooks.
 ### Assign products by address
 
 1. On tab 2, search the total unassigned queue.
-2. Select one or more products and press **Move selected → on-hand**.
+2. Select one or more products, hold **Shift**, and press **Move selected → on-hand**.
 3. In the middle pane's **On-hand queue** view, enter each product's stock
    quantity. The on-hand batch is written to SQLite immediately and survives
    closing or restarting the app.
@@ -91,6 +91,16 @@ uses `openpyxl` to read and write `.xlsx` workbooks.
    **Assign selected on-hand →
    loaded address**. Only that selected subset moves; the rest stays on-hand.
    The move is saved immediately in one SQLite transaction.
+
+The two left-pane transfer buttons send products straight to the loaded cell
+with stock **999** when Shift is released. The catalog button transfers one
+selected product. The total queue button transfers all visible search results
+when their product IDs share the same first five characters; multiple results
+require three clicks within the existing three-second timeout. Hold **Shift**
+to send catalog selections to the total queue or queue selections to on-hand
+instead. **Revert latest transfer** undoes the latest direct cell transfer or
+whole on-hand assignment. Shift on the on-hand assignment button still assigns
+the whole on-hand batch.
 
 Ctrl-click one or more on-hand rows and use **Dequeue selected → total queue**
 to return only that subset without assigning it. Returned products keep their

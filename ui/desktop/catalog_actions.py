@@ -45,7 +45,7 @@ class CatalogActions:
             )
         return "break"
 
-    def transfer_catalog_selection_to_queue(self, to_shelf: bool = False) -> None:
+    def transfer_catalog_selection_to_queue(self, to_shelf: bool | None = None) -> None:
         selected_items = self.assignments.catalog_tree.selection()
         product_ids = [
             item_id.removeprefix("catalog::")
@@ -61,7 +61,10 @@ class CatalogActions:
             )
             return
 
-        is_to_shelf = to_shelf or getattr(self.assignments, "whole_mode", False)
+        is_to_shelf = (
+            not getattr(self.assignments, "whole_mode", False)
+            if to_shelf is None else to_shelf
+        )
         if is_to_shelf:
             if self.selected_address is None:
                 messagebox.showinfo(
@@ -74,7 +77,7 @@ class CatalogActions:
             if len(product_ids) > 1:
                 if hasattr(self.assignments, "search_location_text"):
                     self.assignments.search_location_text.set(
-                        f"Cannot transfer: Catalog shift transfer only affects 1 product ID (selected {len(product_ids)})."
+                        f"Cannot transfer: Direct catalog transfer only affects 1 product ID (selected {len(product_ids)})."
                     )
                 if hasattr(self.assignments, "search_location_label"):
                     self.assignments.search_location_label.configure(foreground="#c62828")
