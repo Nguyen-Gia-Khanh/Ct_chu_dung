@@ -343,6 +343,11 @@ class LabelPrinterApp:
         )
         self.skip_printed_check.pack(side="left", padx=(10, 8))
         ttk.Button(pdf_history, text="Clear PDFs", command=self.clear_printed_pdfs).pack(side="left")
+        ttk.Checkbutton(
+            pdf_history,
+            text="Limit to 30 characters",
+            variable=self.limit_to_30_characters,
+        ).pack(side="left", padx=(12, 0))
         ttk.Label(pdf_history, textvariable=self.print_reference_text).pack(side="left", padx=(12, 0))
 
         buttons = ttk.Frame(footer)
@@ -375,13 +380,6 @@ class LabelPrinterApp:
             command=self.on_product_only_toggle,
         )
         self.product_only_check.pack(side="left", padx=(0, 15))
-        ttk.Checkbutton(
-            buttons,
-            text="Limit to 30 characters",
-            variable=self.limit_to_30_characters,
-        ).pack(side="left")
-        buttons = ttk.Frame(footer)
-        buttons.pack(fill="x", pady=(8, 0))
         self.print_all_button = ttk.Button(buttons, text="Print all cells (PDF)...", command=lambda: self.start_print(False))
         self.print_all_button.pack(side="left", padx=(0, 8))
         self.print_selected_button = ttk.Button(buttons, text="Print selected cells (PDF)...", command=lambda: self.start_print(True))
