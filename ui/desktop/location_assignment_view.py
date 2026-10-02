@@ -155,32 +155,32 @@ class LocationAssignmentView(ttk.Frame):
         if hasattr(self, "catalog_transfer_button"):
             if enabled:
                 self.catalog_transfer_button.configure(
-                    text="Transfer selected to total queue",
-                    style="TButton",
+                    text="Transfer selected → shelf (stock 999)",
+                    style="WholeMode.TButton",
                 )
             else:
                 self.catalog_transfer_button.configure(
-                    text="Transfer selected → shelf (stock 999)",
-                    style="WholeMode.TButton",
+                    text="Transfer selected to total queue",
+                    style="TButton",
                 )
 
         if hasattr(self, "queue_move_button"):
             if enabled:
                 self.queue_move_button.configure(
-                    text="Move selected → on-hand",
-                    style="TButton",
+                    text="Transfer queue → shelf (stock 999)",
+                    style="WholeMode.TButton",
                 )
             else:
                 self.queue_move_button.configure(
-                    text="Transfer queue → shelf (stock 999)",
-                    style="WholeMode.TButton",
+                    text="Move selected → on-hand",
+                    style="TButton",
                 )
 
     def set_queue_button_clicks(self, remaining_clicks: int | None = None) -> None:
         if not hasattr(self, "queue_move_button"):
             return
         if remaining_clicks is None or remaining_clicks <= 0:
-            if not self.whole_mode:
+            if self.whole_mode:
                 self.queue_move_button.configure(
                     text="Transfer queue → shelf (stock 999)",
                     style="WholeMode.TButton",
@@ -198,7 +198,8 @@ class LocationAssignmentView(ttk.Frame):
             )
 
     def _on_assign_button_press(self, event: tk.Event) -> None:
-        self._shift_clicked = bool(event.state & 0x0001)
+        if bool(event.state & 0x0001):
+            self._shift_clicked = True
 
     def _handle_assign_click(self) -> None:
         whole = self.whole_mode or getattr(self, "_shift_clicked", False)
@@ -209,10 +210,11 @@ class LocationAssignmentView(ttk.Frame):
             self.on_assign_address()
 
     def _on_catalog_transfer_button_press(self, event: tk.Event) -> None:
-        self._shift_clicked = bool(event.state & 0x0001)
+        if bool(event.state & 0x0001):
+            self._shift_clicked = True
 
     def _handle_catalog_transfer_click(self) -> None:
-        to_shelf = not (self.whole_mode or getattr(self, "_shift_clicked", False))
+        to_shelf = self.whole_mode or getattr(self, "_shift_clicked", False)
         self._shift_clicked = False
         try:
             self.on_catalog_to_queue(to_shelf=to_shelf)
@@ -220,10 +222,11 @@ class LocationAssignmentView(ttk.Frame):
             self.on_catalog_to_queue()
 
     def _on_queue_move_button_press(self, event: tk.Event) -> None:
-        self._shift_clicked = bool(event.state & 0x0001)
+        if bool(event.state & 0x0001):
+            self._shift_clicked = True
 
     def _handle_queue_move_click(self) -> None:
-        to_shelf = not (self.whole_mode or getattr(self, "_shift_clicked", False))
+        to_shelf = self.whole_mode or getattr(self, "_shift_clicked", False)
         self._shift_clicked = False
         try:
             self.on_queue_to_hand(to_shelf=to_shelf)
@@ -241,7 +244,7 @@ class LocationAssignmentView(ttk.Frame):
     ) -> None:
         self.revert_button = ttk.Button(
             parent,
-            text="Revert latest transfer",
+            text="Revert shift transfer",
             command=on_revert_shift,
             state="disabled",
         )
@@ -311,8 +314,7 @@ class LocationAssignmentView(ttk.Frame):
         )
         self.queue_move_button = ttk.Button(
             queue,
-            text="Transfer queue → shelf (stock 999)",
-            style="WholeMode.TButton",
+            text="Move selected → on-hand",
             command=self._handle_queue_move_click,
         )
         self.queue_move_button.grid(row=5, column=0, sticky="ew", pady=(5, 0))
@@ -352,8 +354,7 @@ class LocationAssignmentView(ttk.Frame):
         )
         self.catalog_transfer_button = ttk.Button(
             catalog,
-            text="Transfer selected → shelf (stock 999)",
-            style="WholeMode.TButton",
+            text="Transfer selected to total queue",
             command=self._handle_catalog_transfer_click,
         )
         self.catalog_transfer_button.grid(row=2, column=0, sticky="ew", pady=(5, 0))

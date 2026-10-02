@@ -37,14 +37,11 @@ class AssignmentActions:
             self.assignments.set_queue_button_clicks(None)
 
     def _on_whole_mode_change(self, enabled: bool) -> None:
-        if enabled:
+        if not enabled:
             self._reset_queue_shift_clicks()
 
-    def move_selected_to_on_hand(self, to_shelf: bool | None = None) -> None:
-        is_to_shelf = (
-            not getattr(self.assignments, "whole_mode", False)
-            if to_shelf is None else to_shelf
-        )
+    def move_selected_to_on_hand(self, to_shelf: bool = False) -> None:
+        is_to_shelf = to_shelf or getattr(self.assignments, "whole_mode", False)
         if not is_to_shelf:
             self._reset_queue_shift_clicks()
             selected_items = self.assignments.queue_tree.selection()
@@ -100,7 +97,7 @@ class AssignmentActions:
             )
             return
 
-        # Default action: transfer the visible queue straight to shelf with stock 999.
+        # Whole mode: Transfer total queue straight to shelf with stock 999
         if self.selected_address is None:
             messagebox.showinfo(
                 "Load an address",
@@ -492,8 +489,8 @@ class AssignmentActions:
             return
         products = self.last_shift_transfer.get("products", [])
         confirm = messagebox.askyesno(
-            "Revert latest transfer",
-            f"Revert the latest transfer of {len(products)} product(s)?",
+            "Revert shift transfer",
+            f"Revert the latest shift transfer of {len(products)} product(s)?",
             parent=self.root,
         )
         if not confirm:
@@ -503,7 +500,7 @@ class AssignmentActions:
             self.database.revert_shift_transfer(self.last_shift_transfer)
         except Exception as error:
             messagebox.showerror(
-                "Revert failed", f"Could not revert transfer: {error}", parent=self.root
+                "Revert failed", f"Could not revert shift transfer: {error}", parent=self.root
             )
             return
 
@@ -518,7 +515,7 @@ class AssignmentActions:
         if hasattr(self.assignments, "revert_button"):
             self.assignments.revert_button.configure(state="disabled")
         self.reconcile_inventory_products(item["product_id"] for item in products)
-        self.status_text.set("Successfully reverted the latest transfer.")
+        self.status_text.set("Successfully reverted the latest shift transfer.")
 
     def dequeue_selected_on_hand(self) -> None:
         selected_items = self.assignments.on_hand_tree.selection()
