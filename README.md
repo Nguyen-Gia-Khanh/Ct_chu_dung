@@ -3,6 +3,9 @@
 A local Windows/Tkinter application for mapping products to irregular warehouse
 shelves. SQLite is local, so no Docker or database server is required.
 
+For source changes, see [instruction.md](instruction.md): it maps each desktop
+tab to its view, action handlers, persistence methods, and verification steps.
+
 ## Even-side shelf orientation
 
 Tkinter shelf views show each even-side row in descending cell order. The
@@ -17,8 +20,8 @@ current location IDs directly, so shelves no longer store a switching flag.
 2. **Assign Locations** — search the total queue and full catalog, prepare a
    persistent on-hand batch, enter an exact floor/side/shelf/row/cell address,
    and move the batch into that address.
-3. **Find Product** — search the full catalog by product ID or name and display
-   the product's committed shelf location.
+3. **Primal Queue / Shelves** — search working products and the full catalog,
+   inspect queue/on-hand/assigned state and stock, and navigate to saved shelves.
 4. **Browse Shelves** — choose a committed shelf, view its 2D front layout, and
    click cells to inspect their products.
 5. **Switch / Combine Cells** — load two shelves independently, select one cell
@@ -30,7 +33,8 @@ current location IDs directly, so shelves no longer store a switching flag.
    differences, resync mismatched products, and export a comparison workbook.
 
 The total queue, on-hand queue, and assigned shelf locations are separate
-states. A working product is in exactly one of them at a time.
+states. Tab 6 supports the explicit exception of multiple shelf locations for
+one product.
 
 ## Run on Windows 11
 
@@ -80,9 +84,10 @@ uses `openpyxl` to read and write `.xlsx` workbooks.
 
 1. On tab 2, search the total unassigned queue.
 2. Select one or more products and press **Move selected → on-hand**.
-3. In the middle pane's **On-hand queue** view, enter each product's stock
-   quantity. The on-hand batch is written to SQLite immediately and survives
-   closing or restarting the app.
+3. Enter each product's stock quantity in the dialog and confirm the move.
+   The products appear in the middle pane's **On-hand queue** view. This batch
+   is written to SQLite immediately and survives closing or restarting the app.
+   Use **Edit selected quantity** there to adjust one product's stock.
 4. Enter Floor, Side, and Shelf in the middle pane. Select **Shelf Selection
    Pane** to view that shelf, then click a cell to fill Row and Col and load it.
    You can also enter Row and Col manually and press **Load address →**.
@@ -92,6 +97,32 @@ uses `openpyxl` to read and write `.xlsx` workbooks.
    loaded address**. Only that selected subset moves; the rest stays on-hand.
    The move is saved immediately in one SQLite transaction.
 
+### Tab 2 Shift shortcuts
+
+Normal clicks prepare selected products in queues. Hold **Shift** to enable
+the direct-transfer/whole-batch shortcuts; the button labels change while it
+is held.
+
+| Button/source | Normal click | Hold Shift and click |
+| --- | --- | --- |
+| Full catalog transfer | Selected products → total queue, retaining stock when pulled from a shelf or on-hand. | One selected product → loaded cell, with stock **999**. |
+| Total queue transfer | Selected products → on-hand, with manually entered quantities. | All visible queue search results → loaded cell, with stock **999**. |
+| On-hand assignment | Selected on-hand rows → loaded cell, retaining quantities. | All on-hand products → loaded cell, retaining quantities. |
+
+The queue shortcut requires IDs with the same first five characters after
+removing hyphens, trimming, and uppercasing. One visible result moves with one
+Shift-click. Multiple results need three clicks while holding Shift; each
+pending click restarts a three-second timeout. Releasing Shift or changing the
+queue search resets the count. Lists show at most 750 results, so narrow the
+search and inspect the visible queue before using this shortcut.
+
+Direct/whole-batch assignment requires a loaded saved address. **Revert shift
+transfer** asks for confirmation and reverses the latest successful Shift
+transfer. This is a single in-memory snapshot, cleared by reversal and lost
+when the app closes.
+
+### Return products and modify stock
+
 Ctrl-click one or more on-hand rows and use **Dequeue selected → total queue**
 to return only that subset without assigning it. Returned products keep their
 stock in the total queue and appear first in bold yellow; moving them to on-hand
@@ -100,6 +131,13 @@ Ctrl-click one or more rows and use **Selected product(s) → on-hand** for a
 partial transfer. **Shelf → on-hand (all)** remains available when the complete
 address must be emptied. These actions preserve each product's recorded stock
 quantity for reassignment.
+
+All these Tab 2 moves and stock edits save immediately; **Commit shelf design**
+is for the Shelf Designer's pending changes. To move a product while preserving
+its actual stock, use the ordinary on-hand workflow. Direct catalog/queue Shift
+transfers use stock **999**.
+
+### Update website locations from Tab 2
 
 **Connect Chrome** on the main tab bar starts the browser connection and returns
 to the current tab. Web actions default to one product: click
@@ -146,9 +184,10 @@ afterward when KiotViet must receive the new location IDs.
    `data/exports/location_comparison/` as an `.xlsx` file with exactly `product_id`,
    `wrong_location`, and `true_location`.
 
-Products with several local locations appear in the comparison and export,
-but need manual web review because the current website uploader sets one
-location per product. Import a new KiotViet export to verify completed updates.
+Products with several local locations are compared and uploaded as complete
+location sets, including exception placements. Commas, semicolons, pipes, and
+newlines in the website export are accepted as location separators. Import a
+new KiotViet export to verify completed updates.
 
 ## Search and catalog behavior
 
@@ -163,7 +202,9 @@ their warehouse catalog names. The two CSV imports remain separate, so
 re-importing the queue does not overwrite stored warehouse catalog names.
 **Transfer selected to total queue** copies catalog-only products into the
 working product list without removing their catalog rows. Products already
-assigned or on-hand stay in their current state.
+assigned or on-hand are pulled back to the total queue with their stock retained.
+Double-clicking a catalog or total-queue product only fills and selects its ID
+in the search field; it does not transfer the product.
 
 An 11-character barcode such as `06410KFL850` is normalized to
 `06410-KFL-850` in the search field.
@@ -230,6 +271,20 @@ under `data/backups/`. Input CSV and XLSX files remain where they are.
 
 ## Checks
 
+Run from the project root using the launcher's Python environment:
+
 ```powershell
-python -m unittest discover -s tests -v
+& '..\..\.venv\Scripts\python.exe' -m unittest discover -s tests -v
 ```
+
+For manual checks with sample data, create a separate database so testing does
+not change your working inventory:
+
+```powershell
+New-Item -ItemType Directory -Force tmp | Out-Null
+& '..\..\.venv\Scripts\python.exe' warehouse_mapper.py --db tmp/manual-check.db
+```
+
+Import sample products and commit a sample shelf in that database before
+testing address transfers. See [instruction.md](instruction.md) for the tab
+file map and the specific behaviors to check after a source change.
