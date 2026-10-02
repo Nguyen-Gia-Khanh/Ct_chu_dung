@@ -7,7 +7,7 @@ from tkinter import messagebox, ttk
 
 from mapper.core.common import clean_location_segment, make_slot_name
 from mapper.persistence.database import validate_stock_quantity
-from .widgets import ScrollableFrame
+from .widgets import ScrollableFrame, shelf_cell_visual
 
 from utils.barcode_scanner import BarcodeScanner, format_product_id
 
@@ -146,6 +146,9 @@ class AssignmentView(ttk.Frame):
         self.selected_slot = None
         self.empty_shelf_message: str | None = None
         self.slot_buttons: dict[str, tk.Button] = {}
+        self.slot_labels: dict[str, str] = {}
+        self.slot_counts: dict[str, tuple[int, int]] = {}
+        self.rendered_shelf_key: tuple | None = None
         header = ttk.Frame(self)
         header.pack(fill="x", pady=(0, 8))
         self.active_shelf_text = tk.StringVar(value="No shelf built yet")
@@ -536,11 +539,23 @@ class AssignmentView(ttk.Frame):
         *,
         side: str = "1",
     ) -> None:
+        shelf_key = (floor, side, shelf_code, tuple(layout)) if layout else None
+        # Geometry changes rebuild; content changes keep the existing buttons.
+        if shelf_key is not None and shelf_key == self.rendered_shelf_key:
+            self.slot_counts = dict(slot_counts)
+            if selected_slot is not None:
+                self.selected_slot = selected_slot
+            self.refresh_cells(self.slot_buttons)
+            self.selected_slot_text.set(self.selected_slot or "No slot selected")
+            return
+        self.rendered_shelf_key = shelf_key
         self.selected_slot = selected_slot
         self.selected_slot_text.set(selected_slot or "No slot selected")
         for child in self.shelf_scroll.inner.winfo_children():
             child.destroy()
         self.slot_buttons.clear()
+        self.slot_labels.clear()
+        self.slot_counts = dict(slot_counts)
 
         if not layout:
             ttk.Label(
@@ -599,25 +614,14 @@ class AssignmentView(ttk.Frame):
                 slot_name = make_slot_name(
                     floor, shelf_code, row_number, slot_index, side=side
                 )
-                saved_count, staged_count = slot_counts.get(slot_name, (0, 0))
-                total_count = saved_count + staged_count
-                if staged_count:
-                    background = "#fff2b2"
-                elif saved_count:
-                    background = "#d9ead3"
-                else:
-                    background = "#f7f7f7"
-                selected = slot_name == self.selected_slot
+                self.slot_labels[slot_name] = f"{shelf_label}{row_number}-{slot_index}"
                 button = tk.Button(
                     row_frame,
-                    text=f"{shelf_label}{row_number}-{slot_index}\n{total_count} product{'s' if total_count != 1 else ''}",
+                    **self._cell_visual(slot_name),
                     command=lambda name=slot_name: self.on_select(name),
-                    background=background,
                     activebackground="#cfe8ff",
                     relief="solid",
-                    borderwidth=3 if selected else 1,
                     highlightthickness=0,
-                    font=("Segoe UI", 9, "bold" if selected else "normal"),
                 )
                 button.grid(row=0, column=display_column, sticky="nsew", padx=1, pady=1)
                 self.slot_buttons[slot_name] = button
@@ -634,14 +638,28 @@ class AssignmentView(ttk.Frame):
         )
         self.shelf_scroll.bind_wheel_events()
 
+    def _cell_visual(self, slot_name: str) -> dict[str, object]:
+        saved, staged = self.slot_counts.get(slot_name, (0, 0))
+        return shelf_cell_visual(
+            self.slot_labels[slot_name], saved + staged,
+            selected=slot_name == self.selected_slot, staged=staged > 0,
+        )
+
+    def refresh_cell(self, slot_name: str, counts: tuple[int, int] | None = None) -> None:
+        if counts is not None:
+            self.slot_counts[slot_name] = counts
+        button = self.slot_buttons.get(slot_name)
+        if button is not None:
+            button.configure(**self._cell_visual(slot_name))
+
+    def refresh_cells(self, slot_names) -> None:
+        for slot_name in slot_names:
+            self.refresh_cell(slot_name)
+
     def mark_selected(self, slot_name: str) -> None:
         old_slot = self.selected_slot
         self.selected_slot = slot_name
         for name in (old_slot, slot_name):
-            if name and name in self.slot_buttons:
-                selected = name == slot_name
-                self.slot_buttons[name].configure(
-                    borderwidth=3 if selected else 1,
-                    font=("Segoe UI", 9, "bold" if selected else "normal"),
-                )
+            if name:
+                self.refresh_cell(name)
         self.selected_slot_text.set(slot_name)

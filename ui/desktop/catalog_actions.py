@@ -10,6 +10,7 @@ from .assignment_view import StockQuantityDialog
 from mapper.core.common import MAX_VISIBLE_PRODUCTS, normalize_search
 from mapper.features.csv_import import read_csv
 from .csv_dialog import ColumnMappingDialog
+from .widgets import sync_tree_rows
 
 
 class CatalogActions:
@@ -120,10 +121,9 @@ class CatalogActions:
                 self.staged_assignments.pop(pid, None)
                 self.pending_unassignments.discard(pid)
                 self.transferred_stock.pop(pid, None)
-            self.reload_database_state(reload_catalog=True)
-            self.refresh_all_views()
-            if hasattr(self, "shelf_browser"):
-                self.shelf_browser.refresh()
+            self.reconcile_inventory_products(
+                product_ids, affected_slots=(self.selected_address.slot_name,)
+            )
             self.status_text.set(
                 f"Assigned {moved} catalog product(s) directly to {self.selected_address.slot_name} with stock 999. Saved immediately."
             )
@@ -179,10 +179,7 @@ class CatalogActions:
             if already_waiting < 0:
                 already_waiting = 0
 
-            self.reload_database_state(reload_catalog=True)
-            self.refresh_all_views()
-            if hasattr(self, "shelf_browser"):
-                self.shelf_browser.refresh()
+            self.reconcile_inventory_products(product_ids)
 
             summary: list[str] = []
             if new_products:
@@ -222,8 +219,7 @@ class CatalogActions:
             elif product_id in existing_products:
                 already_waiting += 1
 
-        self.reload_database_state()
-        self.refresh_all_views()
+        self.reconcile_inventory_products(product_ids)
 
         summary = [f"{new_products} added"]
         if moved_assignments:
@@ -301,7 +297,7 @@ class CatalogActions:
                 self.staged_assignments.pop(product_id, None)
             if product_id in self.committed_placements:
                 self.pending_unassignments.add(product_id)
-        self.refresh_all_views()
+        self.refresh_working_changes()
         self.status_text.set(
             "Products returned to the working queue with stock retained. "
             "Load another shelf and assign them when ready."
@@ -354,7 +350,7 @@ class CatalogActions:
             )
         )
 
-        self.assignments.queue_tree.delete(*self.assignments.queue_tree.get_children())
+        rows = []
         for product_id, product_name in available[:MAX_VISIBLE_PRODUCTS]:
             if hasattr(self.assignments, "on_hand_tree"):
                 returned = returned_queue.get(product_id)
@@ -371,13 +367,8 @@ class CatalogActions:
                 tags = ("transferred",) if product_id in self.transferred_stock else ()
                 qty_text = str(stored_qty) if stored_qty is not None else ""
                 values = (product_id, product_name, qty_text)
-            self.assignments.queue_tree.insert(
-                "",
-                "end",
-                iid=f"product::{product_id}",
-                values=values,
-                tags=tags,
-            )
+            rows.append((f"product::{product_id}", values, tags))
+        sync_tree_rows(self.assignments.queue_tree, rows)
 
         shown = min(len(available), MAX_VISIBLE_PRODUCTS)
         suffix = (
@@ -416,7 +407,7 @@ class CatalogActions:
         )
 
         tree = self.assignments.catalog_tree
-        tree.delete(*tree.get_children())
+        rows = []
         for product_id, product_name, _shortened_name in matches[:MAX_VISIBLE_PRODUCTS]:
             placement = (
                 getattr(self, "staged_assignments", {}).get(product_id)
@@ -427,12 +418,8 @@ class CatalogActions:
                 if placement is not None
                 else getattr(self, "committed_locations", {}).get(product_id, "")
             )
-            tree.insert(
-                "",
-                "end",
-                iid=f"catalog::{product_id}",
-                values=(product_id, product_name, location_id),
-            )
+            rows.append((f"catalog::{product_id}", (product_id, product_name, location_id), ()))
+        sync_tree_rows(tree, rows)
 
         shown = min(len(matches), MAX_VISIBLE_PRODUCTS)
         suffix = (

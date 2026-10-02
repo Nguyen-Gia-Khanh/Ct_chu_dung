@@ -45,6 +45,22 @@ class PersistenceTests(WorkspaceTestCase):
         self.assertEqual(self.db.get_placement_details()["P1"], Placement(self.second.slot_name, 12, SECOND))
         self.assertEqual(self.db.get_placement_details()["P2"], Placement(self.first.slot_name, 4, SECOND))
 
+    def test_narrow_inventory_read_keeps_exception_locations(self) -> None:
+        self.db.add_to_on_hand({"P1": 12}, FIRST)
+        self.db.assign_on_hand_to_slot(self.first.slot_id, SECOND, ["P1"])
+        self.db.assign_exception("P1", self.second.slot_id, stock_qty=2)
+
+        states = self.db.get_product_inventory_states(["P1", "P2", "MISSING"])
+        self.assertEqual(states["P1"]["placement"], self.db.get_placement_details()["P1"])
+        self.assertEqual(states["P1"]["placement"].stock_qty, 14)
+        self.assertEqual(states["P2"]["product"], ("Washers", "Washers"))
+        self.assertIsNone(states["MISSING"]["product"])
+
+        self.db.move_slot_to_on_hand(self.first.slot_id, FIRST, ["P1"])
+        states = self.db.get_product_inventory_states(["P1"])
+        self.assertEqual(states["P1"]["placement"].slot_name, self.second.slot_name)
+        self.assertEqual(states["P1"]["on_hand"].stock_qty, 12)
+
     def test_exception_registration_remains_separate_from_catalog(self) -> None:
         self.db.assign_exception("E1", self.first.slot_id, product_name="Exception")
         self.assertEqual(len(self.db.get_exception_staging()), 1)
