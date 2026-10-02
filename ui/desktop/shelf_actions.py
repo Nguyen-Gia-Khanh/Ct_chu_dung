@@ -298,6 +298,46 @@ class ShelfActions:
         self.notebook.select(self.designer_tab)
         self.status_text.set(f"Loaded {label}.")
 
+    def delete_selected_shelf(self) -> None:
+        """Immediately delete the selected saved shelf, only when it is empty."""
+        label = self.shelf_selector.get()
+        shelf_id = self.shelf_choices.get(label)
+        if shelf_id is None:
+            messagebox.showinfo(
+                "Choose a shelf", "Select an existing shelf first.", parent=self.root
+            )
+            return
+        if self.has_pending_changes(excluding_queue_transfers=True):
+            messagebox.showinfo(
+                "Finish pending shelf changes",
+                "Commit the pending Shelf Designer changes or discard them with "
+                "New shelf before deleting a saved shelf.",
+                parent=self.root,
+            )
+            return
+        if not messagebox.askyesno(
+            "Delete shelf?",
+            f"Delete {label} and all its rows and cells?\n\n"
+            "Only empty shelves can be deleted. This saves immediately.",
+            parent=self.root,
+        ):
+            return
+        try:
+            floor, side, shelf_code, _layout = self.database.get_shelf(shelf_id)
+            self.database.delete_shelf(shelf_id)
+        except Exception as error:
+            messagebox.showerror("Shelf could not be deleted", str(error), parent=self.root)
+            return
+
+        if self.shelf_browser.current_key == (floor, side, shelf_code):
+            self.shelf_browser.clear_shelf()
+        if self.current_shelf_id == shelf_id:
+            self.new_shelf()
+        self.shelf_selector.set("")
+        self.reload_database_state(reload_shelves=True)
+        self.refresh_all_views()
+        self.status_text.set(f"Deleted {label}.")
+
     def commit_changes(self) -> bool:
         if not self.build_shelf_preview(switch_tab=False):
             return False

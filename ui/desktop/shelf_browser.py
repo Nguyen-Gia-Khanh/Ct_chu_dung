@@ -18,6 +18,7 @@ class ShelfBrowserView(ttk.Frame):
         self.database = database
         self.shelf_choices: dict[str, int] = {}
         self.current_shelf_id: int | None = None
+        self.current_key: tuple[str, str, str] | None = None
         self.current_contents: list[tuple[str, str, Placement]] = []
 
         chooser = ttk.Frame(self)
@@ -56,6 +57,14 @@ class ShelfBrowserView(ttk.Frame):
         self.view.pack(fill="both", expand=True)
         self.view.hide_product_panel()
         self.view.empty_shelf_message = "Choose a shelf above."
+        self.clear_shelf()
+
+    def clear_shelf(self) -> None:
+        self.current_shelf_id = None
+        self.current_key = None
+        self.current_contents = []
+        self.shelf_selector.set("")
+        self.shelf_address_lookup.set_address("", "", "")
         self.view.change_summary_text.set("Committed SQLite data")
         self.view.active_shelf_text.set("Choose a shelf above")
         self.view.render_shelf("", "", [], {}, None)
@@ -144,6 +153,7 @@ class ShelfBrowserView(ttk.Frame):
         *,
         summary: str,
     ) -> None:
+        self.current_key = (floor, side, shelf_code)
         counts = Counter(placement.slot_name for _, _, placement in contents)
         self.view.active_shelf_text.set(
             f"Floor {floor} · Side {side} · Shelf {shelf_code} · "

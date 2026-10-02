@@ -57,6 +57,10 @@ the structure controls. Row 1 is the ground row; new rows are added at the top.
 `render_shelf` send the preview to Tab 4; `commit_changes` saves it.
 `has_pending_changes` / `confirm_discard_pending` also protect navigation and
 Tab 5 operations. Previewing is unsaved; **Commit shelf design** is explicit.
+`delete_selected_shelf` deletes the shelf chosen in the existing-shelf selector
+after confirmation, blocks pending designer changes, and refreshes saved-shelf
+views. It calls `ShelfOperations.delete_shelf`, which rejects shelves containing
+regular or exception placements. Deletion saves immediately.
 
 **Shared sections:** `CatalogActions.import_csv` / `import_catalog_csv` and
 `ColumnMappingDialog` handle this tab's two import buttons. Imports write

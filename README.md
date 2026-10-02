@@ -72,6 +72,11 @@ uses `openpyxl` to read and write `.xlsx` workbooks.
 4. Press **Build / refresh 2D shelf** to inspect the preview on tab 4.
 5. Return to tab 1 and press **Commit shelf design**.
 
+To delete a saved shelf, select it under **Edit existing shelf**, press
+**Delete shelf**, and confirm. Deletion saves immediately and removes the shelf's
+rows and cells. Move all regular and exception products off the shelf first.
+Commit pending designer changes or discard them with **New shelf** before deleting.
+
 ### CSV imports
 
 The import dialog asks which columns contain product ID, full name, and

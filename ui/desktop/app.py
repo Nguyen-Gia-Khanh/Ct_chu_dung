@@ -161,20 +161,28 @@ class WarehouseMapperApp(
         ttk.Button(designer_controls, text="New shelf", command=self.new_shelf).pack(
             side="left"
         )
-        ttk.Label(designer_controls, text="Edit existing shelf:").pack(
-            side="left", padx=(14, 5)
+        shelf_controls = ttk.Frame(self.designer_tab, padding=(12, 0, 12, 8))
+        shelf_controls.pack(fill="x")
+        ttk.Label(shelf_controls, text="Edit existing shelf:").pack(
+            side="left", padx=(0, 5)
         )
         self.shelf_selector = ttk.Combobox(
-            designer_controls,
+            shelf_controls,
             state="readonly",
             width=30,
         )
         self.shelf_selector.pack(side="left")
         ttk.Button(
-            designer_controls,
+            shelf_controls,
             text="Load for editing",
             command=self.load_selected_shelf,
         ).pack(side="left", padx=(5, 0))
+        self.delete_shelf_button = ttk.Button(
+            shelf_controls,
+            text="Delete shelf",
+            command=self.delete_selected_shelf,
+        )
+        self.delete_shelf_button.pack(side="left", padx=(5, 0))
         ttk.Button(
             designer_controls,
             text="Commit shelf design",
