@@ -198,6 +198,7 @@ def render_labels_pdf(
     label_height_cm: int | float = 7,
     orientation: str = "landscape",
     print_mode: str = "full",
+    limit_to_30_characters: bool = True,
     sample: bool = False,
     progress=lambda _text: None,
 ) -> PrintResult:
@@ -206,6 +207,8 @@ def render_labels_pdf(
     The product font and row spacing shrink automatically until every assigned product
     fits on the cell's label. The caller determines shelf/cell order and should pass the
     shortened product name in ``Product.name``. An empty cell receives a location label.
+    By default, names longer than 30 characters print their first 30 followed by "...".
+    Disable ``limit_to_30_characters`` to print the complete names.
     Output is replaced only after every label has been laid out successfully.
     """
     if not cells:
@@ -237,9 +240,12 @@ def render_labels_pdf(
             regular, normal=regular, bold=bold, italic=regular, boldItalic=bold
         )
 
-    def clean(value: str) -> str:
+    def clean(value: str, *, limit_name: bool = False) -> str:
         # Canonical combining marks and XML escaping preserve Vietnamese and &/<.
-        return escape(unicodedata.normalize("NFC", " ".join(str(value).split())))
+        text = unicodedata.normalize("NFC", " ".join(str(value).split()))
+        if limit_name and limit_to_30_characters and len(text) > 30:
+            text = text[:30] + "..."
+        return escape(text)
 
     is_portrait = orientation.lower() == "portrait"
     page_size = portrait(A4) if is_portrait else landscape(A4)
@@ -314,7 +320,7 @@ def render_labels_pdf(
             one_line = True
             for product in products:
                 id_para = Paragraph(clean(product.product_id), id_style)
-                name_para = Paragraph(clean(product.name), name_style)
+                name_para = Paragraph(clean(product.name, limit_name=True), name_style)
                 id_h = id_para.wrap(id_col_w - column_gap, 10000)[1]
                 name_h = name_para.wrap(name_col_w, 10000)[1]
                 if id_h > leading + 0.1 or name_h > leading + 0.1:
@@ -354,7 +360,7 @@ def render_labels_pdf(
         )
         raise ValueError(
             f"The product list in {location} does not fit the {label_height_cm} cm label "
-            f"even at {MIN_PRODUCT_FONT_SIZE} pt. {next_step} Nothing was truncated or saved."
+            f"even at {MIN_PRODUCT_FONT_SIZE} pt. {next_step} No PDF was saved."
         )
 
     def draw_location_id(w, h, location_id):

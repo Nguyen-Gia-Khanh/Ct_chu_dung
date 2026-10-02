@@ -244,6 +244,7 @@ class LabelPrinterApp:
         self.is_portrait = tk.BooleanVar(value=False)
         self.location_only = tk.BooleanVar(value=False)
         self.product_only = tk.BooleanVar(value=False)
+        self.limit_to_30_characters = tk.BooleanVar(value=True)
         self.print_reference_text = tk.StringVar(value="No previous PDFs loaded.")
         self.db_text = tk.StringVar(value=str(self.database.path))
         self.search_text = tk.StringVar()
@@ -373,6 +374,13 @@ class LabelPrinterApp:
             command=self.on_product_only_toggle,
         )
         self.product_only_check.pack(side="left", padx=(0, 15))
+        ttk.Checkbutton(
+            buttons,
+            text="Limit to 30 characters",
+            variable=self.limit_to_30_characters,
+        ).pack(side="left")
+        buttons = ttk.Frame(footer)
+        buttons.pack(fill="x", pady=(8, 0))
         self.print_all_button = ttk.Button(buttons, text="Print all cells (PDF)...", command=lambda: self.start_print(False))
         self.print_all_button.pack(side="left", padx=(0, 8))
         self.print_selected_button = ttk.Button(buttons, text="Print selected cells (PDF)...", command=lambda: self.start_print(True))
@@ -639,6 +647,7 @@ class LabelPrinterApp:
                 else "product_only" if self.product_only.get()
                 else "full"
             )
+            limit_to_30_characters = self.limit_to_30_characters.get()
         except (OSError, sqlite3.Error, ValueError) as error:
             messagebox.showerror("Cannot print labels", str(error), parent=self.root)
             return
@@ -655,10 +664,17 @@ class LabelPrinterApp:
         self.status_text.set(
             f"Preparing {label_count(cells)} labels ({height_label} cm, {orientation}{mode_note}) from latest placements...{skip_note}"
         )
-        Thread(target=self._generate_pdf, args=(cells, output, height_cm, orientation, print_mode), daemon=True).start()
+        Thread(
+            target=self._generate_pdf,
+            args=(cells, output, height_cm, orientation, print_mode, limit_to_30_characters),
+            daemon=True,
+        ).start()
         self.poll_id = self.root.after(100, self._poll)
 
-    def _generate_pdf(self, cells, output, height_cm, orientation="landscape", print_mode="full"):
+    def _generate_pdf(
+        self, cells, output, height_cm, orientation="landscape", print_mode="full",
+        limit_to_30_characters=True,
+    ):
         try:
             result = render_labels_pdf(
                 cells,
@@ -666,6 +682,7 @@ class LabelPrinterApp:
                 label_height_cm=height_cm,
                 orientation=orientation,
                 print_mode=print_mode,
+                limit_to_30_characters=limit_to_30_characters,
                 progress=lambda text: self.events.put(("progress", text)),
             )
             self.events.put(("done", result))
