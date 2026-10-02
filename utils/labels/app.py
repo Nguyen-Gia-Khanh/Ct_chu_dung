@@ -328,7 +328,8 @@ class LabelPrinterApp:
         self.details.tag_configure("history", font=("Segoe UI", 10, "bold"), foreground="#8a5a00")
 
         footer = ttk.Frame(self.root, padding=12)
-        footer.pack(fill="x")
+        # Reserve the print controls before the expanding shelf view takes space.
+        footer.pack(side="bottom", fill="x", before=panes)
         ttk.Label(footer, textvariable=self.summary_text).pack(anchor="w", pady=(0, 8))
 
         pdf_history = ttk.Frame(footer)
@@ -386,7 +387,9 @@ class LabelPrinterApp:
         self.print_selected_button = ttk.Button(buttons, text="Print selected cells (PDF)...", command=lambda: self.start_print(True))
         self.print_selected_button.pack(side="left")
         ttk.Button(buttons, text="Open last PDF", command=self.open_last_pdf).pack(side="right")
-        ttk.Label(self.root, textvariable=self.status_text, relief="sunken", anchor="w", padding=(8, 4)).pack(fill="x")
+        ttk.Label(self.root, textvariable=self.status_text, relief="sunken", anchor="w", padding=(8, 4)).pack(
+            side="bottom", fill="x", before=footer,
+        )
         self.update_summary()
 
     def on_location_only_toggle(self):
