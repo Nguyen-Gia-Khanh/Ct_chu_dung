@@ -4,6 +4,21 @@ Use this file to locate the code for a requested desktop change. [README.md](REA
 explains how to launch the app and perform warehouse workflows. The supported UI
 is Tkinter; `ui/web/` and `mapper/api/` are retained as deprecated code.
 
+## Tab index
+
+- [Tab 1: Shelf Designer](#tab-1-shelf-designer)
+- [Tab 2: Assign Locations](#tab-2-assign-locations)
+- [Tab 3: Primal Queue / Shelves](#tab-3-primal-queue--shelves)
+- [Tab 4: Browse Shelves](#tab-4-browse-shelves)
+- [Tab 5: Switch / Combine Cells](#tab-5-switch--combine-cells)
+- [Tab 6: Special Exceptions](#tab-6-special-exceptions)
+- [Tab 7: Web Location Sync](#tab-7-web-location-sync)
+- [Shared files: function sections and tab consumers](#shared-files-function-sections-and-tab-consumers)
+
+Each tab section identifies its view, action methods, shared dependencies, save
+boundary, and checks. Shared files below are divided by named classes/functions
+so a file used by several tabs can be edited at the relevant section.
+
 ## Entry points and tab wiring
 
 `warehouse_mapper.py` parses `--db`, creates the Tk root, and starts
@@ -30,7 +45,33 @@ Chrome** tab triggers a connection and returns to the previous content tab.
 Tab 3 is built from `PrimalQueueView`; `app.lookup` is an alias for that view.
 Check the app wiring before editing an older view with a similar purpose.
 
-## Tab 2: controls and transfer rules
+## Tab 1: Shelf Designer
+
+**View:** [designer.py](ui/desktop/designer.py), `ShelfDesigner`.
+`prepare_row_inputs`, `add_row`, `remove_top_row`, and `validated_layout` own
+the structure controls. Row 1 is the ground row; new rows are added at the top.
+
+**Actions:** [shelf_actions.py](ui/desktop/shelf_actions.py), `ShelfActions`.
+`new_shelf` / `load_selected_shelf` manage editor state; `can_resize_rows` and
+`_slots_are_empty` guard removal of occupied cells; `build_shelf_preview` and
+`render_shelf` send the preview to Tab 4; `commit_changes` saves it.
+`has_pending_changes` / `confirm_discard_pending` also protect navigation and
+Tab 5 operations. Previewing is unsaved; **Commit shelf design** is explicit.
+
+**Shared sections:** `CatalogActions.import_csv` / `import_catalog_csv` and
+`ColumnMappingDialog` handle this tab's two import buttons. Imports write
+immediately through `catalog.py` rather than waiting for the shelf commit.
+`ShelfOperations.commit_shelf` / `_sync_layout` in `shelves.py` save layouts.
+`StateActions.reload_database_state`, `remember_imported_products`, and
+`refresh_shelf_selector` in `ShelfActions` keep caches/selectors current.
+`ScrollableFrame` scrolls the row editor; `clean_location_segment` and
+`make_slot_name` provide naming shared with the other tabs.
+
+**Check:** preview then commit a new shelf; reload it for editing; verify that
+occupied cells cannot be removed and even-side display keeps the saved IDs.
+CSV reimport preservation is covered by `tests/test_persistence.py`.
+
+## Tab 2: Assign Locations
 
 ### Layout
 
@@ -105,6 +146,203 @@ count on the following line. Empty cells are gray, occupied cells are green,
 and the selected cell is blue. Both initial rendering and `refresh_shelf_cell`
 must preserve the same numeric count format. Other shelf views use their own
 label format; changing Tab 2 does not require changing every renderer.
+
+**Refresh dependencies:** `StateActions.apply_inventory_changes` and
+`reconcile_inventory_products` update the queue/catalog/on-hand caches after
+writes. `refresh_visible_cells` routes changed cells to the active view.
+`StockQuantityDialog` belongs to the quantity-entry section of
+`assignment_view.py`; that file's shelf renderer primarily serves Tab 4.
+
+**Save boundary:** the current address/on-hand actions save immediately.
+**Check:** selected moves, all three Shift shortcuts, prefix rejection, timer
+reset, reversal, restart persistence, and unchanged stock in ordinary moves.
+`tests/test_incremental_desktop.py` checks the numeric count format and widget
+reuse; `tests/test_persistence.py` checks the underlying inventory moves.
+
+## Tab 3: Primal Queue / Shelves
+
+**View and local handlers:** [primal_queue_view.py](ui/desktop/primal_queue_view.py),
+`PrimalQueueView`. `refresh` reads working/catalog products and inventory state;
+`refresh_results` / `_update_search_status` filter the two lists and report
+assigned, on-hand, returned, and unassigned products. Exact-ID search and row
+selection use `_highlight_product_location` to navigate to a saved shelf.
+The three `_on_*_double_click` handlers fill/select the search field.
+
+**Shelf section:** `_load_shelf_by_id`, `_render_shelf`, `select_slot`,
+`_refresh_slot_contents`, and `refresh_cell` own the shelf and selected contents.
+This is a read-only inspection tab; searching/selecting does not move products.
+
+**Shared sections:** `ShelfAddressLookup` handles Floor/Side/Shelf lookup;
+`ScrollableFrame`, `shelf_cell_visual`, and `sync_tree_rows` handle display and
+updates. `normalize_search` / `MAX_VISIBLE_PRODUCTS` apply to the lists;
+`make_slot_name` labels the cells. Database reads use `get_product_location`,
+`get_placement_details`, `get_shelf`, and `get_shelf_contents`.
+`StateActions.refresh_visible_cells` can update this tab's changed cells.
+
+**Check:** search a working ID and a catalog-only ID, inspect each state, follow
+an assigned ID to its cell, and double-click a result or cell-content row.
+`tests/test_incremental_desktop.py` covers source/destination cell refreshes.
+The older `lookup_view.py` is not the active Tab 3 implementation.
+
+## Tab 4: Browse Shelves
+
+**View:** [shelf_browser.py](ui/desktop/shelf_browser.py), `ShelfBrowserView`.
+`show_saved_shelf` loads committed data; `show_preview` displays Tab 1's
+uncommitted layout; `_show_layout` feeds the common renderer. `select_slot`,
+`refresh_cell`, and `refresh_loaded_contents` update the selected contents.
+The summary distinguishes **Committed SQLite data** from **Uncommitted shelf
+preview**. Browsing and selecting cells do not write to SQLite.
+
+**Shared sections:** [assignment_view.py](ui/desktop/assignment_view.py),
+`AssignmentView.render_shelf`, `_cell_visual`, `refresh_cell`, and
+`mark_selected` draw and highlight cells. These are separate from that file's
+`StockQuantityDialog` used by Tab 2. `ShelfActions.render_shelf` is the Tab 1
+preview producer; `ShelfAddressLookup` selects saved shelves. Rendering uses
+`ScrollableFrame` / `shelf_cell_visual`; contents use `sync_tree_rows`.
+Persistence reads come from `shelves.py`; `StateActions.refresh_visible_cells`
+refreshes committed cells here after inventory changes.
+
+**Check:** load a saved shelf and inspect cells, then preview a changed layout
+from Tab 1 and confirm it is marked uncommitted. Check count/color/selection
+after a move. Relevant refresh tests are in `tests/test_incremental_desktop.py`.
+
+## Tab 5: Switch / Combine Cells
+
+**View and handlers:** [cell_transfer_view.py](ui/desktop/cell_transfer_view.py).
+`CellTransferPane.find`, `load_shelf`, `select_address`, `_render_shelf`,
+`_refresh_contents`, and `refresh_cell` own each pane. `CellTransferView`
+owns `_selected_pair`, `swap_cells`, `combine_cells`, and the optional explicit
+`modify_location_on_web` action. Switch exchanges both complete cells; combine
+moves all source contents into the destination while retaining its contents.
+
+**Shared sections:** `ShelfActions.can_change_cells` checks pending designer
+changes before a mutation. `InventoryOperations.swap_slot_contents` /
+`combine_slot_contents` in `inventory.py` perform immediate transactions after
+confirmation, retaining quantities and original assignment timestamps.
+`WarehouseMapperApp.on_cell_transfer_changed` reconciles affected products
+through `StateActions.reconcile_inventory_products` / `refresh_visible_cells`.
+`ShelfAddressLookup`, `ScrollableFrame`, `shelf_cell_visual`, and `sync_tree_rows`
+serve both panes. Explicit web updates use
+`WebActions.modify_cell_transfer_locations` and the shared upload worker.
+
+**Check:** switch and both combine directions, same-cell rejection, pending
+designer-change rejection, and source/destination counts after a move.
+`tests/test_persistence.py` checks quantity/time preservation;
+`tests/test_incremental_desktop.py` checks that only changed cells refresh.
+
+## Tab 6: Special Exceptions
+
+**View and handlers:** [exceptions_view.py](ui/desktop/exceptions_view.py),
+`ExceptionsView`. `find_product`, `load_address`, and `assign_exception` add
+locations for existing or unregistered products. `save_name` updates staging;
+`append_to_csv` and `add_to_catalog` register each target separately.
+`refresh_pending_tree`, `refresh_multi_location_tree`, and
+`_filter_catalog_tree` update its three product views. Catalog double-click
+fills the ID and calls `find_product`; it does not assign the product.
+
+**Shared sections:** `ExceptionOperations` in `mapper/persistence/exceptions.py`
+owns `find_product_locations`, `assign_exception`,
+`update_staged_exception_name`, `append_pending_to_csv`, `add_staged_to_catalog`,
+`remove_exception_from_slot`, and `wipe_staged_exception`.
+`remove_from_loaded_cell` removes only the chosen location; `wipe_selected`
+removes staging/catalog entries and all shelf placements after confirmation.
+The latter preserves the working product record and existing CSV file.
+`WarehouseMapperApp` wires the refresh callback to
+`StateActions.on_exception_data_changed`, which reloads caches and views.
+`clean_location_segment`, `make_slot_name`, `normalize_search`, and barcode
+formatting are shared helpers; this tab builds its own address fields.
+
+**Save boundary:** placement is immediate; CSV and catalog registration are
+separate saves tracked by staging status. **Check:** add a second location,
+remove just one location, edit/register a staged name, and distinguish removal
+from wipe. `tests/test_multi_locations.py` and `tests/test_persistence.py`
+cover multiple locations and independent registration targets.
+
+## Tab 7: Web Location Sync
+
+**View and handlers:** [location_comparison_view.py](ui/desktop/location_comparison_view.py).
+`WorkbookColumnDialog` maps worksheet/header/columns. `LocationComparisonView`
+uses `import_excel`, `_start_comparison`, `_run_comparison`, `_poll_comparison`,
+and `_render_comparison_rows` to load/compare data without blocking Tk.
+`pending_updates`, `resync`, `mark_resynced`, and `export_excel` handle results.
+
+**Shared sections:** `suggested_columns`, `read_web_locations`, `location_parts`,
+`compare_locations`, and `export_comparison` in
+`mapper/features/location_comparison.py` supply the data rules. `_local_locations`
+uses database `get_all_placement_items` to include exception locations.
+`WebActions.resync_web_locations` starts the common browser worker and reports
+completion/progress back to this view. `LocationUpdate` and
+`WebsiteUploader.modify_location` in `mapper/features/web_upload.py` are shared
+with Tabs 2 and 5. `data_directory` supplies the export destination.
+
+**Save boundary:** import/compare does not change local placements. Export writes
+an XLSX; explicit resync changes website locations, leaving stock untouched.
+Missing export IDs cannot be compared. Multi-location sets and comma/semicolon/
+pipe/newline separators are supported. **Check:** matching/mismatched sets,
+empty local locations, missing IDs, successful-row exclusion, and fresh-export
+verification. `tests/test_multi_locations.py` covers comparison and upload sets.
+
+## Shared files: function sections and tab consumers
+
+A shared function can serve several tabs. The consumers below describe the
+current desktop wiring, including indirect use through a wrapper. Method names
+identify the relevant code section without depending on changing line numbers.
+
+### Application and action files
+
+| File / function section | Tabs served | Purpose |
+| --- | --- | --- |
+| `app.py`: `_build_ui`, `on_tab_changed`, `on_global_barcode_scan` | All tabs | Callback wiring, activation refresh, and scan routing. |
+| `app.py`: `refresh_assignment_shelf_preview` | 2 | Compact shelf count updates. |
+| `app.py`: `on_cell_transfer_changed` | 5; refreshes inventory consumers | Readback after switch/combine. |
+| `catalog_actions.py`: `import_csv`, `import_catalog_csv` | Buttons on 1; data consumed by 2, 3, 6 | Import into the separate working/catalog stores. |
+| `catalog_actions.py`: `schedule_queue_refresh`, `refresh_product_queue`, `refresh_catalog`, `refresh_search_location`, `activate_catalog_product`, `transfer_catalog_selection_to_queue` | 2 | Search, location status, catalog activation and transfers. Tab 3 has its own search handlers. |
+| `assignment_actions.py`: `move_selected_to_on_hand`, `assign_on_hand_to_address`, `dequeue_selected_on_hand`, `move_address_to_on_hand`, `move_selected_address_to_on_hand`, stock/address/Shift handlers | 2 | Current address-first workflow. |
+| `assignment_actions.py`: `assign_selected_products`, `refresh_slot_contents`, `transfer_selected_products`; `catalog_actions.py`: `preassign_queue_stock`, `return_selected_to_queue` | Older staged workflow | Retained methods; not the current Tab 2 button callbacks in `_build_ui`. |
+| `assignment_view.py`: `StockQuantityDialog` | 2; retained staged assignment code | Per-product quantity entry. |
+| `assignment_view.py`: `AssignmentView.render_shelf`, `_cell_visual`, `refresh_cell`, `mark_selected` | 4; previews produced by 1 | Shared full-size shelf renderer. Tab 2 has its own compact renderer. |
+| `shelf_actions.py`: new/load/resize/preview/commit methods | 1 → 4 for preview | Shelf editor operations. |
+| `shelf_actions.py`: `can_change_cells`, `has_pending_changes` | 1 and 5; app close | Prevent saved-cell changes while editor changes are pending. |
+| `state_actions.py`: `remember_imported_products`, `reload_database_state`, `refresh_all_views` | App-wide caches; directly refresh 2, 6, and optionally 3 | Import/startup/exception refresh. Tabs also refresh on activation. |
+| `state_actions.py`: `apply_inventory_changes`, `reconcile_inventory_products`, `refresh_visible_cells` | Writes from 2, 5; visible cells in 2, 3, 4, 5 | Narrow product readback and in-place list/cell refresh. |
+| `state_actions.py`: `on_exception_data_changed` | 6 → app caches / other consumers | Exception mutation callback. |
+| `web_actions.py`: `_web_placements`, `_upload_products`, `_location_updates`, `upload_selected_product`, `modify_selected_location` | 2 | Selected/all-loaded-cell browser requests. |
+| `web_actions.py`: `modify_cell_transfer_locations` | 5 | Browser request for products in the selected cells. |
+| `web_actions.py`: `resync_web_locations` | 7 | Browser requests from comparison results. |
+| `web_actions.py`: `connect_chrome`, `_saved_location_sets`, `_start_web_update`, `_run_web_upload`, `_poll_web_upload` | Connect Chrome; 2, 5, 7 | Shared browser lifecycle, complete location sets, workers, and progress. |
+
+### Common helpers and widgets
+
+| File / function section | Tabs served | Purpose |
+| --- | --- | --- |
+| `mapper/core/common.py`: `APP_TITLE`, `application_directory`, `default_database_path` | Entire app | Window identity and database path resolution. |
+| `mapper/core/common.py`: `data_directory` | App storage; 7 export | Runtime output paths. |
+| `mapper/core/common.py`: `clean_location_segment` | 1, 2, 3, 4, 5, 6 through their fields/lookups/rendering | Normalize address components. |
+| `mapper/core/common.py`: `make_slot_name` | 1, 2, 3, 4, 5, 6; 7 consumes saved names | One location naming rule. Do not change naming in one renderer alone. |
+| `mapper/core/common.py`: `normalize_search` | 1–6 via address normalization and product search | Case/accent-insensitive normalization. Tab 7 Excel comparison has separate rules in `location_comparison.py`. |
+| `mapper/core/common.py`: `MAX_VISIBLE_PRODUCTS` | 2, 3; older lookup view | Limit displayed queue/catalog results to 750. |
+| `widgets.py`: `ScrollableFrame` and its scrolling methods | 1, 2, 3, 4, 5 | Row editor, quantity dialog, and shelf scroll areas. |
+| `widgets.py`: `sync_tree_rows` | 2, 3, 4, 5 | Reconcile rows in place; Tab 6/7 have their own rendering paths. |
+| `widgets.py`: `shelf_cell_visual` | 3, 4, 5 | Full-size cell count/color/selection styling. Tab 2 styles its compact cells separately. |
+| `shelf_address_lookup.py`: `find_shelf_id`, `ShelfAddressLookup.load` / `set_address` | 3, 4, 5 | Shared Floor/Side/Shelf lookup. Tabs 2/6 use their own address fields. |
+| `utils/barcode_scanner.py`: `BarcodeScanner`, `format_product_id`, `bind_auto_highlight`, `select_all_entry_text` | Main scan/search flows in 2, 3, 5, 6 | Scanner detection, ID formatting, and entry selection; app routes scans to the active view. |
+
+### Persistence and feature functions
+
+| File / function section | Tabs served | Purpose |
+| --- | --- | --- |
+| `catalog.py`: `import_products`, `import_catalog_products`, `get_display_catalog_products` | Imports on 1; transfers on 2; reads on 2, 3, 6 | Product stores and combined display names. |
+| `shelves.py`: `commit_shelf`, `_sync_layout` | 1 | Save structure; other tabs read the committed result. |
+| `shelves.py`: `get_shelf`, `get_slot_address`, `get_slot_contents`, `get_shelf_contents` | 1–6 through editor/view/actions | Resolve saved addresses and render contents. |
+| `inventory.py`: queue/on-hand/direct/stock/revert methods | 2 | Immediate inventory changes and Shift reversal. |
+| `inventory.py`: `swap_slot_contents`, `combine_slot_contents` | 5 | Atomic cell transfers. |
+| `inventory.py`: `get_product_inventory_states` | Writes on 2/5 through state reconciliation | Read back only affected product state. |
+| `inventory.py`: `get_product_location`, `get_placement_details`, `get_all_placement_items` | Product/shelf consumers; 7 reads all placements; 2/5 web requests read location sets | Regular and exception placement reads. |
+| `exceptions.py`: lookup/assignment/staging/registration/removal methods | 6; placement consumers in 2–5 and 7 | Extra locations and independent registration targets. |
+| `schema.py`, `models.py`, `database.py` | Entire app | Schema, record/validation types, and composed database facade. |
+| `mapper/features/csv_import.py`: `read_csv`; `csv_dialog.py`: `ColumnMappingDialog` | 1 | CSV parsing and import column selection. |
+| `mapper/features/location_comparison.py`: import/compare/export functions | 7 | Website-export data rules. |
+| `mapper/features/web_upload.py`: `LocationUpdate`, `WebsiteUploader.modify_location` and connection/save helpers | 2, 5, 7 | Browser updates and verification of complete location sets. |
 
 ## State, save boundaries, and persistence
 

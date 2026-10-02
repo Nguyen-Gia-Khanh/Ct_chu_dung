@@ -6,30 +6,24 @@ shelves. SQLite is local, so no Docker or database server is required.
 For source changes, see [instruction.md](instruction.md): it maps each desktop
 tab to its view, action handlers, persistence methods, and verification steps.
 
-## Even-side shelf orientation
-
-Tkinter shelf views show each even-side row in descending cell order. The
-one-time remap of existing product locations is complete. New products use the
-current location IDs directly, so shelves no longer store a switching flag.
-
 ## Seven tabs
 
-1. **Shelf Designer** — import CSV files, create or edit a shelf, and commit its
+1. [**Shelf Designer**](#tab-1-shelf-designer) — import CSV files, create or edit a shelf, and commit its
    structure. Rows count upward from the ground and may contain different cell
    counts.
-2. **Assign Locations** — search the total queue and full catalog, prepare a
+2. [**Assign Locations**](#tab-2-assign-locations) — search the total queue and full catalog, prepare a
    persistent on-hand batch, enter an exact floor/side/shelf/row/cell address,
    and move the batch into that address.
-3. **Primal Queue / Shelves** — search working products and the full catalog,
+3. [**Primal Queue / Shelves**](#tab-3-primal-queue--shelves) — search working products and the full catalog,
    inspect queue/on-hand/assigned state and stock, and navigate to saved shelves.
-4. **Browse Shelves** — choose a committed shelf, view its 2D front layout, and
+4. [**Browse Shelves**](#tab-4-browse-shelves) — choose a committed shelf, view its 2D front layout, and
    click cells to inspect their products.
-5. **Switch / Combine Cells** — load two shelves independently, select one cell
+5. [**Switch / Combine Cells**](#tab-5-switch--combine-cells) — load two shelves independently, select one cell
    on each side, then atomically switch their contents or combine one complete
    cell into the other.
-6. **Special Exceptions** — assign products to multiple shelf locations and
+6. [**Special Exceptions**](#tab-6-special-exceptions) — assign products to multiple shelf locations and
    register staged exceptions in the CSV and full catalog separately.
-7. **Web Location Sync** — import a KiotViet Excel export, inspect location
+7. [**Web Location Sync**](#tab-7-web-location-sync) — import a KiotViet Excel export, inspect location
    differences, resync mismatched products, and export a comparison workbook.
 
 The total queue, on-hand queue, and assigned shelf locations are separate
@@ -69,9 +63,7 @@ code, or other app resources.
 Selenium is only needed for the optional Chrome/KiotViet integration. Tab 7
 uses `openpyxl` to read and write `.xlsx` workbooks.
 
-## Main workflow
-
-### Create the shelf structure
+## Tab 1: Shelf Designer
 
 1. On tab 1, import the working product CSV and full catalog CSV as needed.
 2. Enter floor, side, shelf code, and row count.
@@ -79,6 +71,23 @@ uses `openpyxl` to read and write `.xlsx` workbooks.
    removing rows always changes the top of the shelf first.
 4. Press **Build / refresh 2D shelf** to inspect the preview on tab 4.
 5. Return to tab 1 and press **Commit shelf design**.
+
+### CSV imports
+
+The import dialog asks which columns contain product ID, full name, and
+shortened name. Extra CSV columns are allowed. Re-importing an existing product
+ID updates its names; it does not delete its shelf placement, stock, or
+historical assignment time. IDs absent from a later CSV remain in the database.
+Re-importing the full catalog updates its stored names; queue names continue
+to take precedence in the combined view for IDs still in the working queue.
+
+View: [designer.py](ui/desktop/designer.py). Shelf creation, preview, and
+commit: [shelf_actions.py](ui/desktop/shelf_actions.py). CSV imports:
+`CatalogActions.import_csv` / `import_catalog_csv` in
+[catalog_actions.py](ui/desktop/catalog_actions.py). Preview drawing is shared
+with Tab 4; see the [source guide](instruction.md#tab-1-shelf-designer).
+
+## Tab 2: Assign Locations
 
 ### Assign products by address
 
@@ -97,7 +106,7 @@ uses `openpyxl` to read and write `.xlsx` workbooks.
    loaded address**. Only that selected subset moves; the rest stays on-hand.
    The move is saved immediately in one SQLite transaction.
 
-### Tab 2 Shift shortcuts
+### Shift shortcuts
 
 Normal clicks prepare selected products in queues. Hold **Shift** to enable
 the direct-transfer/whole-batch shortcuts; the button labels change while it
@@ -137,7 +146,7 @@ is for the Shelf Designer's pending changes. To move a product while preserving
 its actual stock, use the ordinary on-hand workflow. Direct catalog/queue Shift
 transfers use stock **999**.
 
-### Update website locations from Tab 2
+### Update website locations
 
 **Connect Chrome** on the main tab bar starts the browser connection and returns
 to the current tab. Web actions default to one product: click
@@ -149,47 +158,7 @@ reports its current position, and stops at the first failed SKU so the browser i
 not advanced from an uncertain state. The temporarily hidden stock-upload action
 uses the same single/all-products switch.
 
-### Switch or combine cells
-
-1. Open tab 5 and use each side's Floor → Side → Shelf → Row → Cell selectors,
-   or find a cell by exact product ID/location ID.
-2. Check the product list beneath each selected cell.
-3. Use **Switch cells ↔** to exchange both complete contents, or either
-   **Combine** button to empty its source into the other cell while keeping the
-   target's existing products.
-
-Each action asks for confirmation and writes one immediate SQLite transaction.
-Stock quantities and original shelf-added timestamps are preserved. The two
-shelves may be the same shelf or different shelves, but the selected cells must
-be different. Pending Shelf Designer changes must be committed or discarded
-first. This tab changes local SQLite locations only; use the tab 2 web action
-afterward when KiotViet must receive the new location IDs.
-
-### Compare and resync KiotViet locations
-
-1. On tab 7, press **Import Web's Data** and choose the KiotViet `.xlsx` export.
-   Import, comparison, and export run in the background while a thin loading bar
-   shows activity.
-2. Confirm the worksheet and columns. The supplied KiotViet headers **Mã hàng**
-   and **Vị trí** are selected automatically.
-3. Review website and local locations side by side. A website location with no
-   saved local location is queued to be cleared on the website. Local IDs absent
-   from the export are shown separately and are not uploaded.
-4. Connect Chrome on tab 2, then press **Web resync** on tab 7. The app saves
-   each comparable mismatch in sequence using tab 2's location-only
-   upload; an empty local location clears the website selection without
-   creating a location. Stock quantities are untouched. Successfully resynced
-   rows are excluded from another upload until a new export is imported.
-5. Press **Export comparison excel** to save the remaining mismatches under
-   `data/exports/location_comparison/` as an `.xlsx` file with exactly `product_id`,
-   `wrong_location`, and `true_location`.
-
-Products with several local locations are compared and uploaded as complete
-location sets, including exception placements. Commas, semicolons, pipes, and
-newlines in the website export are accepted as location separators. Import a
-new KiotViet export to verify completed updates.
-
-## Search and catalog behavior
+### Search and catalog behavior
 
 One search box filters both the total queue and the full catalog. It searches
 product ID, full name, and shortened name without case or Vietnamese accents.
@@ -209,16 +178,71 @@ in the search field; it does not transfer the product.
 An 11-character barcode such as `06410KFL850` is normalized to
 `06410-KFL-850` in the search field.
 
-## Location names
+View: [location_assignment_view.py](ui/desktop/location_assignment_view.py).
+Moves and stock/address actions: [assignment_actions.py](ui/desktop/assignment_actions.py).
+Search and catalog transfers: [catalog_actions.py](ui/desktop/catalog_actions.py).
+Quantity entry uses `StockQuantityDialog` in the shared `assignment_view.py`;
+[source sections and callbacks](instruction.md#tab-2-assign-locations) are listed
+in the source guide.
 
-The location rule is centralized in `mapper/core/common.py`. For Floor `1`, Side
-`1`, Shelf `A`, Row `8`, Cell `10`, the generated ID is:
+## Tab 3: Primal Queue / Shelves
 
-```text
-L1-1A8-10
-```
+Search the working product list and full catalog by product ID, full name, or
+shortened name. Working products remain in this view after assignment: their
+rows report assigned location, on-hand state, returned state, or unassigned
+state and any recorded stock. Exact-ID search or selecting an assigned product
+navigates to its saved shelf and cell.
 
-## Special exceptions
+Double-click a working/catalog result or a cell-content row to fill and select
+its ID in the search field. Use the saved-shelf selector or Floor/Side/Shelf
+lookup to browse a shelf, then click a cell to inspect its products. These
+search and selection actions do not move inventory.
+
+View and handlers: [primal_queue_view.py](ui/desktop/primal_queue_view.py).
+Shelf lookup uses `ShelfAddressLookup`; cell styling and row refresh use
+`shelf_cell_visual` / `sync_tree_rows` in `widgets.py`. The older `lookup_view.py`
+is not the active numbered tab. See [Tab 3 source sections](instruction.md#tab-3-primal-queue--shelves).
+
+## Tab 4: Browse Shelves
+
+Choose a saved shelf from the list or load it by Floor/Side/Shelf. Click a cell
+to see its saved products, quantities, and added-to-shelf times. Browsing does
+not change assignments.
+
+Tab 1 also sends its unsaved layout preview here. Check the summary:
+**Committed SQLite data** describes a saved shelf; **Uncommitted shelf preview**
+describes pending designer changes. Return to Tab 1 and commit to save a preview.
+
+View: [shelf_browser.py](ui/desktop/shelf_browser.py). The common shelf renderer
+is `AssignmentView.render_shelf` / `refresh_cell` in
+[assignment_view.py](ui/desktop/assignment_view.py), while the preview producer
+is `ShelfActions.render_shelf`. This renderer is separate from the stock dialog
+used by Tab 2. See [Tab 4 source sections](instruction.md#tab-4-browse-shelves).
+
+## Tab 5: Switch / Combine Cells
+
+1. Open tab 5 and use each side's Floor → Side → Shelf → Row → Cell selectors,
+   or find a cell by exact product ID/location ID.
+2. Check the product list beneath each selected cell.
+3. Use **Switch cells ↔** to exchange both complete contents, or either
+   **Combine** button to empty its source into the other cell while keeping the
+   target's existing products.
+
+Each action asks for confirmation and writes one immediate SQLite transaction.
+Stock quantities and original shelf-added timestamps are preserved. The two
+shelves may be the same shelf or different shelves, but the selected cells must
+be different. Pending Shelf Designer changes must be committed or discarded
+first. Switch/combine changes local SQLite locations. To update KiotViet afterward,
+use the explicit **Modify location ID on web** action on this tab or the
+location action on Tab 2.
+
+View and local actions: [cell_transfer_view.py](ui/desktop/cell_transfer_view.py),
+`CellTransferPane` / `CellTransferView`. `swap_slot_contents` / `combine_slot_contents`
+in `mapper/persistence/inventory.py` handle transactions. Pending-change checks
+come from `ShelfActions.can_change_cells`; web requests use
+`WebActions.modify_cell_transfer_locations`. See [Tab 5 source sections](instruction.md#tab-5-switch--combine-cells).
+
+## Tab 6: Special Exceptions
 
 On tab 6, enter a product ID and optional name, load a cell, then assign it.
 The staged row remains visible while you register the product with **Append
@@ -231,14 +255,78 @@ Changing a staged name reopens both registrations so the new name can be saved.
 catalog, and deletes its regular and exception shelf placements. The working
 product record and any CSV file remain. The app asks for confirmation first.
 
-## CSV behavior
+To remove only one location, load that cell and use the remove-from-cell action.
+Other locations and registration remain. Catalog double-click fills the product
+ID and looks it up without assigning it.
 
-The import dialog asks which columns contain product ID, full name, and
-shortened name. Extra CSV columns are allowed. Re-importing an existing product
-ID updates its names; it does not delete its shelf placement, stock, or
-historical assignment time. IDs absent from a later CSV remain in the database.
-Re-importing the full catalog updates its stored names; queue names continue
-to take precedence in the combined view for IDs still in the working queue.
+View: [exceptions_view.py](ui/desktop/exceptions_view.py). Assignment, staging,
+registration, and removal use `ExceptionOperations` in
+[mapper/persistence/exceptions.py](mapper/persistence/exceptions.py).
+`StateActions.on_exception_data_changed` refreshes app caches after these writes.
+See [Tab 6 source sections](instruction.md#tab-6-special-exceptions).
+
+## Tab 7: Web Location Sync
+
+1. On tab 7, press **Import Web's Data** and choose the KiotViet `.xlsx` export.
+   Import, comparison, and export run in the background while a thin loading bar
+   shows activity.
+2. Confirm the worksheet and columns. The supplied KiotViet headers **Mã hàng**
+   and **Vị trí** are selected automatically.
+3. Review website and local locations side by side. A website location with no
+   saved local location is queued to be cleared on the website. Local IDs absent
+   from the export are shown separately and are not uploaded.
+4. Connect Chrome on tab 2, then press **Web resync** on tab 7. The app saves
+   each comparable mismatch in sequence using the shared location-only
+   browser worker; an empty local location clears the website selection without
+   creating a location. Stock quantities are untouched. Successfully resynced
+   rows are excluded from another upload until a new export is imported.
+5. Press **Export comparison excel** to save the remaining mismatches under
+   `data/exports/location_comparison/` as an `.xlsx` file with exactly `product_id`,
+   `wrong_location`, and `true_location`.
+
+Products with several local locations are compared and uploaded as complete
+location sets, including exception placements. Commas, semicolons, pipes, and
+newlines in the website export are accepted as location separators. Import a
+new KiotViet export to verify completed updates.
+
+View: [location_comparison_view.py](ui/desktop/location_comparison_view.py).
+Excel parsing/comparison/export: [location_comparison.py](mapper/features/location_comparison.py).
+Browser requests: `WebActions.resync_web_locations`, sharing the worker and
+`WebsiteUploader` with Tabs 2 and 5. See [Tab 7 source sections](instruction.md#tab-7-web-location-sync).
+
+## Shared behavior and function ownership
+
+A shared file can contain sections serving different tabs. Use the named class
+or method to find the relevant section; the [full function-to-tab map](instruction.md#shared-files-function-sections-and-tab-consumers)
+includes persistence and retained handlers.
+
+| Shared file / section | Tabs using it |
+| --- | --- |
+| `app.py`: `_build_ui`, `on_tab_changed`, `on_global_barcode_scan` | All tabs: wiring, activation, scans. |
+| `catalog_actions.py`: import methods vs. search/transfer methods | Imports on 1; search/transfers on 2. Imported data is also read by 3 and 6. |
+| `assignment_view.py`: `StockQuantityDialog` vs. `AssignmentView.render_shelf` / `refresh_cell` | Quantity dialog on 2; shelf rendering on 4, including previews from 1. |
+| `shelf_actions.py`: preview/commit vs. `can_change_cells` | Editor/preview on 1 and 4; pending-change guard on 5. |
+| `state_actions.py`: `reconcile_inventory_products`, `refresh_visible_cells`, `on_exception_data_changed` | Writes from 2/5; visible cells on 2/3/4/5; exception callback from 6. |
+| `widgets.py`: `ScrollableFrame`, `sync_tree_rows`, `shelf_cell_visual` | Scrolling on 1-5; row updates on 2-5; common cell styling on 3-5. Tab 2 has its own compact styling. |
+| `shelf_address_lookup.py`: `ShelfAddressLookup` | 3, 4, 5. Tabs 2/6 use their own address fields. |
+| `mapper/core/common.py`: `clean_location_segment`, `make_slot_name`, `normalize_search` | Address/search consumers in 1-6; 7 reads saved location names and has separate comparison rules. |
+| `utils/barcode_scanner.py`: scan detection and ID/entry helpers | Main scan/search flows on 2, 3, 5, 6. |
+| `web_actions.py`: selected-cell methods, `modify_cell_transfer_locations`, `resync_web_locations`, worker methods | Requests from 2, 5, 7 respectively; shared Chrome/worker code. |
+
+### Shelf orientation
+
+Tkinter shelf views show each even-side row in descending cell order. The
+one-time remap of existing product locations is complete. New products use the
+current location IDs directly, so shelves no longer store a switching flag.
+
+### Location names
+
+The location rule is centralized in `mapper/core/common.py`. For Floor `1`, Side
+`1`, Shelf `A`, Row `8`, Cell `10`, the generated ID is:
+
+```text
+L1-1A8-10
+```
 
 ## Code layout
 
