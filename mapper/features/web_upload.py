@@ -815,6 +815,10 @@ class WebsiteUploader:
         options.debugger_address = DEBUGGER_ADDRESS
         try:
             self.driver = webdriver.Chrome(options=options)
+            self.driver.execute_cdp_cmd("Network.enable", {})
+            self.driver.execute_cdp_cmd(
+                "Network.setCacheDisabled", {"cacheDisabled": True}
+            )
             self.driver.set_page_load_timeout(self.timeout)
             self.driver.set_script_timeout(self.timeout)
             # Also bound individual HTTP commands, not only polling waits.
