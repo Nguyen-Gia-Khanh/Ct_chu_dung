@@ -91,8 +91,9 @@ with Tab 4; see the [source guide](instruction.md#tab-1-shelf-designer).
 
 ### Assign products by address
 
-1. On tab 2, search the product queue. Products already on-hand or assigned stay
-   visible in gray; only ready rows can move through the queue transfer buttons.
+1. On tab 2, search the product queue. Unassigned matches appear first; assigned
+   matches remain visible in gray below them. Gray applies only to this queue.
+   Only ready rows can move through the queue transfer buttons.
 2. Select one or more products and press **Move selected → on-hand**.
 3. Enter each product's stock quantity in the dialog and confirm the move.
    The products appear in the middle pane's **On-hand queue** view. This batch
@@ -133,12 +134,14 @@ when the app closes.
 
 ### Return products and modify stock
 
-Ctrl-click one or more on-hand rows and use **Dequeue selected → source**
-to return only that subset without assigning it. Products brought in from the
-catalog return to the catalog; shelf products return to their recorded source
-address with the original stock and shelf-added time. Products from the queue
-return there with stock retained and appear first in bold yellow; moving them
-to on-hand again prefills that stock. Sources survive restarting the app.
+Removing products from a shelf moves them to on-hand first. Ctrl-click one or
+more on-hand rows and use **Dequeue selected → queue / catalog** to remove
+that subset from the batch. Total-queue products return to the total queue with
+stock retained; catalog-only products return to the full catalog, even after
+being assigned and removed from a shelf. Dequeue does not restore a shelf
+assignment. Returned queue rows use ordinary styling, with no yellow or bold
+highlight; moving them to on-hand again prefills their stock. Queue/catalog
+membership survives restarting the app.
 Transfers made before source tracking was added return to the total queue.
 In the loaded address,
 Ctrl-click one or more rows and use **Selected product(s) → on-hand** for a

@@ -252,7 +252,7 @@ class LocationAssignmentView(ttk.Frame):
 
         split = ttk.Panedwindow(parent, orient="vertical")
         split.pack(fill="both", expand=True)
-        queue = ttk.LabelFrame(split, text="Product queue · gray = on-hand / assigned", padding=6)
+        queue = ttk.LabelFrame(split, text="Product queue · gray = assigned", padding=6)
         catalog = ttk.LabelFrame(split, text="Full product catalog", padding=6)
         split.add(queue, weight=1)
         split.add(catalog, weight=1)
@@ -290,11 +290,6 @@ class LocationAssignmentView(ttk.Frame):
         )
         self._configure_queue_tree(self.queue_tree)
         self.queue_tree.tag_configure("assigned", foreground="#999999", background="#eeeeee")
-        self.queue_tree.tag_configure(
-            "returned",
-            background="#fff2a8",
-            font=("Segoe UI", 9, "bold"),
-        )
         queue_scroll = ttk.Scrollbar(
             queue_body, orient="vertical", command=self.queue_tree.yview
         )
@@ -481,7 +476,7 @@ class LocationAssignmentView(ttk.Frame):
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
         ttk.Button(
             hand_actions,
-            text="Dequeue selected → source",
+            text="Dequeue selected → queue / catalog",
             command=on_dequeue_hand,
         ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
 

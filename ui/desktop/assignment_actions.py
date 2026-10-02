@@ -54,7 +54,7 @@ class AssignmentActions:
             if not product_ids:
                 messagebox.showinfo(
                     "Choose products",
-                    "Select one or more ready products from the total queue. Gray products are already on-hand or assigned.",
+                    "Select one or more ready products from the total queue. Products already on-hand or assigned cannot move again.",
                     parent=self.root,
                 )
                 return
@@ -545,7 +545,7 @@ class AssignmentActions:
             self.transferred_stock.pop(pid, None)
         self.reconcile_inventory_products(product_ids)
         self.status_text.set(
-            f"Returned {moved} selected product(s) to their source. Saved immediately."
+            f"Dequeued {moved} selected product(s) to the total queue or full catalog. Saved immediately."
         )
 
     def move_address_to_on_hand(self) -> None:

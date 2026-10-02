@@ -14,15 +14,17 @@ from .widgets import sync_tree_rows
 
 
 class CatalogActions:
+    def is_queue_product_assigned(self, product_id: str) -> bool:
+        return product_id in self.staged_assignments or (
+            product_id in self.committed_locations
+            and product_id not in self.pending_unassignments
+        )
+
     def is_queue_product_available(self, product_id: str) -> bool:
         """Gray queue rows remain searchable but cannot be transferred again."""
         return (
-            product_id not in self.staged_assignments
+            not self.is_queue_product_assigned(product_id)
             and product_id not in getattr(self, "on_hand_products", {})
-            and (
-                product_id not in self.committed_locations
-                or product_id in self.pending_unassignments
-            )
         )
 
     def activate_catalog_product(self, event) -> str | None:
@@ -341,7 +343,7 @@ class CatalogActions:
             available.append((product_id, product_name))
         available.sort(
             key=lambda product: (
-                product[0] not in returned_queue,
+                self.is_queue_product_assigned(product[0]),
                 product[0].casefold() != raw_query.casefold(),
                 product[0].casefold(),
             )
@@ -358,7 +360,7 @@ class CatalogActions:
                 else:
                     qty_text = str(returned.stock_qty)
                 values = (product_id, product_name, qty_text)
-                tags = ("returned",) if returned is not None else ()
+                tags = ()
                 if not self.is_queue_product_available(product_id):
                     item = (
                         self.staged_assignments.get(product_id)
@@ -370,7 +372,7 @@ class CatalogActions:
                         else "Unknown"
                     )
                     values = (product_id, product_name, qty_text)
-                    tags = ("assigned",)
+                    tags = ("assigned",) if self.is_queue_product_assigned(product_id) else ()
             else:
                 stored_qty = self.transferred_stock.get(product_id)
                 tags = ("transferred",) if product_id in self.transferred_stock else ()

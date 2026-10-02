@@ -34,6 +34,11 @@ class CatalogOperations:
                     for product_id, value in records.items()
                 ],
             )
+            # An explicit queue CSV import establishes total-queue membership.
+            connection.executemany(
+                "INSERT OR REPLACE INTO queue_origins (product_id, snapshot) VALUES (?, ?)",
+                ((pid, '{"was_in_products": true}') for pid in records),
+            )
         return len(records) - len(existing), len(existing)
 
     def get_products(self) -> list[tuple[str, str]]:

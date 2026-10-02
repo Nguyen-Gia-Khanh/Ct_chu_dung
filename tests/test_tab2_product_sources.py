@@ -59,36 +59,42 @@ class ProductSourceTests(WorkspaceTestCase):
         self.assertEqual((returned["P1"].stock_qty, returned["P2"].stock_qty), (9, 4))
         self.assertEqual(set(dict(self.db.get_products())), {"P1", "P2"})
 
-    def test_shelf_return_preserves_original_stock_and_timestamp(self):
+    def test_shelf_removal_goes_to_on_hand_then_dequeue_to_total_queue(self):
         self.db.add_to_on_hand({"P1": 7}, FIRST)
         self.db.assign_on_hand_to_slot(self.first.slot_id, FIRST)
         self.db.move_slot_to_on_hand(self.first.slot_id, SECOND, ["P1"])
+        self.assertEqual(self.db.get_placement_details(), {})
+        self.assertEqual(self.db.get_on_hand_products()["P1"].stock_qty, 7)
         self.db.update_on_hand_stock("P1", 20)
         db = WarehouseDatabase(self.path)
         db.dequeue_on_hand(["P1"], SECOND, restore_origin=True)
-        self.assertEqual(db.get_placement_details()["P1"], Placement(self.first.slot_name, 7, FIRST))
+        self.assertEqual(db.get_placement_details(), {})
+        self.assertEqual(db.get_returned_queue_products()["P1"].stock_qty, 20)
         self.assertEqual(db.get_on_hand_products(), {})
 
-    def test_catalog_pull_restores_all_shelf_locations(self):
+    def test_catalog_pull_does_not_restore_shelf_locations_on_dequeue(self):
         self.db.add_to_on_hand({"P1": 7}, FIRST)
         self.db.assign_on_hand_to_slot(self.first.slot_id, FIRST)
         self.db.assign_exception("P1", self.second.slot_id)
-        original = self.db.get_all_placement_items()
         self.pull("P1")
         self.assertEqual(self.db.get_all_placement_items(), [])
         self.db.add_to_on_hand({"P1": 7}, SECOND)
         self.db.dequeue_on_hand(["P1"], SECOND, restore_origin=True)
-        self.assertEqual(self.db.get_all_placement_items(), original)
+        self.assertEqual(self.db.get_all_placement_items(), [])
+        self.assertEqual(self.db.get_returned_queue_products()["P1"].stock_qty, 7)
 
-    def test_new_shelf_move_replaces_old_catalog_origin(self):
+    def test_catalog_membership_survives_assignment_and_shelf_removal(self):
         self.pull("C1")
         self.db.add_to_on_hand({"C1": 5}, FIRST)
         self.db.assign_on_hand_to_slot(self.first.slot_id, FIRST)
         self.db.move_slot_to_on_hand(self.first.slot_id, SECOND)
+        self.assertEqual(self.db.get_on_hand_products()["C1"].stock_qty, 5)
         self.db.dequeue_on_hand(["C1"], SECOND, restore_origin=True)
-        self.assertEqual(self.db.get_placement_details()["C1"], Placement(self.first.slot_name, 5, FIRST))
+        self.assertNotIn("C1", dict(self.db.get_products()))
+        self.assertEqual(self.db.get_placement_details(), {})
+        self.assertEqual(self.db.get_catalog_products(), [("C1", "Catalog part", "Part")])
 
-    def test_missing_source_rolls_back_entire_selected_return(self):
+    def test_dequeue_does_not_depend_on_former_shelf_existing(self):
         self.pull("C1")
         self.db.add_to_on_hand({"P1": 7}, FIRST)
         self.db.assign_on_hand_to_slot(self.first.slot_id, FIRST)
@@ -96,10 +102,24 @@ class ProductSourceTests(WorkspaceTestCase):
         self.db.add_to_on_hand({"C1": 5}, FIRST)
         with closing(self.db.connect()) as connection, connection:
             connection.execute("DELETE FROM slots WHERE slot_id = ?", (self.first.slot_id,))
-        with self.assertRaises(KeyError):
-            self.db.dequeue_on_hand(["C1", "P1"], SECOND, restore_origin=True)
-        self.assertEqual(set(self.db.get_on_hand_products()), {"P1", "C1"})
+        self.db.dequeue_on_hand(["C1", "P1"], SECOND, restore_origin=True)
+        self.assertEqual(self.db.get_on_hand_products(), {})
+        self.assertNotIn("C1", dict(self.db.get_products()))
+        self.assertEqual(self.db.get_returned_queue_products()["P1"].stock_qty, 7)
+
+    def test_direct_catalog_assignment_keeps_catalog_membership(self):
+        self.db.assign_catalog_direct_to_slot(self.first.slot_id, FIRST, {"C1": ("Catalog part", "Part")})
+        self.db.move_slot_to_on_hand(self.first.slot_id, SECOND)
+        self.db.dequeue_on_hand(["C1"], SECOND, restore_origin=True)
+        self.assertNotIn("C1", dict(self.db.get_products()))
+
+    def test_queue_csv_import_establishes_queue_membership(self):
+        self.pull("C1")
+        self.db.import_products({"C1": "Now a queue product"})
+        self.db.add_to_on_hand({"C1": 5}, FIRST)
+        self.db.dequeue_on_hand(["C1"], SECOND, restore_origin=True)
         self.assertIn("C1", dict(self.db.get_products()))
+        self.assertEqual(self.db.get_returned_queue_products()["C1"].stock_qty, 5)
 
     def test_catalog_return_preserves_new_exception_assignment(self):
         self.pull("C1")
@@ -143,10 +163,33 @@ class ProductSourceTests(WorkspaceTestCase):
         app.committed_placements["P1"] = Placement(self.first.slot_name, 7, FIRST)
         app.refresh_product_queue()
         tree = app.assignments.queue_tree
-        self.assertEqual(tree.get_children(), ("product::P1", "product::P2"))
+        self.assertEqual(tree.get_children(), ("product::P2", "product::P1"))
         self.assertEqual(tree.item("product::P1", "tags"), ("assigned",))
         self.assertEqual(tree.item("product::P1", "values"), ("P1", "Bolts", "7"))
         self.assertEqual(tree.deleted, [])
+
+    def test_search_keeps_ready_matches_above_assigned_matches(self):
+        app = self.make_actions()
+        app.assignments.search_var = SimpleNamespace(get=lambda: "p")
+        app.committed_locations["P1"] = self.first.slot_name
+        app.committed_placements["P1"] = Placement(self.first.slot_name, 7, FIRST)
+        app.refresh_product_queue()
+        self.assertEqual(app.assignments.queue_tree.get_children(), ("product::P2", "product::P1"))
+
+    def test_returned_rows_have_no_highlight_or_sort_priority(self):
+        app = self.make_actions()
+        app.returned_queue_products["P2"] = SimpleNamespace(stock_qty=4)
+        app.refresh_product_queue()
+        self.assertEqual(app.assignments.queue_tree.get_children(), ("product::P1", "product::P2"))
+        self.assertEqual(app.assignments.queue_tree.item("product::P2", "tags"), ())
+        self.assertEqual(app.assignments.queue_tree.item("product::P2", "values")[2], "4")
+
+    def test_on_hand_product_is_unassigned_and_not_gray(self):
+        app = self.make_actions()
+        app.on_hand_products["P1"] = SimpleNamespace(stock_qty=7)
+        app.refresh_product_queue()
+        self.assertEqual(app.assignments.queue_tree.item("product::P1", "tags"), ())
+        self.assertFalse(app.is_queue_product_available("P1"))
 
     def test_shift_queue_transfer_skips_gray_rows(self):
         app = self.make_actions()
