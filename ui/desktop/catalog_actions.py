@@ -237,7 +237,6 @@ class CatalogActions:
         raw_query = self.assignments.search_var.get().strip()
         query = normalize_search(raw_query)
         persistent_queue = hasattr(self.assignments, "on_hand_tree")
-        returned_queue = getattr(self, "returned_queue_products", {})
 
         available = []
         for product_id, product_name in self.products.items():
@@ -259,27 +258,14 @@ class CatalogActions:
         rows = []
         for product_id, product_name in available[:MAX_VISIBLE_PRODUCTS]:
             if persistent_queue:
-                returned = returned_queue.get(product_id)
-                if returned is None:
-                    qty_text = ""
-                elif returned.stock_qty is None:
-                    qty_text = "Unknown"
-                else:
-                    qty_text = str(returned.stock_qty)
-                values = (product_id, product_name, qty_text)
-                tags = ()
-                if not self.is_queue_product_available(product_id):
-                    item = (
-                        self.staged_assignments.get(product_id)
-                        or getattr(self, "on_hand_products", {}).get(product_id)
-                        or self.committed_placements.get(product_id)
-                    )
-                    qty_text = (
-                        str(item.stock_qty) if item and item.stock_qty is not None
-                        else "Unknown"
-                    )
-                    values = (product_id, product_name, qty_text)
-                    tags = ("assigned",) if self.is_queue_product_assigned(product_id) else ()
+                assigned = self.is_queue_product_assigned(product_id)
+                placement = self.staged_assignments.get(product_id) or self.committed_placements.get(product_id)
+                location_id = (
+                    placement.slot_name if placement is not None
+                    else self.committed_locations.get(product_id, "")
+                ) if assigned else ""
+                values = (product_id, product_name, location_id)
+                tags = ("assigned",) if assigned else ()
             else:
                 stored_qty = self.transferred_stock.get(product_id)
                 tags = ("transferred",) if product_id in self.transferred_stock else ()

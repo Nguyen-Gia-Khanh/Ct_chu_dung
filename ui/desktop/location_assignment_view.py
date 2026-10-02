@@ -283,7 +283,7 @@ class LocationAssignmentView(ttk.Frame):
         queue_body.columnconfigure(0, weight=1)
         self.queue_tree = ttk.Treeview(
             queue_body,
-            columns=("product_id", "product_name", "stock_qty"),
+            columns=("product_id", "product_name", "location_id"),
             show="headings",
             selectmode="extended",
             height=8,
@@ -369,10 +369,10 @@ class LocationAssignmentView(ttk.Frame):
     def _configure_queue_tree(tree: ttk.Treeview) -> None:
         tree.heading("product_id", text="Product ID")
         tree.heading("product_name", text="Product name")
-        tree.heading("stock_qty", text="Stock")
+        tree.heading("location_id", text="Location ID")
         tree.column("product_id", width=110, minwidth=80, stretch=False)
         tree.column("product_name", width=190, minwidth=110)
-        tree.column("stock_qty", width=65, minwidth=50, anchor="e", stretch=False)
+        tree.column("location_id", width=120, minwidth=85, stretch=False)
 
     def _build_hand_panel(
         self,

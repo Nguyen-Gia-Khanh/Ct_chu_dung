@@ -93,6 +93,8 @@ with Tab 4; see the [source guide](instruction.md#tab-1-shelf-designer).
 
 1. On tab 2, search the product queue. Unassigned matches appear first; assigned
    matches remain visible in gray below them. Gray applies only to this queue.
+   The **Location ID** column shows assigned shelf addresses and is blank for
+   unassigned products.
    Only ready rows can move through the queue transfer buttons.
 2. Enter Floor, Side, and Shelf in the middle pane. Select **Shelf Selection
    Pane** to view that shelf, then click a cell to fill Row and Col and load it.

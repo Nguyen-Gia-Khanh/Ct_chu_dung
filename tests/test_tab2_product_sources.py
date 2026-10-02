@@ -170,7 +170,7 @@ class ProductSourceTests(WorkspaceTestCase):
         tree = app.assignments.queue_tree
         self.assertEqual(tree.get_children(), ("product::P2", "product::P1"))
         self.assertEqual(tree.item("product::P1", "tags"), ("assigned",))
-        self.assertEqual(tree.item("product::P1", "values"), ("P1", "Bolts", "7"))
+        self.assertEqual(tree.item("product::P1", "values"), ("P1", "Bolts", self.first.slot_name))
         self.assertEqual(tree.deleted, [])
 
     def test_search_keeps_ready_matches_above_assigned_matches(self):
@@ -187,7 +187,7 @@ class ProductSourceTests(WorkspaceTestCase):
         app.refresh_product_queue()
         self.assertEqual(app.assignments.queue_tree.get_children(), ("product::P1", "product::P2"))
         self.assertEqual(app.assignments.queue_tree.item("product::P2", "tags"), ())
-        self.assertEqual(app.assignments.queue_tree.item("product::P2", "values")[2], "4")
+        self.assertEqual(app.assignments.queue_tree.item("product::P2", "values")[2], "")
 
     def test_on_hand_product_is_unassigned_and_not_gray(self):
         app = self.make_actions()
