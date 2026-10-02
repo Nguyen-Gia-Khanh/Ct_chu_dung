@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from mapper.core.common import clean_location_segment, make_slot_name
+from mapper.core.common import clean_location_segment, make_slot_name, normalize_search
 from mapper.persistence.database import SlotAddress, WarehouseDatabase
 from utils.barcode_scanner import (
     BarcodeScanner,
@@ -36,10 +36,13 @@ class ExceptionsView(ttk.Frame):
         self.barcode_scanner = barcode_scanner
 
         self.selected_address: SlotAddress | None = None
+        self.catalog_records: list[tuple[str, str, str]] = []
 
         # Variables
         self.product_id_var = tk.StringVar(self)
         self.product_name_var = tk.StringVar(self)
+        self.catalog_search_var = tk.StringVar(self)
+        self.catalog_count_text = tk.StringVar(self, value="0 products")
         self.qty_var = tk.StringVar(self, value="")
         self.floor_var = tk.StringVar(self, value="1")
         self.side_var = tk.StringVar(self, value="1")
@@ -167,37 +170,43 @@ class ExceptionsView(ttk.Frame):
             command=self.assign_exception,
         ).pack(side="left", fill="x", expand=True)
 
-        # Browse both unassigned products and IDs already stored in several cells.
+        # Browse every catalog/queue product and IDs stored in several cells.
         product_tabs = ttk.Notebook(parent)
         product_tabs.pack(fill="both", expand=True)
-        on_hand_box = ttk.Frame(product_tabs, padding=8)
+        catalog_box = ttk.Frame(product_tabs, padding=8)
         multi_box = ttk.Frame(product_tabs, padding=8)
-        product_tabs.add(on_hand_box, text="On-hand products")
+        product_tabs.add(catalog_box, text="Full catalog")
         product_tabs.add(multi_box, text="Multiple locations")
 
-        on_hand_tree_frame = ttk.Frame(on_hand_box)
-        on_hand_tree_frame.pack(fill="both", expand=True)
+        ttk.Label(catalog_box, text="Search code, full name, or shortened name").pack(anchor="w")
+        catalog_search_entry = ttk.Entry(catalog_box, textvariable=self.catalog_search_var)
+        catalog_search_entry.pack(fill="x", pady=(3, 6))
+        bind_auto_highlight(catalog_search_entry)
+        self.catalog_search_var.trace_add("write", self._filter_catalog_tree)
 
-        self.on_hand_tree = ttk.Treeview(
-            on_hand_tree_frame,
-            columns=("product_id", "product_name", "stock_qty"),
+        catalog_tree_frame = ttk.Frame(catalog_box)
+        catalog_tree_frame.pack(fill="both", expand=True)
+
+        self.catalog_tree = ttk.Treeview(
+            catalog_tree_frame,
+            columns=("product_id", "product_name"),
             show="headings",
             selectmode="browse",
         )
-        self.on_hand_tree.heading("product_id", text="Product ID")
-        self.on_hand_tree.heading("product_name", text="Product Name")
-        self.on_hand_tree.heading("stock_qty", text="Stock Qty")
+        self.catalog_tree.heading("product_id", text="Product ID")
+        self.catalog_tree.heading("product_name", text="Product Name")
 
-        self.on_hand_tree.column("product_id", width=140, anchor="w")
-        self.on_hand_tree.column("product_name", width=220, anchor="w")
-        self.on_hand_tree.column("stock_qty", width=70, anchor="e")
+        self.catalog_tree.column("product_id", width=140, anchor="w", stretch=False)
+        self.catalog_tree.column("product_name", width=290, anchor="w")
 
-        on_hand_scroll = ttk.Scrollbar(on_hand_tree_frame, orient="vertical", command=self.on_hand_tree.yview)
-        self.on_hand_tree.configure(yscrollcommand=on_hand_scroll.set)
-        self.on_hand_tree.pack(side="left", fill="both", expand=True)
-        on_hand_scroll.pack(side="right", fill="y")
+        catalog_scroll = ttk.Scrollbar(catalog_tree_frame, orient="vertical", command=self.catalog_tree.yview)
+        self.catalog_tree.configure(yscrollcommand=catalog_scroll.set)
+        self.catalog_tree.pack(side="left", fill="both", expand=True)
+        catalog_scroll.pack(side="right", fill="y")
 
-        self.on_hand_tree.bind("<<TreeviewSelect>>", self._on_hand_select)
+        self.catalog_tree.bind("<Double-1>", self._on_catalog_double_click)
+        ttk.Label(catalog_box, textvariable=self.catalog_count_text).pack(anchor="w", pady=(4, 0))
+        ttk.Label(catalog_box, text="Double-click a product to fill its ID and name.").pack(anchor="w")
 
         multi_tree_frame = ttk.Frame(multi_box)
         multi_tree_frame.pack(fill="both", expand=True)
@@ -336,19 +345,19 @@ class ExceptionsView(ttk.Frame):
     def on_barcode_scan(self, scanned_code: str) -> None:
         self._on_barcode_scan(scanned_code)
 
-    def _on_hand_select(self, _event=None) -> None:
-        selection = self.on_hand_tree.selection()
-        if not selection:
-            return
-        item = self.on_hand_tree.item(selection[0])
-        values = item.get("values", [])
-        if values:
-            self.product_id_var.set(str(values[0]))
-            if len(values) >= 2:
-                self.product_name_var.set(str(values[1]))
-            self.find_product()
-            if len(values) >= 3 and values[2] not in ("", "Unknown", None):
-                self.qty_var.set(str(values[2]))
+    def _on_catalog_double_click(self, event: tk.Event) -> str | None:
+        item_id = self.catalog_tree.identify_row(event.y)
+        if not item_id:
+            return None
+        values = self.catalog_tree.item(item_id, "values")
+        if len(values) < 2:
+            return None
+        self.catalog_tree.selection_set(item_id)
+        self.catalog_tree.focus(item_id)
+        self.product_id_var.set(str(values[0]))
+        self.product_name_var.set(str(values[1]))
+        self.find_product()
+        return "break"
 
     def _on_multi_location_select(self, _event=None) -> None:
         selection = self.multi_location_tree.selection()
@@ -669,26 +678,27 @@ class ExceptionsView(ttk.Frame):
             if product_id in selected:
                 self.multi_location_tree.selection_add(product_id)
 
-    def refresh_on_hand_tree(self) -> None:
-        self.on_hand_tree.delete(*self.on_hand_tree.get_children())
-        on_hand = self.database.get_on_hand_products()
-        products_map = {p[0]: p[1] for p in self.database.get_products()}
-        for cid, cname, _ in self.database.get_catalog_products():
-            if cid not in products_map:
-                products_map[cid] = cname
+    def refresh_catalog_tree(self) -> None:
+        self.catalog_records = self.database.get_display_catalog_products()
+        self._filter_catalog_tree()
 
-        for pid, item in on_hand.items():
-            pname = products_map.get(pid, pid)
-            qty_display = "" if item.stock_qty is None else str(item.stock_qty)
-            self.on_hand_tree.insert(
-                "",
-                "end",
-                values=(pid, pname, qty_display),
-            )
+    def _filter_catalog_tree(self, *_args) -> None:
+        selected = set(self.catalog_tree.selection())
+        self.catalog_tree.delete(*self.catalog_tree.get_children())
+        query = normalize_search(self.catalog_search_var.get())
+        shown = 0
+        for product_id, name, shortened_name in self.catalog_records:
+            if query and query not in normalize_search(f"{product_id} {name} {shortened_name}"):
+                continue
+            self.catalog_tree.insert("", "end", iid=product_id, values=(product_id, name))
+            if product_id in selected:
+                self.catalog_tree.selection_add(product_id)
+            shown += 1
+        self.catalog_count_text.set(f"{shown:,} of {len(self.catalog_records):,} products")
 
     def refresh(self) -> None:
         """Called whenever tab becomes active or database state changes."""
-        self.refresh_on_hand_tree()
+        self.refresh_catalog_tree()
         self.refresh_pending_tree()
         self.refresh_multi_location_tree()
         if self.selected_address:
