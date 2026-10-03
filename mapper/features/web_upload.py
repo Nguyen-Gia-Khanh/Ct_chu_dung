@@ -18,6 +18,7 @@ from queue import Empty, Queue
 from threading import Event, Lock
 from time import monotonic, sleep
 from typing import Callable
+from urllib.parse import urlsplit
 
 from .kiotviet_settings import validate_store_url, validate_tab_count
 
@@ -780,6 +781,9 @@ class WebsiteUploader:
         self.timeout = timeout
         self.step_delay = max(0.0, step_delay)
         self.location_lock = location_lock or Lock()
+        self._page_session = None
+        self._session_page = None
+        self._kiotviet_id = None
 
     def is_connected(self) -> bool:
         if self.browser is not None:
@@ -798,8 +802,11 @@ class WebsiteUploader:
         try:
             if self.playwright is not None:
                 self.playwright.stop()
+            elif self._page_session is not None and not self._session_page.is_closed():
+                self._page_session.detach()
         finally:
             self.page = self.browser = self.playwright = None
+            self._page_session = self._session_page = None
 
     def _connect(self) -> None:
         if self.browser is not None or self.page is not None:
@@ -884,16 +891,23 @@ class WebsiteUploader:
                 + self.store_url
             )
         self.page.set_default_timeout(self.timeout * 1000)
-        # Cache settings are applied to this page rather than the whole browser.
-        session = self.page.context.new_cdp_session(self.page)
-        try:
-            session.send("Network.enable")
-            session.send("Network.setCacheDisabled", {"cacheDisabled": True})
-        finally:
-            session.detach()
+        self._prepare_page()
         if self._dom("present", FORM_XPATH) or self._dom("present", LOCATION_FORM_XPATH):
             raise UploadError("Finish or cancel the existing website edit dialog before uploading.")
         self._wait("waiting for the KiotViet product page", lambda: self._dom("product_page") and self._dom("product_controller"))
+
+    def _prepare_page(self) -> None:
+        """Keep this tab active without selecting it in the Chrome window."""
+        if self._session_page is self.page:
+            return
+        if self._page_session is not None and not self._session_page.is_closed():
+            self._page_session.detach()
+        self._page_session = self.page.context.new_cdp_session(self.page)
+        self._session_page = self.page
+        self._page_session.send("Network.enable")
+        self._page_session.send("Network.setCacheDisabled", {"cacheDisabled": True})
+        # Keep the CDP session attached: detaching removes focus emulation.
+        self._page_session.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
 
     def _new_upload_tab(self) -> None:
         """Use the logged-in context, including auth kept in sessionStorage."""
@@ -907,6 +921,7 @@ class WebsiteUploader:
             "for (const [key, value] of Object.entries(" + json.dumps(storage) + ")) "
             "sessionStorage.setItem(key, value); }"
         )
+        self._prepare_page()
         self.page.goto(self.store_url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
         self._choose_tab()
 
@@ -930,7 +945,7 @@ class WebsiteUploader:
         def worker():
             uploader = WebsiteUploader(
                 store_url=self.store_url, timeout=self.timeout,
-                step_delay=self.step_delay, location_lock=self.location_lock,
+                step_delay=0, location_lock=self.location_lock,
             )
             product = None
             owned_page = None
@@ -954,6 +969,7 @@ class WebsiteUploader:
                         except Empty:
                             break
                     report = lambda text: progress(f"{product.product_id}: {text}")
+                    report("Starting web task...")
                     action = uploader.modify_location if location_only else uploader.upload
                     result = action(product, report, save=save)
                     with state_lock:
@@ -1022,13 +1038,28 @@ class WebsiteUploader:
         )
 
     def _open_product(self, product: UploadProduct | LocationUpdate) -> None:
-        for attempt in range(2):
-            result = self._evaluate_async(OPEN_PRODUCT_SCRIPT, product.product_id)
-            if not isinstance(result, dict) or not result.get("ok"):
-                detail = result.get("error") if isinstance(result, dict) else repr(result)
-                raise UploadError(f"Could not open product {product.product_id}: {detail}")
+        from playwright.sync_api import TimeoutError as BrowserTimeout
 
+        self._kiotviet_id = None
+        for attempt in range(2):
             try:
+                # Listen before injecting; the controller's callback only
+                # starts loading the editor. Await this tab's edit-data response.
+                with self.page.expect_response(
+                    lambda response: response.request.method == "GET"
+                    and re.fullmatch(r"/api/products/\d+/initialdata", urlsplit(response.url).path) is not None,
+                    timeout=self.timeout * 1000,
+                ) as edit_response:
+                    result = self._evaluate_async(OPEN_PRODUCT_SCRIPT, product.product_id)
+                    if not isinstance(result, dict) or not result.get("ok"):
+                        detail = result.get("error") if isinstance(result, dict) else repr(result)
+                        raise UploadError(f"Could not open product {product.product_id}: {detail}")
+                response = edit_response.value
+                response.body()  # expect_response alone only waits for headers.
+                self._kiotviet_id = str(result.get("kiotviet_id") or "")
+                if (not response.ok
+                        or urlsplit(response.url).path != f"/api/products/{self._kiotviet_id}/initialdata"):
+                    raise UploadError(f"Could not load edit data for {product.product_id} (HTTP {response.status}).")
                 self._wait("loading the edit form", lambda: self._dom("edit_ready", FORM_XPATH), check_errors=True)
                 self._wait(
                     "checking the product ID (set PRODUCT_ID_XPATH if automatic detection fails)",
@@ -1036,7 +1067,7 @@ class WebsiteUploader:
                     check_errors=True,
                 )
                 return
-            except WaitExpired as error:
+            except (WaitExpired, BrowserTimeout) as error:
                 if attempt:
                     raise UploadError(
                         f"KiotViet did not load a usable edit form for {product.product_id}. "
@@ -1118,10 +1149,14 @@ class WebsiteUploader:
             self._clear_location()
             return
 
-        with self.location_lock:
-            # The API response is the source of truth for whether each location exists.
-            location_names, ids_by_name = self._get_shelves_by_name()
-            for target in product.location_ids:
+        # Existing shelves can be read and selected concurrently. Only creation
+        # needs coordination, including a recheck after acquiring the lock.
+        location_names, ids_by_name = self._get_shelves_by_name()
+        for target in product.location_ids:
+            if target in location_names:
+                continue
+            with self.location_lock:
+                location_names, ids_by_name = self._get_shelves_by_name()
                 if target in location_names:
                     continue
                 progress(f"Creating location {target}…")
@@ -1165,12 +1200,28 @@ class WebsiteUploader:
         *,
         location_only: bool = False,
     ) -> str:
-        """PRODUCTION STEP: press Lưu once and wait for the edit form to close."""
+        """Press Save once; await its complete response and editor close."""
         progress("Saving the location on the website…" if location_only else "Saving the product on the website…")
 
         try:
             # From this call onward a timeout has an uncertain outcome. Never retry Save.
-            self._click(SAVE_XPATH, "pressing Save")
+            with self.page.expect_response(
+                lambda response: response.request.method == "POST"
+                and urlsplit(response.url).path == "/api/products/photo",
+                timeout=self.timeout * 1000,
+            ) as save_response:
+                self._click(SAVE_XPATH, "pressing Save")
+            response = save_response.value
+            if not response.ok:
+                raise UploadError(f"KiotViet Save returned HTTP {response.status}.")
+            # Download the response body, not just the headers or a UI toast.
+            payload = response.json()
+            saved = payload.get("Data") if isinstance(payload, dict) else None
+            if (not isinstance(saved, dict) or not self._kiotviet_id
+                    or str(saved.get("Id")) != self._kiotviet_id
+                    or (saved.get("Code") is not None and
+                        str(saved["Code"]).strip().casefold() != product.product_id.strip().casefold())):
+                raise UploadError("KiotViet Save did not confirm the expected product ID and SKU.")
             self._wait(
                 "waiting for Save to finish",
                 lambda: not self._dom("present", FORM_XPATH),

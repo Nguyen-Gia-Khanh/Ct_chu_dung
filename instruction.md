@@ -276,10 +276,18 @@ looks up the exact SKU through KiotViet's suggest API, then asks its controller
 to edit the returned product ID. It waits for a bound form and matching ID;
 an empty form is reloaded once before reporting an error. Playwright CDP
 attachments are owned by each worker thread; `run_batch` gives
-concurrent Tab 7 workers separate tabs and coordinates location creation.
+concurrent Tab 7 workers separate tabs and coordinates only missing-location
+creation. Existing shelves are fetched concurrently. Each worker awaits the
+edit-data response and the Save response body (matching the lookup's product ID)
+before taking its next SKU, with no batch barrier or post-save delay.
+Keep each page's CDP session attached for focus emulation so background tabs
+continue rendering while users switch tabs; disconnect releases the override.
 Browser errors stop scheduling, preserve successful item events, and never
 retry an uncertain Save. Tabs 2/5 use one worker. Browser tests are in
 `tests/test_playwright_upload.py`.
+The opt-in `python -m tests.browser_upload_concurrency_check` checks delayed
+Save response bodies and immediate tab refill while switching actual Chrome
+tabs, using only temporary localhost pages.
 `WorkbookColumnDialog` maps worksheet/header/columns. `LocationComparisonView`
 uses `import_excel`, `_start_comparison`, `_run_comparison`, `_poll_comparison`,
 and `_render_comparison_rows` to load/compare data without blocking Tk.

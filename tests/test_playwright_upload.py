@@ -1,6 +1,7 @@
 """Offline checks for store persistence, tab ownership, and partial batches."""
 
 from threading import Barrier, Event, get_ident
+from contextlib import nullcontext
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -35,13 +36,16 @@ class PlaywrightUploadTests(WorkspaceTestCase):
 
     def test_empty_edit_form_reloads_once_before_retrying_without_saving(self):
         uploader = WebsiteUploader(store_url=URL, timeout=0, step_delay=0)
-        uploader.page = SimpleNamespace(reload=Mock())
+        response = SimpleNamespace(url="https://api-man1.kiotviet.vn/api/products/1/initialdata",
+                                   ok=True, body=lambda: b"{}")
+        uploader.page = SimpleNamespace(reload=Mock(), expect_response=lambda *_args, **_kwargs:
+                                        nullcontext(SimpleNamespace(value=response)))
         ready_checks = iter((False, True))
 
         def dom(action, *_args):
             return next(ready_checks) if action == "edit_ready" else True if action != "errors" else ""
 
-        with patch.object(uploader, "_evaluate_async", return_value={"ok": True}) as open_edit, \
+        with patch.object(uploader, "_evaluate_async", return_value={"ok": True, "kiotviet_id": "1"}) as open_edit, \
                 patch.object(uploader, "_dom", side_effect=dom), \
                 patch.object(uploader, "_save_product") as save:
             uploader._open_product(LocationUpdate("P1", "A"))
@@ -113,6 +117,99 @@ class PlaywrightUploadTests(WorkspaceTestCase):
         self.assertEqual(len(closed), 3)
         self.assertEqual(len(disconnected), 3)
         self.assertIn("6 products", result)
+
+    def test_free_tab_takes_next_product_while_slow_tab_waits_for_response(self):
+        slow_started, next_started = Event(), Event()
+        completed = []
+
+        def modify(uploader, product, _progress, *, save):
+            self.assertEqual(uploader.step_delay, 0)
+            if product.product_id == "P0":
+                slow_started.set()
+                self.assertTrue(next_started.wait(timeout=5))
+            elif product.product_id == "P1":
+                self.assertTrue(slow_started.wait(timeout=5))
+            elif product.product_id == "P2":
+                self.assertNotIn("P0", completed)
+                next_started.set()
+            return "response received"
+
+        with patch.object(WebsiteUploader, "connect"), \
+                patch.object(WebsiteUploader, "_choose_tab"), \
+                patch.object(WebsiteUploader, "_new_upload_tab"), \
+                patch.object(WebsiteUploader, "modify_location", modify), \
+                patch.object(WebsiteUploader, "disconnect"):
+            WebsiteUploader(store_url=URL).run_batch(
+                [LocationUpdate(f"P{i}", "A") for i in range(4)],
+                lambda _text: None, completed.append, location_only=True, save=True, tab_count=2,
+            )
+        self.assertEqual(sorted(completed), [f"P{i}" for i in range(4)])
+
+    def test_existing_location_reads_do_not_serialize_workers(self):
+        barrier = Barrier(2)
+        selected = []
+
+        def read_shelves(_uploader):
+            barrier.wait(timeout=5)
+            return {"A"}, {"A": "11"}
+
+        def modify(uploader, product, progress, *, save):
+            uploader._set_location(product, progress)
+            return "saved"
+
+        with patch.object(WebsiteUploader, "connect"), \
+                patch.object(WebsiteUploader, "_choose_tab"), \
+                patch.object(WebsiteUploader, "_new_upload_tab"), \
+                patch.object(WebsiteUploader, "_dom", return_value=True), \
+                patch.object(WebsiteUploader, "_get_shelves_by_name", read_shelves), \
+                patch.object(WebsiteUploader, "_select_location_ids", lambda _u, p, _ids: selected.append(p.product_id)), \
+                patch.object(WebsiteUploader, "modify_location", modify), \
+                patch.object(WebsiteUploader, "disconnect"):
+            WebsiteUploader(store_url=URL).run_batch(
+                [LocationUpdate("P0", "A"), LocationUpdate("P1", "A")],
+                lambda _text: None, lambda _id: None, location_only=True, save=True, tab_count=2,
+            )
+        self.assertEqual(sorted(selected), ["P0", "P1"])
+
+    def test_save_requires_successful_response_for_the_same_product_and_never_retries(self):
+        product = LocationUpdate("P1", "A")
+        for status, saved in ((200, {"Id": 1, "Code": "P1"}), (500, {}),
+                              (200, {"Id": 2, "Code": "P1"}), (200, {"Id": 1, "Code": "P2"})):
+            with self.subTest(status=status, saved=saved):
+                uploader = WebsiteUploader(store_url=URL, step_delay=0)
+                uploader._kiotviet_id = "1"
+                order = []
+
+                def response_body():
+                    order.append("response body")
+                    return {"Data": saved}
+
+                response = SimpleNamespace(ok=status == 200, status=status,
+                                           json=response_body)
+                uploader.page = SimpleNamespace(expect_response=lambda *_args, **_kwargs:
+                                                nullcontext(SimpleNamespace(value=response)))
+                with patch.object(uploader, "_click", side_effect=lambda *_args: order.append("save")) as click, \
+                        patch.object(uploader, "_dom", return_value=False):
+                    if status == 200 and saved == {"Id": 1, "Code": "P1"}:
+                        self.assertIn("Location saved", uploader._save_product(product, lambda _text: None, location_only=True))
+                    else:
+                        with self.assertRaisesRegex(UploadError, "No automatic retry"):
+                            uploader._save_product(product, lambda _text: None)
+                click.assert_called_once()
+                self.assertEqual(order, ["save", "response body"] if status == 200 else ["save"])
+
+    def test_page_focus_session_stays_attached_until_disconnect(self):
+        session = Mock()
+        page = SimpleNamespace(is_closed=lambda: False,
+                               context=SimpleNamespace(new_cdp_session=Mock(return_value=session)))
+        uploader = WebsiteUploader(page=page, store_url=URL)
+        uploader._prepare_page()
+        uploader._prepare_page()
+        page.context.new_cdp_session.assert_called_once_with(page)
+        session.send.assert_any_call("Emulation.setFocusEmulationEnabled", {"enabled": True})
+        session.detach.assert_not_called()
+        uploader.disconnect()
+        session.detach.assert_called_once()
 
     def test_failure_stops_new_products_and_reports_successful_in_flight_items(self):
         barrier, failed = Barrier(2), Event()

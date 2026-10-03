@@ -314,11 +314,16 @@ newlines in the website export are accepted as location separators. Import a
 new KiotViet export to verify completed updates.
 
 With more than one upload tab, resync creates separate tabs in your logged-in
-Chrome context and processes different products concurrently. Location creation
-is coordinated to avoid duplicate shelf names. Successful batches close their
+Chrome context and processes different products concurrently. Each free tab
+takes the next product as soon as its Save response finishes and the editor
+closes, without waiting for slower tabs or a fixed delay. Location reads run
+concurrently; only creation is coordinated to avoid duplicate shelf names.
+Worker tabs stay active through CDP focus emulation, so you can switch Chrome
+tabs during resync. Keep worker tabs open and avoid editing their forms.
+Successful batches close their
 worker tabs; failed batches leave tabs open for inspection. An error stops new
-products while those already running finish; completed products remain marked as synced. Leave the
-store tabs untouched during resync. Tabs 2 and 5 continue processing sequentially.
+products while those already running finish; completed products remain marked
+as synced. Tabs 2 and 5 continue processing sequentially.
 
 View: [location_comparison_view.py](ui/desktop/location_comparison_view.py).
 Excel parsing/comparison/export: [location_comparison.py](mapper/features/location_comparison.py).
