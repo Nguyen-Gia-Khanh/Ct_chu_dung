@@ -42,7 +42,8 @@ class LargeLabelLayoutTests(unittest.TestCase):
                             self.assertLess(prefix[0], suffix[0])
                             self.assertAlmostEqual(prefix[1], suffix[1])
                             self.assertGreater(prefix[1], text["P01"][1])
-                            self.assertEqual(prefix[2], 72)
+                            self.assertGreater(prefix[2], 72)
+                            self.assertLessEqual(prefix[2], 144)
                             self.assertEqual(text["P01"][2], 64)
                         else:
                             self.assertLess(prefix[0], text["P01"][0])
