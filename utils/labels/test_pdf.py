@@ -31,12 +31,22 @@ class LargeLabelLayoutTests(unittest.TestCase):
                         )
                         self.assertEqual((result.labels, result.pages), (1, 1))
                         text = {}
+                        header_top = []
+                        header_bottom = []
+
+                        def collect_paths(operator, operands, cm, tm):
+                            if operator == b"re" and not header_top:
+                                header_top.append(cm[5] + float(operands[1]) + float(operands[3]))
+                            elif operator == b"l" and not header_bottom:
+                                header_bottom.append(cm[5] + float(operands[1]))
 
                         def collect(value, cm, tm, font, size):
                             if value.strip():
                                 text[value.strip()] = (cm[4] + tm[4], cm[5] + tm[5], size)
 
-                        PdfReader(path).pages[0].extract_text(visitor_text=collect)
+                        PdfReader(path).pages[0].extract_text(
+                            visitor_text=collect, visitor_operand_before=collect_paths
+                        )
                         prefix, suffix = text["L1-1"], text["A1-3"]
                         if height == 14.5:
                             self.assertLess(prefix[0], suffix[0])
@@ -45,6 +55,8 @@ class LargeLabelLayoutTests(unittest.TestCase):
                             self.assertGreater(prefix[2], 72)
                             self.assertLessEqual(prefix[2], 144)
                             self.assertEqual(text["P01"][2], 64)
+                            self.assertLessEqual(header_top[0] - header_bottom[0], prefix[2] + 16)
+                            self.assertLessEqual(prefix[1] - header_bottom[0], 8 + prefix[2] * 0.05)
                         else:
                             self.assertLess(prefix[0], text["P01"][0])
                             self.assertLess(suffix[0], text["P01"][0])

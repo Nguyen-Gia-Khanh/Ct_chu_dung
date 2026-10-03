@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import re
+import struct
 import tempfile
 import unicodedata
 from xml.sax.saxutils import escape
@@ -28,7 +29,7 @@ PRODUCT_FONT_SIZE = 28
 MIN_PRODUCT_FONT_SIZE = 7
 LABEL_HEIGHTS_CM = (3, 7, 14.5)
 LARGE_LABEL_HEIGHT_CM = 14.5
-LARGE_LOCATION_HEIGHT_MM = 70
+LARGE_LOCATION_PADDING_PT = 8
 LARGE_LOCATION_FONT_SIZE = 144
 LARGE_PRODUCT_FONT_SIZE = 64
 
@@ -415,31 +416,49 @@ def render_labels_pdf(
                 line,
             )
 
-    def draw_location_cells(w, h, location_id):
+    def draw_location_cells(w, label_h, location_id):
         parts = _split_location_id(location_id)
         cell_w = w / 2
         target_w = cell_w - 2 * location_padding
-        target_h = h - 2 * location_padding
         size = LARGE_LOCATION_FONT_SIZE
         while True:
-            ascent, descent = pdfmetrics.getAscentDescent(bold, size)
-            if (
-                max(pdfmetrics.stringWidth(part, bold, size) for part in parts) <= target_w
-                and ascent - descent <= target_h
-            ):
+            if max(pdfmetrics.stringWidth(part, bold, size) for part in parts) <= target_w:
                 break
             if size <= MIN_LOCATION_FONT_SIZE:
                 raise ValueError(
                     f"Location ID {location_id!r} is too long for this label layout."
                 )
             size -= 0.5
+
+        # Measure the actual glyph ink, excluding the font's unused ascender and
+        # descender space, so both visible vertical gaps are exactly 8 points.
+        face = pdfmetrics.getFont(bold).face
+        glyph_data = face.get_table("glyf")
+        bounds = []
+        for character in set("".join(parts)):
+            glyph = face.charToGlyph.get(ord(character), 0)
+            offset = face.glyphPos[glyph]
+            if offset != face.glyphPos[glyph + 1]:
+                _, _, bottom, _, top = struct.unpack_from(
+                    ">hhhhh", glyph_data, offset
+                )
+                bounds.append((bottom, top))
+        descent = min((bottom for bottom, _ in bounds), default=0) * size / face.unitsPerEm
+        ascent = max((top for _, top in bounds), default=0) * size / face.unitsPerEm
+        h = ascent - descent + 2 * LARGE_LOCATION_PADDING_PT
+        body_h = label_h - h
         canvas.setStrokeColor(colors.HexColor("#BBBBBB"))
+        canvas.line(0, body_h, w, body_h)
+        canvas.saveState()
+        canvas.translate(0, body_h)
         canvas.line(cell_w, 0, cell_w, h)
         canvas.setFillColor(colors.black)
         canvas.setFont(bold, size)
-        baseline = (h - ascent - descent) / 2
+        baseline = LARGE_LOCATION_PADDING_PT - descent
         for index, part in enumerate(parts):
             canvas.drawCentredString((index + 0.5) * cell_w, baseline, part)
+        canvas.restoreState()
+        return body_h
 
     def draw_products(w, h, products, location_id, *, align_top=False):
         target_w = w - 2 * padding
@@ -482,14 +501,7 @@ def render_labels_pdf(
         canvas.rect(0, 0, slot.w, slot.h)
 
         if print_mode == "full" and is_large_label:
-            header_h = LARGE_LOCATION_HEIGHT_MM * mm
-            body_h = slot.h - header_h
-            canvas.setStrokeColor(colors.HexColor("#BBBBBB"))
-            canvas.line(0, body_h, slot.w, body_h)
-            canvas.saveState()
-            canvas.translate(0, body_h)
-            draw_location_cells(slot.w, header_h, cell.location_id)
-            canvas.restoreState()
+            body_h = draw_location_cells(slot.w, slot.h, cell.location_id)
             draw_products(slot.w, body_h, cell.products, cell.location_id, align_top=True)
         elif print_mode == "full":
             canvas.setStrokeColor(colors.HexColor("#BBBBBB"))
