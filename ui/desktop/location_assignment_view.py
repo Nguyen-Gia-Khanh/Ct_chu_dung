@@ -19,7 +19,7 @@ from .widgets import ScrollableFrame
 
 
 class LocationAssignmentView(ttk.Frame):
-    """Tab 2: search products, prepare a batch, then move it by address."""
+    """Tab 2: assign by address and hold removed shelf products on-hand."""
 
     def __init__(
         self,
@@ -160,7 +160,7 @@ class LocationAssignmentView(ttk.Frame):
                 )
             else:
                 self.catalog_transfer_button.configure(
-                    text="Transfer selected to total queue",
+                    text="Assign selected catalog → loaded address",
                     style="TButton",
                 )
 
@@ -172,7 +172,7 @@ class LocationAssignmentView(ttk.Frame):
                 )
             else:
                 self.queue_move_button.configure(
-                    text="Move selected → on-hand",
+                    text="Assign selected queue → loaded address",
                     style="TButton",
                 )
 
@@ -187,7 +187,7 @@ class LocationAssignmentView(ttk.Frame):
                 )
             else:
                 self.queue_move_button.configure(
-                    text="Move selected → on-hand",
+                    text="Assign selected queue → loaded address",
                     style="TButton",
                 )
         else:
@@ -252,7 +252,7 @@ class LocationAssignmentView(ttk.Frame):
 
         split = ttk.Panedwindow(parent, orient="vertical")
         split.pack(fill="both", expand=True)
-        queue = ttk.LabelFrame(split, text="Total unassigned product queue", padding=6)
+        queue = ttk.LabelFrame(split, text="Product queue · gray = assigned", padding=6)
         catalog = ttk.LabelFrame(split, text="Full product catalog", padding=6)
         split.add(queue, weight=1)
         split.add(catalog, weight=1)
@@ -283,17 +283,13 @@ class LocationAssignmentView(ttk.Frame):
         queue_body.columnconfigure(0, weight=1)
         self.queue_tree = ttk.Treeview(
             queue_body,
-            columns=("product_id", "product_name", "stock_qty"),
+            columns=("product_id", "product_name", "location_id"),
             show="headings",
             selectmode="extended",
             height=8,
         )
         self._configure_queue_tree(self.queue_tree)
-        self.queue_tree.tag_configure(
-            "returned",
-            background="#fff2a8",
-            font=("Segoe UI", 9, "bold"),
-        )
+        self.queue_tree.tag_configure("assigned", foreground="#999999", background="#eeeeee")
         queue_scroll = ttk.Scrollbar(
             queue_body, orient="vertical", command=self.queue_tree.yview
         )
@@ -314,7 +310,7 @@ class LocationAssignmentView(ttk.Frame):
         )
         self.queue_move_button = ttk.Button(
             queue,
-            text="Move selected → on-hand",
+            text="Assign selected queue → loaded address",
             command=self._handle_queue_move_click,
         )
         self.queue_move_button.grid(row=5, column=0, sticky="ew", pady=(5, 0))
@@ -354,7 +350,7 @@ class LocationAssignmentView(ttk.Frame):
         )
         self.catalog_transfer_button = ttk.Button(
             catalog,
-            text="Transfer selected to total queue",
+            text="Assign selected catalog → loaded address",
             command=self._handle_catalog_transfer_click,
         )
         self.catalog_transfer_button.grid(row=2, column=0, sticky="ew", pady=(5, 0))
@@ -373,10 +369,10 @@ class LocationAssignmentView(ttk.Frame):
     def _configure_queue_tree(tree: ttk.Treeview) -> None:
         tree.heading("product_id", text="Product ID")
         tree.heading("product_name", text="Product name")
-        tree.heading("stock_qty", text="Stock")
+        tree.heading("location_id", text="Location ID")
         tree.column("product_id", width=110, minwidth=80, stretch=False)
         tree.column("product_name", width=190, minwidth=110)
-        tree.column("stock_qty", width=65, minwidth=50, anchor="e", stretch=False)
+        tree.column("location_id", width=120, minwidth=85, stretch=False)
 
     def _build_hand_panel(
         self,
@@ -480,7 +476,7 @@ class LocationAssignmentView(ttk.Frame):
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
         ttk.Button(
             hand_actions,
-            text="Dequeue selected → total queue",
+            text="Dequeue selected → queue / catalog",
             command=on_dequeue_hand,
         ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
 

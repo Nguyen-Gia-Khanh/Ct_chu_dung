@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from datetime import datetime
+import json
 from typing import Any
 
 from .models import (
@@ -13,11 +14,72 @@ from .models import (
 )
 
 class InventoryOperations:
+    def get_catalog_only_product_ids(self) -> set[str]:
+        """Catalog inventory records are separate from total-queue membership."""
+        with closing(self.connect()) as connection:
+            return {
+                row["product_id"]
+                for row in connection.execute("SELECT product_id, snapshot FROM queue_origins")
+                if not json.loads(row["snapshot"])["was_in_products"]
+            }
+
+    def _remember_queue_origin(self, connection, product_id: str) -> dict | None:
+        """Remember queue membership before temporarily importing a catalog item."""
+        if connection.execute(
+            "SELECT 1 FROM queue_origins WHERE product_id = ?", (product_id,)
+        ).fetchone():
+            return
+        return {
+            "was_in_products": connection.execute(
+                "SELECT 1 FROM products WHERE product_id = ?", (product_id,)
+            ).fetchone() is not None,
+        }
+
+    def _save_queue_origin(self, connection, product_id: str, snapshot) -> None:
+        if snapshot is not None:
+            connection.execute(
+                "INSERT OR REPLACE INTO queue_origins (product_id, snapshot) VALUES (?, ?)",
+                (product_id, json.dumps(snapshot)),
+            )
+
+    def _import_transfer_products(self, connection, records) -> None:
+        for pid, (name, short_name) in records.items():
+            snapshot = self._remember_queue_origin(connection, pid)
+            connection.execute(
+                """INSERT INTO products (product_id, product_name, shortened_name)
+                   VALUES (?, ?, ?) ON CONFLICT(product_id) DO UPDATE SET
+                   product_name = excluded.product_name,
+                   shortened_name = excluded.shortened_name""",
+                (pid, name, short_name or name),
+            )
+            self._save_queue_origin(connection, pid, snapshot)
+
+    def _restore_queue_origin(self, connection, product_id: str, quantity, returned_at: str) -> None:
+        row = connection.execute(
+            "SELECT snapshot FROM queue_origins WHERE product_id = ?", (product_id,)
+        ).fetchone()
+        snapshot = json.loads(row["snapshot"]) if row else None
+        connection.execute("DELETE FROM on_hand_queue WHERE product_id = ?", (product_id,))
+        connection.execute("DELETE FROM returned_queue_products WHERE product_id = ?", (product_id,))
+        if snapshot and not snapshot["was_in_products"]:
+            if connection.execute(
+                "SELECT 1 FROM placements WHERE product_id = ? UNION ALL SELECT 1 FROM exception_placements WHERE product_id = ?",
+                (product_id, product_id),
+            ).fetchone():
+                raise ValueError(f"Product {product_id} has new shelf assignments. Product was kept on-hand.")
+            connection.execute("DELETE FROM products WHERE product_id = ?", (product_id,))
+        else:
+            connection.execute(
+                "INSERT INTO returned_queue_products (product_id, stock_qty, returned_at) VALUES (?, ?, ?)",
+                (product_id, quantity, returned_at),
+            )
+
     def get_product_inventory_states(self, product_ids) -> dict[str, dict]:
         """Read only specified products after a write, including exception locations."""
         ids = tuple(dict.fromkeys(product_ids))
         states = {
-            pid: {"product": None, "placement": None, "on_hand": None, "returned": None}
+            pid: {"product": None, "placement": None, "on_hand": None, "returned": None,
+                  "catalog_only": False}
             for pid in ids
         }
         if not ids:
@@ -26,6 +88,11 @@ class InventoryOperations:
             for offset in range(0, len(ids), 400):
                 batch = ids[offset:offset + 400]
                 marks = ",".join("?" for _ in batch)
+                for row in connection.execute(
+                    f"SELECT product_id, snapshot FROM queue_origins WHERE product_id IN ({marks})",
+                    batch,
+                ):
+                    states[row["product_id"]]["catalog_only"] = not json.loads(row["snapshot"])["was_in_products"]
                 for row in connection.execute(
                     f"SELECT product_id, product_name, shortened_name FROM products WHERE product_id IN ({marks})",
                     batch,
@@ -312,8 +379,8 @@ class InventoryOperations:
                     f"Product {unknown[0]} is not in the working product list."
                 )
             assigned = connection.execute(
-                f"SELECT product_id FROM placements WHERE product_id IN ({placeholders}) LIMIT 1",
-                product_ids,
+                f"SELECT product_id FROM placements WHERE product_id IN ({placeholders}) UNION ALL SELECT product_id FROM exception_placements WHERE product_id IN ({placeholders}) LIMIT 1",
+                product_ids + product_ids,
             ).fetchone()
             if assigned is not None:
                 raise ValueError(
@@ -355,8 +422,10 @@ class InventoryOperations:
         self,
         product_ids: list[str] | tuple[str, ...],
         returned_at: str,
+        *,
+        restore_origin: bool = False,
     ) -> int:
-        """Move selected on-hand products back to the total queue with stock."""
+        """Return selected on-hand products to the queue or their recorded source."""
         selected_ids = tuple(dict.fromkeys(product_ids))
         if not selected_ids:
             return 0
@@ -384,6 +453,12 @@ class InventoryOperations:
                 raise KeyError(
                     f"Product {missing[0]} is no longer in the on-hand queue."
                 )
+            if restore_origin:
+                for product_id in selected_ids:
+                    self._restore_queue_origin(
+                        connection, product_id, rows_by_id[product_id]["stock_qty"], returned_at
+                    )
+                return len(selected_ids)
             connection.executemany(
                 """
                 INSERT INTO returned_queue_products (product_id, stock_qty, returned_at)
@@ -421,6 +496,7 @@ class InventoryOperations:
         returned_at: str,
         *,
         extra_stock: dict[str, int | None] | None = None,
+        catalog_records: dict[str, tuple[str, str]] | None = None,
     ) -> tuple[int, int]:
         """Force pull products back to the total queue from placements or on-hand.
 
@@ -437,6 +513,10 @@ class InventoryOperations:
         placeholders = ",".join("?" for _ in selected_ids)
         with closing(self.connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
+            if catalog_records is not None:
+                self._import_transfer_products(
+                    connection, {pid: catalog_records[pid] for pid in selected_ids}
+                )
             placement_rows = connection.execute(
                 f"""
                 SELECT product_id, stock_qty
@@ -453,6 +533,10 @@ class InventoryOperations:
                 """,
                 selected_ids,
             ).fetchall()
+            exception_rows = connection.execute(
+                f"SELECT product_id, stock_qty FROM exception_placements WHERE product_id IN ({placeholders})",
+                selected_ids,
+            ).fetchall()
 
             if placement_rows:
                 connection.execute(
@@ -464,10 +548,19 @@ class InventoryOperations:
                     f"DELETE FROM on_hand_queue WHERE product_id IN ({placeholders})",
                     selected_ids,
                 )
+            connection.execute(
+                f"DELETE FROM exception_placements WHERE product_id IN ({placeholders})", selected_ids
+            )
 
             to_return: dict[str, int | None] = {}
             for row in placement_rows:
                 to_return[row["product_id"]] = row["stock_qty"]
+            for row in exception_rows:
+                pid = row["product_id"]
+                if row["stock_qty"] is not None:
+                    to_return[pid] = (to_return.get(pid) or 0) + row["stock_qty"]
+                elif pid not in to_return:
+                    to_return[pid] = None
             for row in on_hand_rows:
                 to_return[row["product_id"]] = row["stock_qty"]
             if extra_stock:
@@ -486,7 +579,7 @@ class InventoryOperations:
                     """,
                     ((pid, qty, returned_at) for pid, qty in to_return.items()),
                 )
-        return len(placement_rows), len(on_hand_rows)
+        return len({row["product_id"] for row in placement_rows + exception_rows}), len(on_hand_rows)
 
     def swap_slot_contents(
         self,
@@ -645,14 +738,20 @@ class InventoryOperations:
         assigned_at: str,
         products: dict[str, tuple[str, str]],
         default_stock: int = 999,
+        *,
+        quantities: dict[str, int] | None = None,
     ) -> int:
-        """Import catalog products and assign them directly to slot_id with default_stock."""
+        """Assign directly, preserving product-list membership and per-product stock."""
         if not products:
             return 0
         if not assigned_at or datetime.fromisoformat(assigned_at).utcoffset() is None:
             raise ValueError("The assignment time must include a timezone.")
         validate_stock_quantity(default_stock)
-        self.import_products(products)
+        if quantities is not None:
+            if set(quantities) != set(products):
+                raise ValueError("Enter stock for every selected product.")
+            for quantity in quantities.values():
+                validate_stock_quantity(quantity)
         product_ids = tuple(products.keys())
         with closing(self.connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -663,6 +762,7 @@ class InventoryOperations:
                 is None
             ):
                 raise KeyError("That shelf address no longer exists.")
+            self._import_transfer_products(connection, products)
             connection.executemany(
                 "DELETE FROM placements WHERE product_id = ?",
                 ((pid,) for pid in product_ids),
@@ -680,7 +780,8 @@ class InventoryOperations:
                 INSERT INTO placements (product_id, slot_id, stock_qty, assigned_at)
                 VALUES (?, ?, ?, ?)
                 """,
-                ((pid, slot_id, default_stock, assigned_at) for pid in product_ids),
+                ((pid, slot_id, quantities[pid] if quantities is not None else default_stock, assigned_at)
+                 for pid in product_ids),
             )
         return len(product_ids)
 
@@ -797,6 +898,9 @@ class InventoryOperations:
                 rows = [rows_by_id[product_id] for product_id in selected_ids]
             if not rows:
                 return 0
+            for row in rows:
+                snapshot = self._remember_queue_origin(connection, row["product_id"])
+                self._save_queue_origin(connection, row["product_id"], snapshot)
             connection.executemany(
                 """
                 INSERT INTO on_hand_queue (product_id, stock_qty, queued_at)

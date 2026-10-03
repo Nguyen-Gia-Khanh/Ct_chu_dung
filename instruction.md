@@ -82,7 +82,7 @@ duplicate IDs, and fresh catalog names when returning to Tab 3.
 
 ### Layout
 
-The left pane contains **Total unassigned product queue** and **Full product
+The left pane contains **Product queue** and **Full product
 catalog**, filtered by one search field. The middle pane switches between
 **On-hand queue** and **Shelf Selection Pane**, with Floor / Side / Shelf / Row /
 Col address fields below. The right pane displays the loaded cell's products,
@@ -94,13 +94,14 @@ Selecting a preview cell calls `_select_shelf_cell`, fills Row and Col, and call
 
 ### Normal clicks and Shift clicks
 
-The original Shift behavior is intentional: normal clicks prepare selected
-products in a queue; holding Shift enables direct or whole-batch transfers.
+Normal clicks assign selected products directly to the loaded cell with entered
+quantities; Shift invokes stock-999/whole-batch shortcuts. On-hand holds products
+removed from shelves for reassignment or return to their queue/catalog list.
 
 | Source/button | Normal click | Hold Shift and click |
 | --- | --- | --- |
-| Catalog transfer | Selected catalog products go to the total queue. Existing shelf/on-hand products are pulled back to the queue with their stock retained. | Exactly one selected catalog product goes directly to the loaded cell with stock `999`. |
-| Total queue transfer | Selected queue products go to on-hand after entering each quantity in `StockQuantityDialog`. | All currently visible queue rows go directly to the loaded cell with stock `999`; this uses the displayed search results, not just the selected rows. |
+| Catalog assignment | Selected catalog products go directly to the loaded cell after entering stock; catalog-only products stay out of the total queue. | Exactly one selected catalog product goes directly to the loaded cell with stock `999`. |
+| Total queue assignment | Selected ready queue products go directly to the loaded cell after entering stock in `StockQuantityDialog`. | All currently visible ready queue rows go directly to the loaded cell with stock `999`; this uses the displayed search results, not just the selected rows. |
 | On-hand assignment | Only selected on-hand rows go to the loaded cell with their recorded quantities. | The entire on-hand batch goes to the loaded cell with its recorded quantities. |
 
 Direct transfers require a loaded saved cell. For the queue shortcut, IDs must
@@ -121,11 +122,11 @@ one-step reversal, not a general history of all inventory edits.
 | Change | Read these methods/files together |
 | --- | --- |
 | Shift behavior or changing button labels | `LocationAssignmentView.set_whole_mode`, `_on_shift_press`, `_on_shift_release`, the three `_on_*_button_press` / `_handle_*_click` pairs, and the corresponding action methods. |
-| Queue to on-hand or direct cell transfer | `AssignmentActions.move_selected_to_on_hand`, `_start_queue_shift_timer`, `_reset_queue_shift_clicks`, and `LocationAssignmentView.set_queue_button_clicks`. |
-| Catalog to queue or direct cell transfer | `CatalogActions.transfer_catalog_selection_to_queue`; database `import_products`, `force_pull_to_queue`, and `assign_catalog_direct_to_slot`. |
+| Queue to loaded cell | `AssignmentActions.assign_queue_selection_to_address`, `assign_product_records_to_address`, `_start_queue_shift_timer`, `_reset_queue_shift_clicks`, and `LocationAssignmentView.set_queue_button_clicks`. |
+| Catalog to loaded cell | `CatalogActions.assign_catalog_selection_to_address`, shared `assign_product_records_to_address`; database `assign_catalog_direct_to_slot`. |
 | Selected/all on-hand assignment | `AssignmentActions.assign_on_hand_to_address`; database `assign_on_hand_to_slot`. |
 | Returning products from a cell | `move_selected_address_to_on_hand` and `move_address_to_on_hand`; database `move_slot_to_on_hand`. |
-| Returning on-hand products to total queue | `dequeue_selected_on_hand`; database `dequeue_on_hand`. Returned products retain stock and appear first in bold yellow. |
+| Returning on-hand products to queue/catalog | `dequeue_selected_on_hand`; database `dequeue_on_hand`. Original membership determines the destination; total-queue stock is retained. Returned rows have ordinary styling. |
 | Stock entry or modification | `StockQuantityDialog` in `assignment_view.py`, `modify_on_hand_stock`, `_modify_loaded_address_stock`, and `validate_stock_quantity`. |
 | Search, location status, catalog double-click | `CatalogActions.schedule_queue_refresh`, `refresh_product_queue`, `refresh_catalog`, `refresh_search_location`, and `activate_catalog_product`. |
 | Queue double-click | `LocationAssignmentView._on_queue_double_click` fills and selects the search field; it does not move inventory. |
@@ -311,8 +312,8 @@ identify the relevant code section without depending on changing line numbers.
 | `app.py`: `refresh_assignment_shelf_preview` | 2 | Compact shelf count updates. |
 | `app.py`: `on_cell_transfer_changed` | 5; refreshes inventory consumers | Readback after switch/combine. |
 | `catalog_actions.py`: `import_csv`, `import_catalog_csv` | Buttons on 1; data consumed by 2, 3, 6 | Import into the separate working/catalog stores. |
-| `catalog_actions.py`: `schedule_queue_refresh`, `refresh_product_queue`, `refresh_catalog`, `refresh_search_location`, `activate_catalog_product`, `transfer_catalog_selection_to_queue` | 2 | Search, location status, catalog activation and transfers. Tab 3 has its own search handlers. |
-| `assignment_actions.py`: `move_selected_to_on_hand`, `assign_on_hand_to_address`, `dequeue_selected_on_hand`, `move_address_to_on_hand`, `move_selected_address_to_on_hand`, stock/address/Shift handlers | 2 | Current address-first workflow. |
+| `catalog_actions.py`: `schedule_queue_refresh`, `refresh_product_queue`, `refresh_catalog`, `refresh_search_location`, `activate_catalog_product`, `assign_catalog_selection_to_address` | 2 | Search, location status, catalog activation and assignment. Tab 3 has its own search handlers. |
+| `assignment_actions.py`: `assign_queue_selection_to_address`, `assign_product_records_to_address`, `assign_on_hand_to_address`, `dequeue_selected_on_hand`, `move_address_to_on_hand`, `move_selected_address_to_on_hand`, stock/address/Shift handlers | 2 | Direct assignment and shelf-removal holding queue. |
 | `assignment_actions.py`: `assign_selected_products`, `refresh_slot_contents`, `transfer_selected_products`; `catalog_actions.py`: `preassign_queue_stock`, `return_selected_to_queue` | Older staged workflow | Retained methods; not the current Tab 2 button callbacks in `_build_ui`. |
 | `assignment_view.py`: `StockQuantityDialog` | 2; retained staged assignment code | Per-product quantity entry. |
 | `assignment_view.py`: `AssignmentView.render_shelf`, `_cell_visual`, `refresh_cell`, `mark_selected` | 4; previews produced by 1 | Shared full-size shelf renderer. Tab 2 has its own compact renderer. |

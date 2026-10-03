@@ -78,6 +78,11 @@ class SchemaOperations:
                     returned_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS queue_origins (
+                    product_id TEXT PRIMARY KEY REFERENCES products(product_id) ON DELETE CASCADE,
+                    snapshot TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS exception_placements (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
                     product_id   TEXT NOT NULL,
