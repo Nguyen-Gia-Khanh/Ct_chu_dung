@@ -251,7 +251,7 @@ class WarehouseMapperApp(
         self.notebook.add(self.exceptions_view, text="6. Special Exceptions")
 
         self.location_comparison = LocationComparisonView(
-            self.notebook, self.database, self.resync_web_locations
+            self.notebook, self.database, self.resync_web_locations, self.on_kiotviet_url_changed
         )
         self.notebook.add(self.location_comparison, text="7. Web Location Sync")
         self._last_content_tab = str(self.designer_tab)
@@ -379,6 +379,9 @@ class WarehouseMapperApp(
                 "Commit shelf and product changes before closing?",
             )
             if choice is None or (choice and not self.commit_changes()):
+                return
+        if self.location_comparison.store_url.get().strip():
+            if not self.location_comparison.save_browser_settings():
                 return
         if self.search_after_id:
             self.root.after_cancel(self.search_after_id)

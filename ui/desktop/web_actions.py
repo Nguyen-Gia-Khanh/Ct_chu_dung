@@ -11,6 +11,17 @@ from mapper.features.web_upload import LocationUpdate, UploadProduct
 
 
 class WebActions:
+    def on_kiotviet_url_changed(self, url: str) -> None:
+        self.website_uploader.store_url = url
+        self.chrome_connected = False
+        self.notebook.tab(self.chrome_tab, text="Connect Chrome")
+
+    def _capture_browser_settings(self) -> bool:
+        if not self.location_comparison.save_browser_settings():
+            return False
+        self.website_uploader.store_url = self.location_comparison.store_url.get()
+        return True
+
     def connect_chrome(self) -> None:
         if self.chrome_connect_busy:
             return
@@ -22,6 +33,9 @@ class WebActions:
             )
             return
 
+        if not self._capture_browser_settings():
+            return
+        self.location_comparison.set_busy(True)
         self.chrome_connect_busy = True
         self.notebook.tab(self.chrome_tab, text="Connecting…", state="disabled")
         self.status_text.set("Connecting to the debugging Chrome session on port 9222…")
@@ -40,9 +54,12 @@ class WebActions:
                 lambda text: events.put(("progress", text))
             )
         except Exception as error:
-            events.put(("error", str(error)))
+            event = ("error", str(error))
         else:
-            events.put(("done", result))
+            event = ("done", result)
+        finally:
+            self.website_uploader.disconnect()
+        events.put(event)
 
     def _poll_chrome_connect(self) -> None:
         self.chrome_connect_after_id = None
@@ -56,6 +73,7 @@ class WebActions:
                 continue
 
             self.chrome_connect_busy = False
+            self.location_comparison.set_busy(False)
             self.notebook.tab(self.chrome_tab, state="normal")
             if event == "error":
                 self.chrome_connected = False
@@ -186,11 +204,13 @@ class WebActions:
     def _can_start_web_update(self) -> bool:
         if self.web_upload_busy or self.chrome_connect_busy:
             return False
+        if not self._capture_browser_settings():
+            return False
         if self.chrome_connected:
             return True
         messagebox.showinfo(
             "Connect Chrome first",
-            "Press Connect Chrome on the main tab bar, then try again.",
+            "Save your KiotViet URL in Tab 7, then press Connect Chrome on the main tab bar.",
             parent=self.root,
         )
         return False
@@ -302,6 +322,7 @@ class WebActions:
                 self.web_upload_events,
                 location_only,
                 save_each_product,
+                int(self.location_comparison.tab_count.get()) if source == "comparison" else 1,
             ),
             daemon=True,
         ).start()
@@ -313,68 +334,22 @@ class WebActions:
         events: Queue,
         location_only: bool,
         save_each_product: bool = False,
+        tab_count: int = 1,
     ) -> None:
-        # This worker never calls Tkinter and never writes to the local database.
-        total = len(products)
-        completed = 0
-        product = None
+        # Playwright objects are created and released on their owning threads.
         try:
-            for index, product in enumerate(products, start=1):
-
-                def progress(text: str, *, _index=index, _product=product) -> None:
-                    events.put(
-                        (
-                            "progress",
-                            f"[{_index}/{total}] {_product.product_id}: {text}",
-                        )
-                    )
-
-                if location_only:
-                    result = self.website_uploader.modify_location(
-                        product,
-                        progress,
-                        save=True if save_each_product else None,
-                    )
-                else:
-                    result = self.website_uploader.upload(
-                        product,
-                        progress,
-                        save=True if save_each_product else None,
-                    )
-                completed = index
-                events.put(("item_done", product.product_id))
-                if total > 1:
-                    events.put(
-                        (
-                            "progress",
-                            f"[{index}/{total}] Finished {product.product_id}.",
-                        )
-                    )
+            result = self.website_uploader.run_batch(
+                products,
+                lambda text: events.put(("progress", text)),
+                lambda product_id: events.put(("item_done", product_id)),
+                location_only=location_only,
+                save=True if save_each_product else None,
+                tab_count=tab_count,
+            )
         except Exception as error:
-            product_id = product.product_id if product is not None else "unknown product"
-            detail = (
-                f"Batch stopped after {completed}/{total} product(s). "
-                f"Failed at {product_id}.\n\n{error}"
-                if total > 1
-                else str(error)
-            )
-            events.put(
-                ("error", detail, self.website_uploader.is_connected())
-            )
+            events.put(("error", str(error)))
         else:
-            if total == 1:
-                summary = result
-            elif location_only:
-                if len({item.location_id for item in products}) == 1:
-                    if products[0].location_id:
-                        summary = f"Updated web locations for {total} products at {products[0].location_id}."
-                    else:
-                        summary = f"Cleared web locations for {total} products."
-                else:
-                    summary = f"Updated web locations for {total} products."
-            else:
-                summary = f"Uploaded stock and web locations for {total} products."
-            events.put(("done", summary))
+            events.put(("done", result))
 
     def _poll_web_upload(self) -> None:
         self.web_upload_after_id = None
