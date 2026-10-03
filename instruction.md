@@ -271,7 +271,11 @@ cover multiple locations and independent registration targets.
 `save_browser_settings` persists the validated store Products URL and 1?10
 upload tabs through `mapper/features/kiotviet_settings.py`. `WebActions` captures
 settings on the Tk thread before connecting or uploading. `WebsiteUploader`
-uses Playwright CDP attachments owned by each worker thread; `run_batch` gives
+attaches to Chrome before a store tab exists. A web action opens the saved URL,
+looks up the exact SKU through KiotViet's suggest API, then asks its controller
+to edit the returned product ID. It waits for a bound form and matching ID;
+an empty form is reloaded once before reporting an error. Playwright CDP
+attachments are owned by each worker thread; `run_batch` gives
 concurrent Tab 7 workers separate tabs and coordinates location creation.
 Browser errors stop scheduling, preserve successful item events, and never
 retry an uncertain Save. Tabs 2/5 use one worker. Browser tests are in

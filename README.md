@@ -66,7 +66,7 @@ Chrome connection uses port 9222 and does not need ChromeDriver or a downloaded
 Playwright browser. Tab 7 uses `openpyxl` to read and write `.xlsx` workbooks.
 
 Start a separate debugging Chrome with its own profile (adjust the Chrome path
-if needed), then log in to your store:
+if needed):
 
 ```powershell
 & 'C:\Program Files\Google\Chrome\Application\chrome.exe' --remote-debugging-port=9222 --user-data-dir="$env:LOCALAPPDATA\WarehouseMapper\Chrome"
@@ -77,6 +77,9 @@ In Tab 7, paste your full store URL, such as
 The URL and **Upload tabs** count are remembered in `data/kiotviet_settings.json`.
 Valid edits also save when you leave a field, connect Chrome, or close the app.
 Changing stores requires reconnecting Chrome.
+**Connect Chrome** attaches immediately, even if the store page is not open.
+The first web action opens the saved Products URL automatically. If KiotViet
+asks for login, sign in there and retry the web action.
 
 ## Tab 1: Shelf Designer
 

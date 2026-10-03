@@ -3,7 +3,7 @@
 from threading import Barrier, Event, get_ident
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from mapper.features.kiotviet_settings import load_settings, save_settings, validate_store_url, validate_tab_count
 from mapper.features.web_upload import LocationUpdate, UploadError, UploadProduct, WebsiteUploader
@@ -14,6 +14,41 @@ URL = "https://hondaminhdung.kiotviet.vn/man/#/Products"
 
 
 class PlaywrightUploadTests(WorkspaceTestCase):
+    def test_connect_does_not_require_an_open_store_tab(self):
+        uploader = WebsiteUploader(store_url=URL)
+        with patch.object(uploader, "_connect") as attach, patch.object(uploader, "_choose_tab") as select:
+            uploader.browser = SimpleNamespace(is_connected=lambda: True)
+            self.assertIn("Chrome connected", uploader.connect())
+        attach.assert_called_once()
+        select.assert_not_called()
+        self.assertTrue(uploader.is_connected())
+
+    def test_web_action_opens_saved_url_when_no_store_tab_exists(self):
+        page = SimpleNamespace(url="about:blank", is_closed=lambda: False)
+        page.goto = lambda url, **_kwargs: setattr(page, "url", url)
+        context = SimpleNamespace(pages=[], new_page=lambda: page)
+        uploader = WebsiteUploader(store_url=URL)
+        uploader.browser = SimpleNamespace(contexts=[context])
+        uploader._choose_tab(wait_ready=False)
+        self.assertIs(uploader.page, page)
+        self.assertEqual(page.url, URL)
+
+    def test_empty_edit_form_reloads_once_before_retrying_without_saving(self):
+        uploader = WebsiteUploader(store_url=URL, timeout=0, step_delay=0)
+        uploader.page = SimpleNamespace(reload=Mock())
+        ready_checks = iter((False, True))
+
+        def dom(action, *_args):
+            return next(ready_checks) if action == "edit_ready" else True if action != "errors" else ""
+
+        with patch.object(uploader, "_evaluate_async", return_value={"ok": True}) as open_edit, \
+                patch.object(uploader, "_dom", side_effect=dom), \
+                patch.object(uploader, "_save_product") as save:
+            uploader._open_product(LocationUpdate("P1", "A"))
+        self.assertEqual(open_edit.call_count, 2)
+        uploader.page.reload.assert_called_once()
+        save.assert_not_called()
+
     def test_settings_survive_restart_and_invalid_edits_preserve_previous_values(self):
         path = self.folder / "settings.json"
         self.assertEqual(load_settings(path), ("", 1))
@@ -47,7 +82,7 @@ class PlaywrightUploadTests(WorkspaceTestCase):
 
         def connect(uploader, _progress):
             uploader.owner = get_ident()
-            uploader.page = SimpleNamespace(close=lambda: closed.append(uploader.owner))
+            uploader.page = SimpleNamespace(close=lambda: closed.append(uploader.owner), is_closed=lambda: False)
             created.append(uploader)
 
         def new_tab(uploader):
@@ -65,6 +100,7 @@ class PlaywrightUploadTests(WorkspaceTestCase):
             disconnected.append(uploader.owner)
 
         with patch.object(WebsiteUploader, "connect", connect), \
+                patch.object(WebsiteUploader, "_choose_tab"), \
                 patch.object(WebsiteUploader, "_new_upload_tab", new_tab), \
                 patch.object(WebsiteUploader, "modify_location", modify), \
                 patch.object(WebsiteUploader, "disconnect", disconnect):
@@ -83,7 +119,7 @@ class PlaywrightUploadTests(WorkspaceTestCase):
         attempted, completed, disconnected, closed = [], [], [], []
 
         def connect(uploader, _progress):
-            uploader.page = SimpleNamespace()
+            uploader.page = SimpleNamespace(is_closed=lambda: False)
 
         def new_tab(uploader):
             uploader.page = SimpleNamespace(close=lambda: closed.append(True))
@@ -101,6 +137,7 @@ class PlaywrightUploadTests(WorkspaceTestCase):
             failed.set()
 
         with patch.object(WebsiteUploader, "connect", connect), \
+                patch.object(WebsiteUploader, "_choose_tab"), \
                 patch.object(WebsiteUploader, "_new_upload_tab", new_tab), \
                 patch.object(WebsiteUploader, "modify_location", modify), \
                 patch.object(WebsiteUploader, "disconnect", disconnect):

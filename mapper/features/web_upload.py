@@ -639,6 +639,16 @@ const executeAction = () => {
     }
     if (action === 'element') return !!one(paths);
     if (action === 'present') return !!one(paths);
+    if (action === 'edit_ready') {
+        const form = one(paths);
+        if (!form || !Array.from(form.querySelectorAll('input')).some(visible)) return false;
+        // Hidden templates can contain braces; only rendered text must be bound.
+        const nodes = document.createTreeWalker(form, NodeFilter.SHOW_TEXT);
+        while (nodes.nextNode()) {
+            if (visible(nodes.currentNode.parentElement) && /\{\{/.test(nodes.currentNode.nodeValue)) return false;
+        }
+        return true;
+    }
     if (action === 'set') { const e = one(paths); if (!e) return false; setValue(e, value); return true; }
     if (action === 'click') {
         const e = one(paths);
@@ -772,17 +782,16 @@ class WebsiteUploader:
         self.location_lock = location_lock or Lock()
 
     def is_connected(self) -> bool:
-        return (self.page is not None and not self.page.is_closed()
-                and (self.browser is None or self.browser.is_connected()))
+        if self.browser is not None:
+            return self.browser.is_connected()
+        return self.page is not None and not self.page.is_closed()
 
     def connect(self, progress: Callable[[str], None] = lambda _message: None) -> str:
-        """Attach and check the saved store's logged-in product page."""
+        """Attach to Chrome independently of the open tabs and store login."""
         self.store_url = validate_store_url(self.store_url)
         progress("Connecting to Chrome...")
         self._connect()
-        progress("Checking the KiotViet product tab...")
-        self._choose_tab()
-        return "Chrome connected. Ready to update the saved KiotViet store."
+        return "Chrome connected. KiotViet opens automatically when you start a web action."
 
     def disconnect(self) -> None:
         """Disconnect the transport; never close the user's browser."""
@@ -810,8 +819,8 @@ class WebsiteUploader:
         except Exception as error:
             self.disconnect()
             raise UploadError(
-                f"Cannot attach to Chrome at {DEBUGGER_ADDRESS}. Open your debugging Chrome, "
-                "log in to the saved store, and leave its Products page open.\n\n"
+                f"Cannot attach to Chrome at {DEBUGGER_ADDRESS}. "
+                "Open your debugging Chrome with remote debugging enabled.\n\n"
                 + str(error)[:700]
             ) from error
 
@@ -853,15 +862,25 @@ class WebsiteUploader:
         except ValueError:
             return False
 
-    def _choose_tab(self) -> None:
+    def _choose_tab(self, *, wait_ready: bool = True) -> None:
         if self.page is None or self.page.is_closed():
+            # A previous failed edit may leave an empty modal in another tab.
+            # Prefer a clean Products tab, and open one when none is available.
             self.page = next(
                 (page for context in self.browser.contexts for page in context.pages
-                 if self._matches_store(page)), None
+                 if self._matches_store(page)
+                 and not page.locator('.k-window-addProduct:visible').count()), None
             )
-        if self.page is None or not self._matches_store(self.page):
+        if self.page is None:
+            if not self.browser.contexts:
+                raise UploadError("Chrome has no available browser context. Reconnect Chrome.")
+            self.page = self.browser.contexts[0].new_page()
+            self.page.goto(self.store_url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
+        if not wait_ready:
+            return
+        if not self._matches_store(self.page):
             raise UploadError(
-                "Open the saved KiotViet Products URL in debugging Chrome and log in first: "
+                "KiotViet is waiting for login. Log in on the opened tab, then try the web action again: "
                 + self.store_url
             )
         self.page.set_default_timeout(self.timeout * 1000)
@@ -874,7 +893,7 @@ class WebsiteUploader:
             session.detach()
         if self._dom("present", FORM_XPATH) or self._dom("present", LOCATION_FORM_XPATH):
             raise UploadError("Finish or cancel the existing website edit dialog before uploading.")
-        self._wait("waiting for the KiotViet product page", lambda: self._dom("product_page"))
+        self._wait("waiting for the KiotViet product page", lambda: self._dom("product_page") and self._dom("product_controller"))
 
     def _new_upload_tab(self) -> None:
         """Use the logged-in context, including auth kept in sessionStorage."""
@@ -919,6 +938,7 @@ class WebsiteUploader:
                 uploader.connect(progress)
                 if workers > 1:
                     # Keep the source tab untouched. Every worker owns one new tab.
+                    uploader._choose_tab(wait_ready=False)
                     source_page = uploader.page
                     try:
                         uploader._new_upload_tab()
@@ -1002,16 +1022,33 @@ class WebsiteUploader:
         )
 
     def _open_product(self, product: UploadProduct | LocationUpdate) -> None:
-        result = self._evaluate_async(OPEN_PRODUCT_SCRIPT, product.product_id)
-        if not isinstance(result, dict) or not result.get("ok"):
-            detail = result.get("error") if isinstance(result, dict) else repr(result)
-            raise UploadError(f"Could not open product {product.product_id}: {detail}")
+        for attempt in range(2):
+            result = self._evaluate_async(OPEN_PRODUCT_SCRIPT, product.product_id)
+            if not isinstance(result, dict) or not result.get("ok"):
+                detail = result.get("error") if isinstance(result, dict) else repr(result)
+                raise UploadError(f"Could not open product {product.product_id}: {detail}")
 
-        self._wait("opening the edit form", lambda: self._dom("present", FORM_XPATH))
-        self._wait(
-            "checking the product ID (set PRODUCT_ID_XPATH if automatic detection fails)",
-            lambda: self._identity_matches(product),
-        )
+            try:
+                self._wait("loading the edit form", lambda: self._dom("edit_ready", FORM_XPATH), check_errors=True)
+                self._wait(
+                    "checking the product ID (set PRODUCT_ID_XPATH if automatic detection fails)",
+                    lambda: self._identity_matches(product),
+                    check_errors=True,
+                )
+                return
+            except WaitExpired as error:
+                if attempt:
+                    raise UploadError(
+                        f"KiotViet did not load a usable edit form for {product.product_id}. "
+                        "Check the open tab. No product was saved."
+                    ) from error
+                # Opening an edit is read-only. A refresh clears a partially
+                # compiled popup before one safe retry; Save is never retried.
+                self.page.reload(wait_until="domcontentloaded", timeout=self.timeout * 1000)
+                self._wait(
+                    "waiting for KiotViet after the incomplete form",
+                    lambda: self._dom("product_page") and self._dom("product_controller"),
+                )
 
     def _set_stock(self, product: UploadProduct) -> None:
         self._wait("finding the stock input", lambda: self._dom("present", QUANTITY_XPATH))
