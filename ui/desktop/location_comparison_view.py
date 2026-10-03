@@ -152,40 +152,41 @@ class LocationComparisonView(ttk.Frame):
             text="Compare KiotViet locations with saved local shelf locations. Local locations are the true values.",
             foreground="#555555",
         ).pack(anchor="w", pady=(2, 10))
-        settings = ttk.Frame(self)
-        settings.pack(fill="x", pady=(0, 8))
-        ttk.Label(settings, text="KiotViet URL").pack(side="left")
-        self.url_entry = ttk.Entry(settings, textvariable=self.store_url)
-        self.url_entry.pack(side="left", fill="x", expand=True, padx=(8, 12))
-        ttk.Label(settings, text="Upload tabs").pack(side="left")
+        actions = ttk.Frame(self)
+        actions.pack(fill="x", pady=(0, 8))
+        actions.columnconfigure(1, weight=1)
+        ttk.Label(actions, text="KiotViet URL").grid(row=0, column=0)
+        self.url_entry = ttk.Entry(actions, textvariable=self.store_url)
+        self.url_entry.grid(row=0, column=1, sticky="ew", padx=(6, 8))
+        ttk.Label(actions, text="Upload tabs").grid(row=0, column=2)
         self.tabs_input = ttk.Spinbox(
-            settings, from_=1, to=MAX_UPLOAD_TABS, width=4, textvariable=self.tab_count,
+            actions, from_=1, to=MAX_UPLOAD_TABS, width=4, textvariable=self.tab_count,
             command=self._autosave_settings,
         )
-        self.tabs_input.pack(side="left", padx=(8, 12))
-        self.save_settings_button = ttk.Button(settings, text="Save settings", command=self.save_browser_settings)
-        self.save_settings_button.pack(side="left")
+        self.tabs_input.grid(row=0, column=3, padx=(6, 8))
+        self.save_settings_button = ttk.Button(actions, text="Save settings", command=self.save_browser_settings)
+        self.save_settings_button.grid(row=0, column=4)
         for widget in (self.url_entry, self.tabs_input):
             widget.bind("<FocusOut>", self._autosave_settings)
             widget.bind("<Return>", lambda _event: self.save_browser_settings())
-        ttk.Label(
-            self, text="Paste https://yourstore.kiotviet.vn/man/#/Products once; settings are saved for future runs.",
-            foreground="#555555",
-        ).pack(anchor="w", pady=(0, 8))
-        actions = ttk.Frame(self)
-        actions.pack(fill="x", pady=(0, 8))
         self.import_button = ttk.Button(actions, text="Import Web's Data", command=self.import_excel)
-        self.import_button.pack(side="left")
+        self.import_button.grid(row=0, column=5, padx=(8, 0))
         self.resync_button = ttk.Button(actions, text="Web resync", command=self.resync, state="disabled")
-        self.resync_button.pack(side="left", padx=(8, 0))
+        self.resync_button.grid(row=0, column=6, padx=(8, 0))
         self.export_button = ttk.Button(
             actions, text="Export comparison excel", command=self.export_excel, state="disabled"
         )
-        self.export_button.pack(side="left", padx=(8, 0))
+        self.export_button.grid(row=0, column=7, padx=(8, 0))
         self.refresh_button = ttk.Button(actions, text="Refresh comparison", command=self.refresh)
-        self.refresh_button.pack(side="left", padx=(8, 0))
+        self.refresh_button.grid(row=0, column=8, padx=(8, 0))
+        hint = ttk.Frame(self)
+        hint.pack(fill="x", pady=(0, 8))
+        ttk.Label(
+            hint, text="Paste https://yourstore.kiotviet.vn/man/#/Products once; settings are saved for future runs.",
+            foreground="#555555",
+        ).pack(anchor="w")
         self.loading_bar = tk.Canvas(
-            actions, width=170, height=4, bd=0, highlightthickness=0, background="#e4e9ef"
+            hint, width=170, height=4, bd=0, highlightthickness=0, background="#e4e9ef"
         )
         self.loading_segment = self.loading_bar.create_rectangle(
             0, 0, 44, 4, fill="#0969da", outline=""
