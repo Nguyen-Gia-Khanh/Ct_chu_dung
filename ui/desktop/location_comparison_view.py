@@ -179,14 +179,10 @@ class LocationComparisonView(ttk.Frame):
         self.export_button.grid(row=0, column=7, padx=(8, 0))
         self.refresh_button = ttk.Button(actions, text="Refresh comparison", command=self.refresh)
         self.refresh_button.grid(row=0, column=8, padx=(8, 0))
-        hint = ttk.Frame(self)
-        hint.pack(fill="x", pady=(0, 8))
-        ttk.Label(
-            hint, text="Paste https://yourstore.kiotviet.vn/man/#/Products once; settings are saved for future runs.",
-            foreground="#555555",
-        ).pack(anchor="w")
+        loading_strip = ttk.Frame(self, height=4)
+        loading_strip.pack(fill="x", pady=(0, 8))
         self.loading_bar = tk.Canvas(
-            hint, width=170, height=4, bd=0, highlightthickness=0, background="#e4e9ef"
+            loading_strip, width=170, height=4, bd=0, highlightthickness=0, background="#e4e9ef"
         )
         self.loading_segment = self.loading_bar.create_rectangle(
             0, 0, 44, 4, fill="#0969da", outline=""
