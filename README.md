@@ -57,11 +57,26 @@ py utils/build_exe.py
 ```
 
 Use `py utils/build_exe.py --app mapper` or `--app labels` to rebuild just one.
-The executables contain only the Windows launcher, not Python, Selenium, UI
+The executables contain only the Windows launcher, not Python, Playwright, UI
 code, or other app resources.
 
-Selenium is only needed for the optional Chrome/KiotViet integration. Tab 7
-uses `openpyxl` to read and write `.xlsx` workbooks.
+Playwright is only needed for the optional Chrome/KiotViet integration. Install
+it in the launcher's venv with `python -m pip install playwright`. The existing
+Chrome connection uses port 9222 and does not need ChromeDriver or a downloaded
+Playwright browser. Tab 7 uses `openpyxl` to read and write `.xlsx` workbooks.
+
+Start a separate debugging Chrome with its own profile (adjust the Chrome path
+if needed), then log in to your store:
+
+```powershell
+& 'C:\Program Files\Google\Chrome\Application\chrome.exe' --remote-debugging-port=9222 --user-data-dir="$env:LOCALAPPDATA\WarehouseMapper\Chrome"
+```
+
+In Tab 7, paste your full store URL, such as
+`https://hondaminhdung.kiotviet.vn/man/#/Products`, and press **Save settings**.
+The URL and **Upload tabs** count are remembered in `data/kiotviet_settings.json`.
+Valid edits also save when you leave a field, connect Chrome, or close the app.
+Changing stores requires reconnecting Chrome.
 
 ## Tab 1: Shelf Designer
 
@@ -280,8 +295,9 @@ See [Tab 6 source sections](instruction.md#tab-6-special-exceptions).
 3. Review website and local locations side by side. A website location with no
    saved local location is queued to be cleared on the website. Local IDs absent
    from the export are shown separately and are not uploaded.
-4. Connect Chrome on tab 2, then press **Web resync** on tab 7. The app saves
-   each comparable mismatch in sequence using the shared location-only
+4. Save your store URL in Tab 7, choose **Upload tabs** (1-10), and press
+   **Connect Chrome** on the main tab bar. Then press **Web resync** on Tab 7. The app saves
+   each comparable mismatch using the selected number of location-only
    browser worker; an empty local location clears the website selection without
    creating a location. Stock quantities are untouched. Successfully resynced
    rows are excluded from another upload until a new export is imported.
@@ -293,6 +309,13 @@ Products with several local locations are compared and uploaded as complete
 location sets, including exception placements. Commas, semicolons, pipes, and
 newlines in the website export are accepted as location separators. Import a
 new KiotViet export to verify completed updates.
+
+With more than one upload tab, resync creates separate tabs in your logged-in
+Chrome context and processes different products concurrently. Location creation
+is coordinated to avoid duplicate shelf names. Successful batches close their
+worker tabs; failed batches leave tabs open for inspection. An error stops new
+products while those already running finish; completed products remain marked as synced. Leave the
+store tabs untouched during resync. Tabs 2 and 5 continue processing sequentially.
 
 View: [location_comparison_view.py](ui/desktop/location_comparison_view.py).
 Excel parsing/comparison/export: [location_comparison.py](mapper/features/location_comparison.py).

@@ -359,7 +359,10 @@ class WriteRoutes:
             try:
                 uploader = _get_uploader()
                 if uploader:
-                    connected = uploader.connect()
+                    try:
+                        connected = uploader.connect()
+                    finally:
+                        uploader.disconnect()
                     uploader_msg = connected or "Connected to Chrome successfully."
             except Exception as e:
                 uploader_msg = f"Chrome connection note: {e}"
@@ -393,10 +396,13 @@ class WriteRoutes:
             uploader_note = ""
             try:
                 uploader = _get_uploader()
-                if uploader and uploader.is_connected():
+                if uploader and updates:
                     from mapper.features.web_upload import LocationUpdate
-                    for pid, names in updates:
-                        uploader.modify_location(LocationUpdate(pid, names))
+                    uploader.run_batch(
+                        [LocationUpdate(pid, names) for pid, names in updates],
+                        lambda _text: None, lambda _id: None,
+                        location_only=True, save=True,
+                    )
                     uploader_note = " and synced to website via Chrome"
             except Exception as ex:
                 uploader_note = f" (Chrome note: {ex})"

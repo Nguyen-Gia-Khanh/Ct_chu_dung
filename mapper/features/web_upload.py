@@ -1,25 +1,29 @@
-"""Update one placement at a time in an existing Chrome session.
+"""Update placements in an existing Chrome session with optional Playwright.
 
-Selenium is optional and imported only when Upload is clicked. This module never
-opens SQLite, commits a shelf, logs in, or starts a product batch. The selected
+Playwright is imported only when a browser action is requested. This module never
+opens SQLite, commits a shelf, or logs in. The selected
 SKU is looked up through the current KiotViet browser session, then the remaining
 form fields are changed one step at a time. The app controller can safely call
-these single-product operations sequentially for a batch. Location-only updates
+these operations sequentially or on separate tabs for a batch. Location-only updates
 deliberately leave the website quantity untouched.
 """
 
 from __future__ import annotations
 
-import sys
+import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from queue import Empty, Queue
+from threading import Event, Lock
 from time import monotonic, sleep
 from typing import Callable
 
+from .kiotviet_settings import validate_store_url, validate_tab_count
 
-# Change these settings here if your Chrome port or website changes.
+
+# Chrome connection and upload timings.
 DEBUGGER_ADDRESS = "127.0.0.1:9222"
-TAB_URL_CONTAINS = ""  # Optional URL fragment when several product tabs are open.
 TIMEOUT_SECONDS = 20
 STEP_DELAY_SECONDS = 2.0
 # Controls only the final product Save. A newly created location must always
@@ -45,7 +49,7 @@ PRODUCT_ID_XPATH = ""
 
 
 class UploadError(RuntimeError):
-    """An actionable error that can be shown without a Selenium stack trace."""
+    """An actionable error that can be shown without a browser stack trace."""
 
 
 class WaitExpired(UploadError):
@@ -465,7 +469,7 @@ const findCurrentAuth = () => {
 
 # One small DOM adapter, kept here so selectors and website-specific behavior
 # can be adjusted without changing the Tkinter application. Values are always
-# WebDriver arguments, never interpolated into executable JavaScript.
+# Browser arguments, never interpolated into executable JavaScript.
 DOM_SCRIPT = r"""
 const [action, paths, value] = arguments;
 
@@ -633,7 +637,7 @@ const executeAction = () => {
         }
         return false;
     }
-    if (action === 'element') return one(paths);
+    if (action === 'element') return !!one(paths);
     if (action === 'present') return !!one(paths);
     if (action === 'set') { const e = one(paths); if (!e) return false; setValue(e, value); return true; }
     if (action === 'click') {
@@ -745,94 +749,85 @@ return executeAction();
 
 
 class WebsiteUploader:
-    """Keep one ChromeDriver attachment while the mapper is open.
+    """Own a Playwright attachment on the calling worker thread.
 
-    Stopping this attachment never closes the user's existing Chrome window.
+    Disconnecting releases automation without closing the user's Chrome.
     """
 
     def __init__(
         self,
-        driver=None,
+        page=None,
         *,
+        store_url: str = "",
         timeout: float = TIMEOUT_SECONDS,
         step_delay: float = STEP_DELAY_SECONDS,
+        location_lock=None,
     ):
-        self.driver = driver  # Dependency injection for offline workflow tests.
+        self.page = page
+        self.browser = None
+        self.playwright = None
+        self.store_url = store_url
         self.timeout = timeout
         self.step_delay = max(0.0, step_delay)
+        self.location_lock = location_lock or Lock()
 
     def is_connected(self) -> bool:
-        if self.driver is None:
-            return False
-        try:
-            self.driver.current_window_handle
-        except Exception:
-            self.disconnect()
-            return False
-        return True
+        return (self.page is not None and not self.page.is_closed()
+                and (self.browser is None or self.browser.is_connected()))
 
     def connect(self, progress: Callable[[str], None] = lambda _message: None) -> str:
-        """Attach once and verify that the KiotViet product page is available."""
-        if self.driver is None:
-            progress("Connecting to Chrome…")
-        elif self.is_connected():
-            progress("Checking the existing Chrome connection…")
-        else:
-            progress("The old Chrome connection ended. Attaching again…")
+        """Attach and check the saved store's logged-in product page."""
+        self.store_url = validate_store_url(self.store_url)
+        progress("Connecting to Chrome...")
         self._connect()
-        progress("Checking the KiotViet product tab…")
+        progress("Checking the KiotViet product tab...")
         self._choose_tab()
-        return (
-            "Chrome connected. Select one loaded product or enable all-products "
-            "mode, then start a web action."
-        )
+        return "Chrome connected. Ready to update the saved KiotViet store."
 
     def disconnect(self) -> None:
-        """Release ChromeDriver without closing the user's debugging Chrome."""
-        if self.driver is None:
-            return
+        """Disconnect the transport; never close the user's browser."""
         try:
-            self.driver.service.stop()
-        except Exception:
-            pass
-        self.driver = None
+            if self.playwright is not None:
+                self.playwright.stop()
+        finally:
+            self.page = self.browser = self.playwright = None
 
     def _connect(self) -> None:
-        if self.driver is not None:
+        if self.browser is not None or self.page is not None:
             return
         try:
-            from selenium import webdriver
-            options = webdriver.ChromeOptions()
+            from playwright.sync_api import sync_playwright
         except ImportError as error:
-            if getattr(sys, "frozen", False):
-                raise UploadError(
-                    "This executable is missing Selenium modules. Rebuild warehouse_mapper.exe "
-                    "from the project venv with: py utils/build_exe.py --app mapper"
-                ) from error
             raise UploadError(
-                "Install Selenium in the same venv as this app:\n\npython -m pip install -U selenium"
+                "Install Playwright in the same venv as this app:\n\n"
+                "python -m pip install playwright"
             ) from error
-        options.debugger_address = DEBUGGER_ADDRESS
         try:
-            self.driver = webdriver.Chrome(options=options)
-            self.driver.execute_cdp_cmd("Network.enable", {})
-            self.driver.execute_cdp_cmd(
-                "Network.setCacheDisabled", {"cacheDisabled": True}
+            self.playwright = sync_playwright().start()
+            self.browser = self.playwright.chromium.connect_over_cdp(
+                f"http://{DEBUGGER_ADDRESS}", timeout=self.timeout * 1000
             )
-            self.driver.set_page_load_timeout(self.timeout)
-            self.driver.set_script_timeout(self.timeout)
-            # Also bound individual HTTP commands, not only polling waits.
-            self.driver.command_executor.client_config.timeout = self.timeout
         except Exception as error:
+            self.disconnect()
             raise UploadError(
                 f"Cannot attach to Chrome at {DEBUGGER_ADDRESS}. Open your debugging Chrome, "
-                "log in, and leave the product list open. Selenium may need internet access "
-                "on its first run to obtain the matching ChromeDriver.\n\n"
-                + str(error).split("Stacktrace:")[0][:700]
+                "log in to the saved store, and leave its Products page open.\n\n"
+                + str(error)[:700]
             ) from error
 
+    def _evaluate(self, script, *args):
+        return self.page.evaluate("(args) => { const arguments = args; " + script + "\n}", list(args))
+
+    def _evaluate_async(self, script, *args):
+        # Existing callbacks resolve a Promise; timeouts never retry a website write.
+        wrapper = """(input) => new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(Error('Browser operation timed out')), input.timeout);
+            const arguments = [...input.args, result => { clearTimeout(timer); resolve(result); }];
+        """ + script + "\n})"
+        return self.page.evaluate(wrapper, {"args": list(args), "timeout": self.timeout * 1000})
+
     def _dom(self, action, paths=None, value=None):
-        return self.driver.execute_script(DOM_SCRIPT, action, paths, value)
+        return self._evaluate(DOM_SCRIPT, action, paths, value)
 
     def _wait(self, description, condition, *, timeout=None, check_errors=False):
         deadline = monotonic() + (self.timeout if timeout is None else timeout)
@@ -852,59 +847,129 @@ class WebsiteUploader:
         if self.step_delay:
             sleep(self.step_delay)
 
+    def _matches_store(self, page) -> bool:
+        try:
+            return validate_store_url(page.url) == self.store_url
+        except ValueError:
+            return False
+
     def _choose_tab(self) -> None:
-        original = self.driver.current_window_handle
-        handles = list(self.driver.window_handles)
-        eligible = []
-        product_pages = []
-
-        for handle in handles:
-            try:
-                self.driver.switch_to.window(handle)
-                if TAB_URL_CONTAINS and TAB_URL_CONTAINS not in self.driver.current_url:
-                    continue
-                eligible.append(handle)
-                if self._dom("product_page"):
-                    product_pages.append(handle)
-            except Exception:
-                # Ignore internal/closing Chrome tabs that cannot run page JavaScript.
-                continue
-
-        if len(product_pages) == 1:
-            selected = product_pages[0]
-        elif len(eligible) == 1:
-            selected = eligible[0]
-        else:
-            self.driver.switch_to.window(original)
-            if not eligible:
-                raise UploadError(
-                    "Chrome is connected, but no accessible tab matches TAB_URL_CONTAINS. "
-                    "Leave it blank or set it to part of your KiotViet product-page URL."
-                )
-            if len(product_pages) > 1:
-                raise UploadError(
-                    f"Chrome exposes {len(product_pages)} KiotViet product-list tabs. Close the extras or set "
-                    "TAB_URL_CONTAINS to a unique part of the tab URL."
-                )
-            raise UploadError(
-                f"Chrome exposes {len(eligible)} possible tabs but none is the KiotViet product-list page. "
-                "Open Hàng hóa > Danh sách hàng hóa, or set TAB_URL_CONTAINS to that tab."
+        if self.page is None or self.page.is_closed():
+            self.page = next(
+                (page for context in self.browser.contexts for page in context.pages
+                 if self._matches_store(page)), None
             )
-
-        self.driver.switch_to.window(selected)
+        if self.page is None or not self._matches_store(self.page):
+            raise UploadError(
+                "Open the saved KiotViet Products URL in debugging Chrome and log in first: "
+                + self.store_url
+            )
+        self.page.set_default_timeout(self.timeout * 1000)
+        # Cache settings are applied to this page rather than the whole browser.
+        session = self.page.context.new_cdp_session(self.page)
+        try:
+            session.send("Network.enable")
+            session.send("Network.setCacheDisabled", {"cacheDisabled": True})
+        finally:
+            session.detach()
         if self._dom("present", FORM_XPATH) or self._dom("present", LOCATION_FORM_XPATH):
             raise UploadError("Finish or cancel the existing website edit dialog before uploading.")
+        self._wait("waiting for the KiotViet product page", lambda: self._dom("product_page"))
 
-        try:
-            self._wait(
-                "waiting for the KiotViet product page",
-                lambda: self._dom("product_page"),
+    def _new_upload_tab(self) -> None:
+        """Use the logged-in context, including auth kept in sessionStorage."""
+        source = self.page
+        storage = source.evaluate("Object.fromEntries(Object.entries(sessionStorage))")
+        self.page = source.context.new_page()
+        # Install storage before the app starts, and only for this store's origin.
+        origin = self.store_url.split("/man/")[0]
+        self.page.add_init_script(
+            "if (location.origin === " + json.dumps(origin) + ") {"
+            "for (const [key, value] of Object.entries(" + json.dumps(storage) + ")) "
+            "sessionStorage.setItem(key, value); }"
+        )
+        self.page.goto(self.store_url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
+        self._choose_tab()
+
+    def run_batch(self, products, progress, item_done, *, location_only, save, tab_count=1) -> str:
+        """Each thread owns its runtime and tab; stop taking new SKUs on error."""
+        tab_count = validate_tab_count(tab_count)
+        save = SAVE_ON_UPLOAD if save is None else save
+        if not products:
+            return "No products to update."
+        if len({product.product_id for product in products}) != len(products):
+            raise UploadError("A browser batch must contain each product ID only once.")
+        if tab_count > 1 and not save:
+            raise UploadError("Concurrent uploads require saving each product.")
+        jobs = Queue()
+        for product in products:
+            jobs.put(product)
+        stopped, state_lock = Event(), Lock()
+        completed, errors, results = [], [], []
+        workers = min(tab_count, len(products))
+
+        def worker():
+            uploader = WebsiteUploader(
+                store_url=self.store_url, timeout=self.timeout,
+                step_delay=self.step_delay, location_lock=self.location_lock,
             )
-        except WaitExpired as error:
+            product = None
+            owned_page = None
+            try:
+                uploader.connect(progress)
+                if workers > 1:
+                    # Keep the source tab untouched. Every worker owns one new tab.
+                    source_page = uploader.page
+                    try:
+                        uploader._new_upload_tab()
+                    finally:
+                        if uploader.page is not source_page:
+                            owned_page = uploader.page
+                while True:
+                    with state_lock:
+                        if stopped.is_set():
+                            break
+                        try:
+                            product = jobs.get_nowait()
+                        except Empty:
+                            break
+                    report = lambda text: progress(f"{product.product_id}: {text}")
+                    action = uploader.modify_location if location_only else uploader.upload
+                    result = action(product, report, save=save)
+                    with state_lock:
+                        completed.append(product.product_id)
+                        results.append(result)
+                        item_done(product.product_id)
+                        progress(f"[{len(completed)}/{len(products)}] Finished {product.product_id}.")
+                    product = None
+            except Exception as error:
+                with state_lock:
+                    stopped.set()
+                    failed = product.product_id if product is not None else "connecting an upload tab"
+                    errors.append(f"Failed at {failed}: {error}")
+            finally:
+                try:
+                    # Leave a failed or unsaved form open for inspection.
+                    if owned_page is not None and product is None and save and not errors:
+                        owned_page.close()
+                finally:
+                    uploader.disconnect()
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(worker) for _ in range(workers)]
+            for future in futures:
+                future.result()
+        if errors:
             raise UploadError(
-                "The connected tab is not ready on Hàng hóa > Danh sách hàng hóa. "
-                "Open that page and wait for it to finish loading, then try again."
-            ) from error
+                f"Batch stopped after {len(completed)}/{len(products)} product(s). "
+                "Already-running products were allowed to finish. Check the open tabs before retrying.\n\n"
+                + "\n\n".join(errors)
+            )
+        if len(products) == 1:
+            return results[0]
+        return f"Updated web locations for {len(completed)} products." if location_only else (
+            f"Uploaded stock and web locations for {len(completed)} products."
+        )
 
     def _fill_input(self, path: str, value: str) -> None:
         self._wait("finding an input", lambda: self._dom("element", path))
@@ -937,7 +1002,7 @@ class WebsiteUploader:
         )
 
     def _open_product(self, product: UploadProduct | LocationUpdate) -> None:
-        result = self.driver.execute_async_script(OPEN_PRODUCT_SCRIPT, product.product_id)
+        result = self._evaluate_async(OPEN_PRODUCT_SCRIPT, product.product_id)
         if not isinstance(result, dict) or not result.get("ok"):
             detail = result.get("error") if isinstance(result, dict) else repr(result)
             raise UploadError(f"Could not open product {product.product_id}: {detail}")
@@ -956,7 +1021,7 @@ class WebsiteUploader:
 
     def _get_shelves_by_name(self) -> tuple[set[str], dict[str, str]]:
         """Return ({location names}, {location name: KiotViet shelf ID}) from /api/shelves."""
-        result = self.driver.execute_async_script(GET_SHELVES_SCRIPT)
+        result = self._evaluate_async(GET_SHELVES_SCRIPT)
         if not isinstance(result, dict) or not result.get("ok"):
             detail = result.get("error") if isinstance(result, dict) else repr(result)
             raise UploadError(f"Could not read KiotViet locations: {detail}")
@@ -1016,36 +1081,37 @@ class WebsiteUploader:
             self._clear_location()
             return
 
-        # The API response is the source of truth for whether each location exists.
-        location_names, ids_by_name = self._get_shelves_by_name()
-        for target in product.location_ids:
-            if target in location_names:
-                continue
-            progress(f"Creating location {target}…")
-            self._click(CREATE_LOCATION_XPATH, "opening Add location")
-            try:
-                self._fill_input(NEW_LOCATION_XPATH, target)
-                self._click(SAVE_LOCATION_XPATH, "saving the new location")
-                self._wait(
-                    "waiting for the new location dialog to close",
-                    lambda: not self._dom("present", LOCATION_FORM_XPATH),
-                    check_errors=True,
-                )
-            except UploadError as error:
-                raise UploadError(
-                    f"Could not create location {target}. The product Save button has not been pressed.\n\n"
-                    + str(error)
-                ) from error
-            deadline = monotonic() + 5
-            while monotonic() < deadline:
-                location_names, ids_by_name = self._get_shelves_by_name()
+        with self.location_lock:
+            # The API response is the source of truth for whether each location exists.
+            location_names, ids_by_name = self._get_shelves_by_name()
+            for target in product.location_ids:
                 if target in location_names:
-                    break
-                sleep(0.4)
-            if target not in location_names:
-                raise UploadError(
-                    f"KiotViet closed the Create location form, but {target!r} did not appear in /api/shelves."
-                )
+                    continue
+                progress(f"Creating location {target}…")
+                self._click(CREATE_LOCATION_XPATH, "opening Add location")
+                try:
+                    self._fill_input(NEW_LOCATION_XPATH, target)
+                    self._click(SAVE_LOCATION_XPATH, "saving the new location")
+                    self._wait(
+                        "waiting for the new location dialog to close",
+                        lambda: not self._dom("present", LOCATION_FORM_XPATH),
+                        check_errors=True,
+                    )
+                except UploadError as error:
+                    raise UploadError(
+                        f"Could not create location {target}. The product Save button has not been pressed.\n\n"
+                        + str(error)
+                    ) from error
+                deadline = monotonic() + 5
+                while monotonic() < deadline:
+                    location_names, ids_by_name = self._get_shelves_by_name()
+                    if target in location_names:
+                        break
+                    sleep(0.4)
+                if target not in location_names:
+                    raise UploadError(
+                        f"KiotViet closed the Create location form, but {target!r} did not appear in /api/shelves."
+                    )
 
         progress(f"Selecting locations {product.location_id}…")
         self._select_location_ids(product, ids_by_name)
@@ -1091,7 +1157,7 @@ class WebsiteUploader:
                 if location_only else
                 "Reloading the saved product to verify quantity and location…"
             )
-            self.driver.refresh()
+            self.page.reload()
             self._wait("waiting for the product page after reload", lambda: self._dom("product_page"))
             self._open_product(product)
             self._wait(
@@ -1103,7 +1169,7 @@ class WebsiteUploader:
 
             note = ""
             try:
-                self.driver.refresh()  # Close the verification edit, ready for next product.
+                self.page.reload()  # Close the verification edit, ready for next product.
             except Exception:
                 note = " Close the verification form in Chrome before the next upload."
 
@@ -1129,7 +1195,7 @@ class WebsiteUploader:
         """Fill stock/location for one product and optionally save the edit."""
         if not self.is_connected():
             raise UploadError(
-                "Chrome is not connected. Press Connect Chrome beside the shelf Load button first."
+                "Chrome is not connected. Press Connect Chrome on the main tab bar first."
             )
         should_save = SAVE_ON_UPLOAD if save is None else save
         try:
@@ -1178,7 +1244,7 @@ class WebsiteUploader:
         """Change only the website location; never inspect or modify stock."""
         if not self.is_connected():
             raise UploadError(
-                "Chrome is not connected. Press Connect Chrome beside the shelf Load button first."
+                "Chrome is not connected. Press Connect Chrome on the main tab bar first."
             )
         should_save = SAVE_ON_UPLOAD if save is None else save
         try:
