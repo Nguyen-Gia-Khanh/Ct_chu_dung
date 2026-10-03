@@ -63,7 +63,8 @@ views. It calls `ShelfOperations.delete_shelf`, which rejects shelves containing
 regular or exception placements. Deletion saves immediately.
 
 **Shared sections:** `CatalogActions.import_csv` / `import_catalog_csv` and
-`ColumnMappingDialog` handle this tab's two import buttons. Imports write
+`ColumnMappingDialog` handle this tab's two import buttons through the shared
+`CatalogActions._import_csv` flow. Imports write
 immediately through `catalog.py` rather than waiting for the shelf commit.
 `ShelfOperations.commit_shelf` / `_sync_layout` in `shelves.py` save layouts.
 `StateActions.reload_database_state`, `remember_imported_products`, and
@@ -74,6 +75,8 @@ immediately through `catalog.py` rather than waiting for the shelf commit.
 **Check:** preview then commit a new shelf; reload it for editing; verify that
 occupied cells cannot be removed and even-side display keeps the saved IDs.
 CSV reimport preservation is covered by `tests/test_persistence.py`.
+`tests/test_csv_import.py` covers both desktop import modes, short CSV rows,
+duplicate IDs, and fresh catalog names when returning to Tab 3.
 
 ## Tab 2: Assign Locations
 
@@ -265,6 +268,14 @@ cover multiple locations and independent registration targets.
 ## Tab 7: Web Location Sync
 
 **View and handlers:** [location_comparison_view.py](ui/desktop/location_comparison_view.py).
+`save_browser_settings` persists the validated store Products URL and 1?10
+upload tabs through `mapper/features/kiotviet_settings.py`. `WebActions` captures
+settings on the Tk thread before connecting or uploading. `WebsiteUploader`
+uses Playwright CDP attachments owned by each worker thread; `run_batch` gives
+concurrent Tab 7 workers separate tabs and coordinates location creation.
+Browser errors stop scheduling, preserve successful item events, and never
+retry an uncertain Save. Tabs 2/5 use one worker. Browser tests are in
+`tests/test_playwright_upload.py`.
 `WorkbookColumnDialog` maps worksheet/header/columns. `LocationComparisonView`
 uses `import_excel`, `_start_comparison`, `_run_comparison`, `_poll_comparison`,
 and `_render_comparison_rows` to load/compare data without blocking Tk.

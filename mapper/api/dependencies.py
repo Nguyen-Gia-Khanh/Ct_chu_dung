@@ -6,7 +6,6 @@ from mapper.core.common import default_database_path
 from mapper.persistence.database import WarehouseDatabase
 
 _database_override: Path | None = None
-_uploader = None
 
 
 def configure_database(path: Path | None) -> None:
@@ -19,11 +18,7 @@ def _get_database() -> WarehouseDatabase:
 
 
 def _get_uploader():
-    global _uploader
-    if _uploader is None:
-        try:
-            from mapper.features.web_upload import WebsiteUploader
-            _uploader = WebsiteUploader()
-        except Exception:
-            _uploader = None
-    return _uploader
+    # HTTP requests also need thread-local Playwright attachments and the saved store.
+    from mapper.features.kiotviet_settings import load_settings
+    from mapper.features.web_upload import WebsiteUploader
+    return WebsiteUploader(store_url=load_settings()[0])

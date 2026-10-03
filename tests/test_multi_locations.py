@@ -41,9 +41,14 @@ class MultiLocationTests(WorkspaceTestCase):
             self.assertEqual(actions._location_updates()[0].location_ids, expected)
 
         received = []
+
+        def run_batch(products, _progress, _item_done, *, location_only, save):
+            self.assertTrue(location_only)
+            self.assertTrue(save)
+            received.extend(products)
+
         uploader = SimpleNamespace(
-            is_connected=lambda: True,
-            modify_location=received.append,
+            run_batch=run_batch,
         )
         route = WriteRoutes()
         replies = []
@@ -93,7 +98,7 @@ class WebSelectionTests(unittest.TestCase):
 
     def test_web_selector_receives_the_complete_id_set(self) -> None:
         update = LocationUpdate("P1", ("A", "B"))
-        uploader = WebsiteUploader(driver=SimpleNamespace(), step_delay=0)
+        uploader = WebsiteUploader(page=SimpleNamespace(), step_delay=0)
         with patch.object(
             uploader, "_dom", side_effect=lambda action, *_args: "" if action == "errors" else True
         ) as dom:

@@ -20,6 +20,7 @@ from mapper.features.location_comparison import (
     suggested_columns,
 )
 from mapper.features.web_upload import LocationUpdate
+from mapper.features.kiotviet_settings import MAX_UPLOAD_TABS, load_settings, save_settings
 
 
 class WorkbookColumnDialog(tk.Toplevel):
@@ -113,10 +114,11 @@ class WorkbookColumnDialog(tk.Toplevel):
 
 
 class LocationComparisonView(ttk.Frame):
-    def __init__(self, parent: tk.Misc, database: WarehouseDatabase, on_resync):
+    def __init__(self, parent: tk.Misc, database: WarehouseDatabase, on_resync, on_settings_changed=None):
         super().__init__(parent, padding=10)
         self.database = database
         self.on_resync = on_resync
+        self.on_settings_changed = on_settings_changed
         self.web_locations: dict[str, str] | None = None
         self.imported_path: Path | None = None
         self.differences: list[LocationDifference] = []
@@ -133,6 +135,14 @@ class LocationComparisonView(ttk.Frame):
         self.summary = tk.StringVar(self, value="Import a KiotViet Excel export to compare locations.")
         self.file_label = tk.StringVar(self, value="No web data imported")
         self.progress = tk.StringVar(self, value="")
+        try:
+            url, tabs = load_settings()
+        except ValueError as error:
+            url, tabs = "", 1
+            self.progress.set(str(error))
+        self.store_url = tk.StringVar(self, value=url)
+        self.tab_count = tk.StringVar(self, value=str(tabs))
+        self._saved_settings = (url, tabs)
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -142,6 +152,26 @@ class LocationComparisonView(ttk.Frame):
             text="Compare KiotViet locations with saved local shelf locations. Local locations are the true values.",
             foreground="#555555",
         ).pack(anchor="w", pady=(2, 10))
+        settings = ttk.Frame(self)
+        settings.pack(fill="x", pady=(0, 8))
+        ttk.Label(settings, text="KiotViet URL").pack(side="left")
+        self.url_entry = ttk.Entry(settings, textvariable=self.store_url)
+        self.url_entry.pack(side="left", fill="x", expand=True, padx=(8, 12))
+        ttk.Label(settings, text="Upload tabs").pack(side="left")
+        self.tabs_input = ttk.Spinbox(
+            settings, from_=1, to=MAX_UPLOAD_TABS, width=4, textvariable=self.tab_count,
+            command=self._autosave_settings,
+        )
+        self.tabs_input.pack(side="left", padx=(8, 12))
+        self.save_settings_button = ttk.Button(settings, text="Save settings", command=self.save_browser_settings)
+        self.save_settings_button.pack(side="left")
+        for widget in (self.url_entry, self.tabs_input):
+            widget.bind("<FocusOut>", self._autosave_settings)
+            widget.bind("<Return>", lambda _event: self.save_browser_settings())
+        ttk.Label(
+            self, text="Paste https://yourstore.kiotviet.vn/man/#/Products once; settings are saved for future runs.",
+            foreground="#555555",
+        ).pack(anchor="w", pady=(0, 8))
         actions = ttk.Frame(self)
         actions.pack(fill="x", pady=(0, 8))
         self.import_button = ttk.Button(actions, text="Import Web's Data", command=self.import_excel)
@@ -193,6 +223,30 @@ class LocationComparisonView(ttk.Frame):
             foreground="#555555",
             wraplength=900,
         ).pack(anchor="w", pady=(8, 0))
+
+    def save_browser_settings(self, *, quiet=False) -> bool:
+        if self._web_busy:
+            return False
+        try:
+            settings = save_settings(self.store_url.get(), self.tab_count.get())
+        except (ValueError, OSError) as error:
+            self.progress.set(str(error))
+            if not quiet:
+                messagebox.showerror("KiotViet settings", str(error), parent=self)
+            return False
+        self.store_url.set(settings[0])
+        self.tab_count.set(str(settings[1]))
+        previous_url = self._saved_settings[0]
+        self._saved_settings = settings
+        if self.on_settings_changed and previous_url != settings[0]:
+            self.on_settings_changed(settings[0])
+        if not quiet:
+            self.progress.set("KiotViet URL and upload tab count saved.")
+        return True
+
+    def _autosave_settings(self, _event=None) -> None:
+        if self.store_url.get().strip() and not self._web_busy:
+            self.save_browser_settings(quiet=True)
 
     def _local_locations(self) -> dict[str, list[str]]:
         local: dict[str, list[str]] = {}
@@ -454,6 +508,8 @@ class LocationComparisonView(ttk.Frame):
 
     def set_busy(self, busy: bool) -> None:
         self._web_busy = busy
+        for widget in (self.url_entry, self.tabs_input, self.save_settings_button):
+            widget.configure(state="disabled" if busy else "normal")
         self._set_busy_state()
 
     def set_progress(self, message: str) -> None:
