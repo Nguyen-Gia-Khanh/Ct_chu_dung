@@ -262,4 +262,4 @@ class StateActions:
         if reload_shelves:
             self.refresh_shelf_selector()
             if hasattr(self, "primal_view"):
-                self.primal_view.refresh(reload_catalog=reload_catalog)
+                self.primal_view.refresh()

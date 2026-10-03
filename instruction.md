@@ -63,7 +63,8 @@ views. It calls `ShelfOperations.delete_shelf`, which rejects shelves containing
 regular or exception placements. Deletion saves immediately.
 
 **Shared sections:** `CatalogActions.import_csv` / `import_catalog_csv` and
-`ColumnMappingDialog` handle this tab's two import buttons. Imports write
+`ColumnMappingDialog` handle this tab's two import buttons through the shared
+`CatalogActions._import_csv` flow. Imports write
 immediately through `catalog.py` rather than waiting for the shelf commit.
 `ShelfOperations.commit_shelf` / `_sync_layout` in `shelves.py` save layouts.
 `StateActions.reload_database_state`, `remember_imported_products`, and
@@ -74,6 +75,8 @@ immediately through `catalog.py` rather than waiting for the shelf commit.
 **Check:** preview then commit a new shelf; reload it for editing; verify that
 occupied cells cannot be removed and even-side display keeps the saved IDs.
 CSV reimport preservation is covered by `tests/test_persistence.py`.
+`tests/test_csv_import.py` covers both desktop import modes, short CSV rows,
+duplicate IDs, and fresh catalog names when returning to Tab 3.
 
 ## Tab 2: Assign Locations
 

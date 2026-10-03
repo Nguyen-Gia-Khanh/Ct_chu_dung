@@ -494,74 +494,14 @@ class CatalogActions:
             )
 
     def import_csv(self) -> None:
-        selected = filedialog.askopenfilename(
-            title="Import product list",
-            filetypes=(
-                ("CSV files", "*.csv"),
-                ("Text files", "*.txt"),
-                ("All files", "*.*"),
-            ),
-        )
-        if not selected:
-            return
-        try:
-            csv_data = read_csv(Path(selected))
-        except Exception as error:
-            messagebox.showerror("CSV could not be read", str(error))
-            return
-
-        mapping_dialog = ColumnMappingDialog(self.root, csv_data.headers)
-        self.root.wait_window(mapping_dialog)
-        if mapping_dialog.result is None:
-            return
-        id_index, name_index, short_name_index = mapping_dialog.result
-
-        records: dict[str, tuple[str, str]] = {}
-        skipped = 0
-        duplicates = 0
-        required_index = max(id_index, name_index, short_name_index)
-        for row in csv_data.rows:
-            if len(row) <= required_index:
-                skipped += 1
-                continue
-            product_id = row[id_index].strip()
-            product_name = row[name_index].strip()
-            shortened_name = row[short_name_index].strip() or product_name
-            if not product_id or not product_name:
-                skipped += 1
-                continue
-            if product_id in records:
-                duplicates += 1
-            records[product_id] = (product_name, shortened_name)
-
-        if not records:
-            messagebox.showerror(
-                "No products", "No valid product ID/name rows were found."
-            )
-            return
-        try:
-            inserted, updated = self.database.import_products(records)
-        except Exception as error:
-            messagebox.showerror("Import failed", str(error))
-            return
-
-        self.reload_database_state(reload_catalog=True)
-        self.refresh_all_views()
-        messagebox.showinfo(
-            "Import complete",
-            f"New products: {inserted:,}\n"
-            f"Existing products updated: {updated:,}\n"
-            f"Blank/invalid rows skipped: {skipped:,}\n"
-            f"Duplicate IDs inside CSV: {duplicates:,}\n\n"
-            "Shelf assignments, stock, and stored catalog names were kept.",
-        )
-        self.status_text.set(
-            f"Imported {len(records):,} product records from {Path(selected).name}."
-        )
+        self._import_csv(catalog=False)
 
     def import_catalog_csv(self) -> None:
+        self._import_csv(catalog=True)
+
+    def _import_csv(self, *, catalog: bool) -> None:
         selected = filedialog.askopenfilename(
-            title="Import full product catalog",
+            title="Import full product catalog" if catalog else "Import product list",
             filetypes=(
                 ("CSV files", "*.csv"),
                 ("Text files", "*.txt"),
@@ -606,21 +546,30 @@ class CatalogActions:
             )
             return
         try:
-            inserted, updated = self.database.import_catalog_products(records)
+            import_records = (
+                self.database.import_catalog_products
+                if catalog else self.database.import_products
+            )
+            inserted, updated = import_records(records)
         except Exception as error:
-            messagebox.showerror("Catalog import failed", str(error))
+            messagebox.showerror("Catalog import failed" if catalog else "Import failed", str(error))
             return
 
         self.reload_database_state(reload_catalog=True)
         self.refresh_all_views()
+        product_label = "catalog products" if catalog else "products"
         messagebox.showinfo(
-            "Catalog import complete",
-            f"New catalog products: {inserted:,}\n"
-            f"Existing catalog products updated: {updated:,}\n"
+            "Catalog import complete" if catalog else "Import complete",
+            f"New {product_label}: {inserted:,}\n"
+            f"Existing {product_label} updated: {updated:,}\n"
             f"Blank/invalid rows skipped: {skipped:,}\n"
             f"Duplicate IDs inside CSV: {duplicates:,}\n\n"
-            "Warehouse assignments and the unassigned queue were not changed.",
+            + (
+                "Warehouse assignments and the unassigned queue were not changed."
+                if catalog else "Shelf assignments, stock, and stored catalog names were kept."
+            ),
         )
+        record_label = "full-catalog" if catalog else "product"
         self.status_text.set(
-            f"Imported {len(records):,} full-catalog records from {Path(selected).name}."
+            f"Imported {len(records):,} {record_label} records from {Path(selected).name}."
         )
