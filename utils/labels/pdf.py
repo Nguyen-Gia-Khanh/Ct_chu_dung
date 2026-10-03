@@ -1,4 +1,4 @@
-"""Landscape or Portrait A4 labels: a large location and one short line per product.
+"""A4 labels with a location column, or a split header on 14.5 cm labels.
 
 Used by utils.labels.app. ReportLab is imported only when creating a
 PDF. Change the constants below to revise the printed design.
@@ -11,6 +11,7 @@ from io import BytesIO
 import math
 import os
 from pathlib import Path
+import re
 import tempfile
 import unicodedata
 from xml.sax.saxutils import escape
@@ -26,6 +27,10 @@ MIN_LOCATION_FONT_SIZE = 20
 PRODUCT_FONT_SIZE = 28
 MIN_PRODUCT_FONT_SIZE = 7
 LABEL_HEIGHTS_CM = (3, 7, 14.5)
+LARGE_LABEL_HEIGHT_CM = 14.5
+LARGE_LOCATION_HEIGHT_MM = 35
+LARGE_LOCATION_FONT_SIZE = 72
+LARGE_PRODUCT_FONT_SIZE = 64
 
 # Normally discovered automatically. Set BOTH to override the system fonts.
 FONT_REGULAR_PATH = ""
@@ -73,6 +78,13 @@ def label_count(cells: list[Cell] | tuple[Cell, ...]) -> int:
 def _location_width_mm(label_height_cm: int | float) -> int:
     # The 80 mm column leaves large blank sides around a two-line ID on 3 cm labels.
     return THREE_CM_LOCATION_WIDTH_MM if label_height_cm == 3 else LEFT_WIDTH_MM
+
+
+def _split_location_id(location_id: str) -> tuple[str, str]:
+    """Keep the floor/side prefix together, including multi-digit segments."""
+    text = unicodedata.normalize("NFC", " ".join(str(location_id).split()))
+    match = re.fullmatch(r"(L\d+-\d+)(.*)", text, re.IGNORECASE)
+    return match.groups() if match else (text, "")
 
 
 def _font_files() -> tuple[Path, Path]:
@@ -254,6 +266,9 @@ def render_labels_pdf(
     location_padding = LOCATION_PADDING_MM * mm
     left_w = _location_width_mm(label_height_cm) * mm
 
+    is_large_label = label_height_cm == LARGE_LABEL_HEIGHT_CM
+    product_font_size = LARGE_PRODUCT_FONT_SIZE if is_large_label else PRODUCT_FONT_SIZE
+
     slots = _compute_layout_slots(
         page_w,
         page_h,
@@ -279,8 +294,8 @@ def render_labels_pdf(
         columns shrink together until every product stays on one line and the
         complete table fits vertically.
         """
-        for step in range(round((PRODUCT_FONT_SIZE - MIN_PRODUCT_FONT_SIZE) * 2) + 1):
-            size = PRODUCT_FONT_SIZE - step / 2
+        for step in range(round((product_font_size - MIN_PRODUCT_FONT_SIZE) * 2) + 1):
+            size = product_font_size - step / 2
             leading = size * 1.10
             column_gap = max(4, size * 0.65)
             row_padding = max(0.4, size * 0.06)
@@ -400,7 +415,33 @@ def render_labels_pdf(
                 line,
             )
 
-    def draw_products(w, h, products, location_id):
+    def draw_location_cells(w, h, location_id):
+        parts = _split_location_id(location_id)
+        cell_w = w / 2
+        target_w = cell_w - 2 * location_padding
+        target_h = h - 2 * location_padding
+        size = LARGE_LOCATION_FONT_SIZE
+        while True:
+            ascent, descent = pdfmetrics.getAscentDescent(bold, size)
+            if (
+                max(pdfmetrics.stringWidth(part, bold, size) for part in parts) <= target_w
+                and ascent - descent <= target_h
+            ):
+                break
+            if size <= MIN_LOCATION_FONT_SIZE:
+                raise ValueError(
+                    f"Location ID {location_id!r} is too long for this label layout."
+                )
+            size -= 0.5
+        canvas.setStrokeColor(colors.HexColor("#BBBBBB"))
+        canvas.line(cell_w, 0, cell_w, h)
+        canvas.setFillColor(colors.black)
+        canvas.setFont(bold, size)
+        baseline = (h - ascent - descent) / 2
+        for index, part in enumerate(parts):
+            canvas.drawCentredString((index + 0.5) * cell_w, baseline, part)
+
+    def draw_products(w, h, products, location_id, *, align_top=False):
         target_w = w - 2 * padding
         target_h = h - 2 * padding
         if not products:
@@ -416,7 +457,7 @@ def render_labels_pdf(
             table.drawOn(
                 canvas,
                 padding,
-                (h - products_h) / 2,
+                h - padding - products_h if align_top else (h - products_h) / 2,
             )
 
     for index, cell in enumerate(cells):
@@ -440,7 +481,17 @@ def render_labels_pdf(
         canvas.setLineWidth(0.55)
         canvas.rect(0, 0, slot.w, slot.h)
 
-        if print_mode == "full":
+        if print_mode == "full" and is_large_label:
+            header_h = LARGE_LOCATION_HEIGHT_MM * mm
+            body_h = slot.h - header_h
+            canvas.setStrokeColor(colors.HexColor("#BBBBBB"))
+            canvas.line(0, body_h, slot.w, body_h)
+            canvas.saveState()
+            canvas.translate(0, body_h)
+            draw_location_cells(slot.w, header_h, cell.location_id)
+            canvas.restoreState()
+            draw_products(slot.w, body_h, cell.products, cell.location_id, align_top=True)
+        elif print_mode == "full":
             canvas.setStrokeColor(colors.HexColor("#BBBBBB"))
             canvas.line(left_w, 0, left_w, slot.h)
             draw_location_id(left_w, slot.h, cell.location_id)
