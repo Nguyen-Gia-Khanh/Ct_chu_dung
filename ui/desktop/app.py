@@ -215,6 +215,7 @@ class WarehouseMapperApp(
             on_upload=self.upload_selected_product,
             on_modify_location=self.modify_selected_location,
             on_preview_shelf=self.preview_assignment_shelf,
+            on_quick_move=self.quick_move_search_product,
             on_revert_shift=self.revert_latest_shift_transfer,
             on_whole_mode_change=self._on_whole_mode_change,
             barcode_scanner=self.barcode_scanner,

@@ -146,6 +146,7 @@ class ExceptionOperations:
                 csv_done = 0
                 catalog_done = 0
 
+            queue_origin = self._remember_queue_origin(connection, clean_pid)
             connection.execute(
                 """
                 INSERT INTO products (product_id, product_name, shortened_name)
@@ -156,6 +157,7 @@ class ExceptionOperations:
                 """,
                 (clean_pid, resolved_name, resolved_name, bool(entered_name), bool(entered_name)),
             )
+            self._save_queue_origin(connection, clean_pid, queue_origin)
 
             # Insert or update into exception_placements
             connection.execute(
