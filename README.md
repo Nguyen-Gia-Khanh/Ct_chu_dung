@@ -130,7 +130,7 @@ with Tab 4; see the [source guide](instruction.md#tab-1-shelf-designer).
    The batch survives restarting the app; **Edit selected quantity** adjusts
    its stock before reassignment.
 
-**Quick move to location**, beside the search status, is available when the
+**Quick move to location**, beside **Revert shift transfer**, is available when the
 search matches exactly one distinct product across the queue and full catalog.
 It fills Floor / Side / Shelf / Row / Col, opens the Shelf Selection Pane,
 and loads that product's saved cell without moving inventory. Products with
