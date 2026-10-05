@@ -291,6 +291,8 @@ class PrimalQueueView(ttk.Frame):
     def refresh(self) -> None:
         """Reload all data from database and refresh views."""
         product_rows = self.database.get_product_records()
+        catalog_only = self.database.get_catalog_only_product_ids()
+        product_rows = [row for row in product_rows if row[0] not in catalog_only]
         self.products = {
             product_id: product_name
             for product_id, product_name, _shortened_name in product_rows

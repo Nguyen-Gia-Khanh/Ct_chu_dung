@@ -130,6 +130,12 @@ with Tab 4; see the [source guide](instruction.md#tab-1-shelf-designer).
    The batch survives restarting the app; **Edit selected quantity** adjusts
    its stock before reassignment.
 
+**Quick move to location**, beside the search status, is available when the
+search matches exactly one distinct product across the queue and full catalog.
+It fills Floor / Side / Shelf / Row / Col, opens the Shelf Selection Pane,
+and loads that product's saved cell without moving inventory. Products with
+multiple locations open their primary saved cell (or first exception cell).
+
 ### Shift shortcuts
 
 Normal clicks assign selected products directly. Hold **Shift** to enable
@@ -276,6 +282,8 @@ come from `ShelfActions.can_change_cells`; web requests use
 ## Tab 6: Special Exceptions
 
 On tab 6, enter a product ID and optional name, load a cell, then assign it.
+New exceptions appear in the full catalog view and stay out of the total/primal
+queue. Adding an exception for an existing queue product keeps its membership.
 The staged row remains visible while you register the product with **Append
 back to CSV** and **Add to catalog**. Select a row to register one product;
 clear the selection to process every product still waiting for that target.

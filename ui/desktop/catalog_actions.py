@@ -339,7 +339,48 @@ class CatalogActions:
         )
         self.refresh_search_location(raw_query)
 
+    def _single_search_product(self) -> str | None:
+        if not self.assignments.search_var.get().strip():
+            return None
+        product_ids = {
+            item_id.partition("::")[2]
+            for tree in (self.assignments.queue_tree, self.assignments.catalog_tree)
+            for item_id in tree.get_children()
+        }
+        return next(iter(product_ids)) if len(product_ids) == 1 else None
+
+    def quick_move_search_product(self) -> None:
+        """Navigate to the sole search result's saved cell without moving stock."""
+        self.refresh_product_lists()
+        product_id = self._single_search_product()
+        if product_id is None:
+            return
+        location = self.database.get_product_location(product_id)
+        if location is None:
+            messagebox.showinfo(
+                "No saved location", f"{product_id} has no saved shelf location.",
+                parent=self.root,
+            )
+            return
+        floor, side, shelf_code, _layout = self.database.get_shelf(location.shelf_id)
+        view = self.assignments
+        # Fill all shelf fields before rendering their shared preview once.
+        view.hand_view.set("queue")
+        view.floor_var.set(floor)
+        view.side_var.set(side)
+        view.shelf_var.set(shelf_code)
+        view.hand_view.set("shelf")
+        view._show_hand_view()
+        view.row_var.set(str(location.row_number))
+        view.cell_var.set(str(location.slot_number))
+        self.load_assignment_address()
+
     def refresh_search_location(self, raw_query: str | None = None) -> None:
+        quick_move_button = getattr(self.assignments, "quick_move_button", None)
+        if quick_move_button is not None:
+            quick_move_button.configure(
+                state="normal" if self._single_search_product() is not None else "disabled"
+            )
         location_text = getattr(self.assignments, "search_location_text", None)
         if location_text is None:
             return

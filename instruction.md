@@ -92,6 +92,13 @@ Selecting a preview cell calls `_select_shelf_cell`, fills Row and Col, and call
 `on_load_address`. Typing address fields alone does not load a new destination;
 `load_assignment_address` must resolve a saved `SlotAddress`.
 
+**Quick move to location** is enabled only for a nonempty search showing one
+distinct product across both lists. `CatalogActions.quick_move_search_product`
+refreshes those results before checking, loads coordinates from
+`get_product_location`, fills the address holders, opens the shelf pane, and
+calls `load_assignment_address`. Multiple locations use the primary placement,
+falling back to the first exception placement. Inventory is unchanged.
+
 ### Normal clicks and Shift clicks
 
 Normal clicks assign selected products directly to the loaded cell with entered
@@ -259,6 +266,10 @@ The latter preserves the working product record and existing CSV file.
 `StateActions.on_exception_data_changed`, which reloads caches and views.
 `clean_location_segment`, `make_slot_name`, `normalize_search`, and barcode
 formatting are shared helpers; this tab builds its own address fields.
+
+New exception records save catalog-only membership via the inventory origin
+helpers before insertion into `products`. Tab 2 and Tab 3 omit those records
+from their queue displays; existing queue products keep their membership.
 
 **Save boundary:** placement is immediate; CSV and catalog registration are
 separate saves tracked by staging status. **Check:** add a second location,

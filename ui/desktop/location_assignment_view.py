@@ -39,6 +39,7 @@ class LocationAssignmentView(ttk.Frame):
         on_upload: Callable[[], object],
         on_modify_location: Callable[[], object],
         on_preview_shelf: Callable[[], object],
+        on_quick_move: Callable[[], object] | None = None,
         on_revert_shift: Callable[[], object] | None = None,
         on_whole_mode_change: Callable[[bool], object] | None = None,
         barcode_scanner: BarcodeScanner | None = None,
@@ -64,6 +65,7 @@ class LocationAssignmentView(ttk.Frame):
             on_catalog_to_queue,
             on_catalog_activate,
             on_revert_shift,
+            on_quick_move,
         )
         self._build_hand_panel(
             hand_panel,
@@ -241,6 +243,7 @@ class LocationAssignmentView(ttk.Frame):
         on_catalog_to_queue: Callable[[], object],
         on_catalog_activate: Callable[[tk.Event], object],
         on_revert_shift: Callable[[], object] | None,
+        on_quick_move: Callable[[], object] | None,
     ) -> None:
         self.revert_button = ttk.Button(
             parent,
@@ -269,13 +272,21 @@ class LocationAssignmentView(ttk.Frame):
         bind_auto_highlight(self.search_entry)
         self.search_var.trace_add("write", on_search)
         self.search_location_text = tk.StringVar(self, value="")
+        location_bar = ttk.Frame(queue)
+        location_bar.grid(row=2, column=0, sticky="ew", pady=(0, 5))
+        location_bar.columnconfigure(0, weight=1)
         self.search_location_label = ttk.Label(
-            queue,
+            location_bar,
             textvariable=self.search_location_text,
             foreground="#555555",
             width=1,
         )
-        self.search_location_label.grid(row=2, column=0, sticky="ew", pady=(0, 5))
+        self.search_location_label.grid(row=0, column=0, sticky="ew")
+        self.quick_move_button = ttk.Button(
+            location_bar, text="Quick move to location", command=on_quick_move,
+            state="disabled",
+        )
+        self.quick_move_button.grid(row=0, column=1, padx=(6, 0))
 
         queue_body = ttk.Frame(queue)
         queue_body.grid(row=3, column=0, sticky="nsew")
