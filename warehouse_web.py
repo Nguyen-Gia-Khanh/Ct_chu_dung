@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from utils.runtime import ensure_repo_venv
+
 
 def main(argv: list[str] | None = None) -> None:
+    ensure_repo_venv()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, help="Use an explicit SQLite database path")
     parser.add_argument("--port", type=int, default=8000)

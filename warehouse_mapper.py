@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from utils.runtime import ensure_repo_venv
+
 
 def main(argv: list[str] | None = None) -> None:
+    ensure_repo_venv()
     parser = argparse.ArgumentParser(description="Warehouse Shelf Mapper")
     parser.add_argument("--db", type=Path, help="Use an explicit SQLite database path")
     args = parser.parse_args(argv)

@@ -1,6 +1,12 @@
 """Launch the warehouse label printer from the project root."""
 
-from utils.labels.app import main
+def main() -> None:
+    from utils.runtime import ensure_repo_venv
+
+    ensure_repo_venv()
+    from utils.labels.app import main as run
+
+    run()
 
 
 if __name__ == "__main__":

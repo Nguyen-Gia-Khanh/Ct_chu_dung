@@ -1,3 +1,8 @@
+from utils.runtime import ensure_repo_venv
+
+if __name__ == "__main__":
+    ensure_repo_venv()
+
 from .io import parse_paths
 import re
 from functools import lru_cache

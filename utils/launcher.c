@@ -78,7 +78,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR arguments, int
     DWORD python_length;
     if (swprintf(script, PATH_CAPACITY, L"%ls\\%ls", root, script_name) < 0 ||
         swprintf(venv_relative, PATH_CAPACITY,
-                 L"%ls\\..\\..\\.venv\\Scripts\\python.exe", root) < 0) {
+                 L"%ls\\.venv\\Scripts\\python.exe", root) < 0) {
         show_error(L"The script or Python path is too long.");
         return 1;
     }
@@ -94,7 +94,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR arguments, int
     if (!path_exists(python)) {
         wchar_t message[PATH_CAPACITY + 128];
         swprintf(message, sizeof(message) / sizeof(message[0]),
-                 L"The project venv was not found:\n\n%ls", python);
+                 L"The project venv was not found:\n\n%ls\n\nRun setup_venv.cmd in the launcher folder.", python);
         show_error(message);
         return 1;
     }

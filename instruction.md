@@ -26,6 +26,15 @@ so a file used by several tabs can be edited at the relevant section.
 launchers load the Python source at runtime, so source edits take effect after
 restarting the app without rebuilding the launcher.
 
+All launch/build entry points use the repo-local `.venv/`; `utils/runtime.py`
+restarts global Python in that environment while preserving interpreter flags,
+script/module arguments, and the working directory. `utils/launcher.c` resolves
+`.venv/Scripts/python.exe` beside either EXE. Run `setup_venv.cmd` to create the
+environment from `requirements.txt`; rebuild both EXEs with
+`& '.\.venv\Scripts\python.exe' utils/build_exe.py`. VS Code's interpreter is
+configured in `.vscode/settings.json`. `tests/test_runtime.py` checks process
+handoff, missing-environment errors, and both compiled EXEs in an isolated folder.
+
 Start with `WarehouseMapperApp._build_ui` to identify a tab's view and callbacks.
 `on_tab_changed` refreshes the selected tab and resets Tab 2's Shift mode.
 `on_global_barcode_scan` routes scans to the current view. The extra **Connect
@@ -454,7 +463,7 @@ export to verify the result after resync.
 Run from the project root using the same environment as the launcher:
 
 ```powershell
-& '..\..\.venv\Scripts\python.exe' -m unittest discover -s tests -v
+& '.venv\Scripts\python.exe' -m unittest discover -s tests -v
 ```
 
 Relevant existing tests are:
@@ -473,7 +482,7 @@ launch with `--db`; import sample products and commit a sample shelf there.
 
 ```powershell
 New-Item -ItemType Directory -Force tmp | Out-Null
-& '..\..\.venv\Scripts\python.exe' warehouse_mapper.py --db tmp/manual-check.db
+& '.venv\Scripts\python.exe' warehouse_mapper.py --db tmp/manual-check.db
 ```
 
 For Tab 2, check normal selected-product moves, all three Shift shortcuts,

@@ -10,14 +10,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from utils.runtime import ensure_repo_venv
+
+if __name__ == "__main__":
+    ensure_repo_venv()
+
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
-if not __package__:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from mapper.core.common import data_directory
 from utils.icsparts.common import build_session, clean_text, is_icsparts_url

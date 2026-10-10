@@ -32,9 +32,13 @@ one product.
 
 ## Run on Windows 11
 
+Run `setup_venv.cmd` once to create this repo's `.venv/` and install
+`requirements.txt`. The environment is isolated from global/shared packages and
+is ignored by Git. Python 3.15 is used in this checkout.
+
 Double-click `warehouse_mapper.exe` in the project folder to open the desktop
 app without VS Code. The small executable launches `warehouse_mapper.py` with
-`../../.venv/Scripts/python.exe` and loads the UI, features, libraries, and
+`.venv/Scripts/python.exe` and loads the UI, features, libraries, and
 database from their existing folders. The project venv and source files must
 remain in place. `warehouse_label_printer.exe` works the same way for the label
 printer.
@@ -42,26 +46,35 @@ printer.
 To run the source directly from the project folder:
 
 ```powershell
-& '..\..\.venv\Scripts\python.exe' warehouse_mapper.py
+& '.venv\Scripts\python.exe' warehouse_mapper.py
 ```
 
 Both launchers use `data/warehouse_locations.db`. To choose another database,
 run `warehouse_mapper.exe --db path/to/file.db` or pass the same argument to
 `warehouse_mapper.py`.
 
+The source entry points also restart in this repo's `.venv` when launched with
+global Python, preserving command-line arguments. VS Code uses the same local
+interpreter through `.vscode/settings.json`. Imported modules inherit it.
+
 Changes to the Python source or packages in the venv take effect on the next
 launch. To rebuild the small executables themselves, use MinGW-w64 GCC:
 
 ```powershell
-py utils/build_exe.py
+& '.\.venv\Scripts\python.exe' utils/build_exe.py
 ```
 
-Use `py utils/build_exe.py --app mapper` or `--app labels` to rebuild just one.
+Add `--app mapper` or `--app labels` to rebuild just one.
 The executables contain only the Windows launcher, not Python, Playwright, UI
 code, or other app resources.
 
-Playwright is only needed for the optional Chrome/KiotViet integration. Install
-it in the launcher's venv with `python -m pip install playwright`. The existing
+`requirements.txt` contains only libraries used by the desktop apps and existing
+tools: `openpyxl`, `playwright`, `reportlab`, `pypdf`, `beautifulsoup4`, `pandas`,
+`requests`, and `tqdm`. Their required dependencies are installed automatically.
+The optional Laya model fallback and deprecated web UI's optional native wrapper
+are excluded; the existing rule-based extraction and browser fallback remain available.
+
+Playwright is used for the optional Chrome/KiotViet integration. The existing
 Chrome connection uses port 9222 and does not need ChromeDriver or a downloaded
 Playwright browser. Tab 7 uses `openpyxl` to read and write `.xlsx` workbooks.
 
@@ -409,7 +422,7 @@ under `data/backups/`. Input CSV and XLSX files remain where they are.
 Run from the project root using the launcher's Python environment:
 
 ```powershell
-& '..\..\.venv\Scripts\python.exe' -m unittest discover -s tests -v
+& '.venv\Scripts\python.exe' -m unittest discover -s tests -v
 ```
 
 For manual checks with sample data, create a separate database so testing does
@@ -417,7 +430,7 @@ not change your working inventory:
 
 ```powershell
 New-Item -ItemType Directory -Force tmp | Out-Null
-& '..\..\.venv\Scripts\python.exe' warehouse_mapper.py --db tmp/manual-check.db
+& '.venv\Scripts\python.exe' warehouse_mapper.py --db tmp/manual-check.db
 ```
 
 Import sample products and commit a sample shelf in that database before

@@ -800,7 +800,7 @@ class WebsiteUploader:
         except ImportError as error:
             raise UploadError(
                 "Install Playwright in the same venv as this app:\n\n"
-                "python -m pip install playwright"
+                ".venv\\Scripts\\python.exe -m pip install playwright"
             ) from error
         try:
             self.playwright = sync_playwright().start()

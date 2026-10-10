@@ -10,6 +10,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from utils.runtime import ensure_repo_venv
+
 
 APPLICATIONS = {
     "mapper": "warehouse_mapper",
@@ -18,6 +23,7 @@ APPLICATIONS = {
 
 
 def main(argv: list[str] | None = None) -> None:
+    ensure_repo_venv()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", choices=("all", *APPLICATIONS), default="all")
     args = parser.parse_args(argv)

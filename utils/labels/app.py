@@ -1,9 +1,9 @@
-"""Separate Tkinter app for printing labels from the warehouse mapper database.
+r"""Separate Tkinter app for printing labels from the warehouse mapper database.
 
-Run with ``python warehouse_label_printer.py`` from the project root.
+Run with ``.venv\Scripts\python.exe warehouse_label_printer.py`` from the project root.
 
 PDF generation needs ReportLab; reading previous PDFs needs pypdf:
-    python -m pip install reportlab pypdf
+    .venv\Scripts\python.exe -m pip install -r requirements.txt
 The SQLite connection is read-only. No schema updates or backups are performed.
 """
 
@@ -21,6 +21,15 @@ from queue import Empty, Queue
 import sqlite3
 import subprocess
 import sys
+
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from utils.runtime import ensure_repo_venv
+
+if __name__ == "__main__":
+    ensure_repo_venv()
+
 from threading import Thread
 import unicodedata
 import tkinter as tk
@@ -92,7 +101,7 @@ def scan_printed_pdfs(
     except ImportError as error:
         raise RuntimeError(
             "Reading previous label PDFs needs pypdf. Install it in this app's venv:\n\n"
-            "python -m pip install pypdf"
+            ".venv\\Scripts\\python.exe -m pip install pypdf"
         ) from error
 
     known = {_location_key(location): location for location in known_locations}

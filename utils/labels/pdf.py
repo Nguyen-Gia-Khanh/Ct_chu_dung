@@ -241,7 +241,7 @@ def render_labels_pdf(
     except ImportError as error:
         raise RuntimeError(
             "Install ReportLab in the same venv used to run this app:\n\n"
-            "python -m pip install reportlab"
+            ".venv\\Scripts\\python.exe -m pip install reportlab"
         ) from error
 
     regular_path, bold_path = _font_files()

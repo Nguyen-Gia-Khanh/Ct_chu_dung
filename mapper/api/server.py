@@ -11,6 +11,10 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from utils.runtime import ensure_repo_venv
+
+if __name__ == "__main__":
+    ensure_repo_venv()
 
 from .dependencies import configure_database, _get_database
 from .read_routes import ReadRoutes
