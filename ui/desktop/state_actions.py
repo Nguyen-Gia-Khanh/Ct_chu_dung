@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from mapper.core.common import make_slot_name, normalize_search
+from mapper.core.common import make_slot_name, normalize_search, product_search_text
 from mapper.persistence.database import Placement
 
 
@@ -142,9 +142,7 @@ class StateActions:
             short_name = short_name or name
             self.products[product_id] = name
             self.product_shortened_names[product_id] = short_name
-            self.product_search[product_id] = normalize_search(
-                f"{product_id} {name} {short_name}"
-            )
+            self.product_search[product_id] = product_search_text(product_id, name, short_name)
             self.product_id_lookup[product_id.casefold()] = product_id
 
     def reconcile_inventory_products(
@@ -174,9 +172,7 @@ class StateActions:
                 self.remember_imported_products({product_id: product})
                 if product_id in self.catalog_products:
                     self.catalog_products[product_id] = product
-                    self.catalog_search[product_id] = normalize_search(
-                        f"{product_id} {product[0]} {product[1]}"
-                    )
+                    self.catalog_search[product_id] = product_search_text(product_id, *product)
         self.apply_inventory_changes(
             placements={pid: state["placement"] for pid, state in states.items()},
             on_hand={pid: state["on_hand"] for pid, state in states.items()},
@@ -194,36 +190,30 @@ class StateActions:
     def reload_database_state(
         self, reload_catalog: bool = False, *, reload_shelves: bool = False
     ) -> None:
-        product_rows = self.database.get_product_records()
+        product_rows = self.database.get_product_records(include_search_id=True)
         self.catalog_only_products = self.database.get_catalog_only_product_ids()
         self.products = {
             product_id: product_name
-            for product_id, product_name, _shortened_name in product_rows
+            for product_id, product_name, _shortened_name, _search_id in product_rows
         }
         self.product_shortened_names = {
             product_id: shortened_name
-            for product_id, _product_name, shortened_name in product_rows
+            for product_id, _product_name, shortened_name, _search_id in product_rows
         }
         self.product_search = {
-            product_id: normalize_search(
-                f"{product_id} {product_name} {shortened_name}"
-            )
-            for product_id, product_name, shortened_name in product_rows
+            row[0]: product_search_text(*row) for row in product_rows
         }
         self.product_id_lookup = {
             product_id.casefold(): product_id for product_id in self.products
         }
         if reload_catalog or not hasattr(self, "catalog_products") or not self.catalog_products:
-            catalog_rows = self.database.get_display_catalog_products()
+            catalog_rows = self.database.get_display_catalog_products(include_search_id=True)
             self.catalog_products = {
                 product_id: (product_name, shortened_name)
-                for product_id, product_name, shortened_name in catalog_rows
+                for product_id, product_name, shortened_name, _search_id in catalog_rows
             }
             self.catalog_search = {
-                product_id: normalize_search(
-                    f"{product_id} {product_name} {shortened_name}"
-                )
-                for product_id, product_name, shortened_name in catalog_rows
+                row[0]: product_search_text(*row) for row in catalog_rows
             }
         self.product_id_lookup.update(
             {product_id.casefold(): product_id for product_id in self.catalog_products}

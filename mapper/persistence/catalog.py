@@ -48,20 +48,18 @@ class CatalogOperations:
             ).fetchall()
         return [(row["product_id"], row["product_name"]) for row in rows]
 
-    def get_product_records(self) -> list[tuple[str, str, str]]:
-        """Return working-queue products with every searchable name field."""
+    def get_product_records(self, *, include_search_id: bool = False) -> list[tuple[str, ...]]:
+        """Return queue names, optionally followed by the hidden dashless ID."""
+        search_column = ", product_id_search" if include_search_id else ""
         with closing(self.connect()) as connection, connection:
             rows = connection.execute(
-                """
-                SELECT product_id, product_name, shortened_name
+                f"""
+                SELECT product_id, product_name, shortened_name{search_column}
                 FROM products
                 ORDER BY product_id COLLATE NOCASE
                 """
             ).fetchall()
-        return [
-            (row["product_id"], row["product_name"], row["shortened_name"])
-            for row in rows
-        ]
+        return [tuple(row) for row in rows]
 
     def import_catalog_products(
         self, records: dict[str, tuple[str, str]]
@@ -107,20 +105,25 @@ class CatalogOperations:
             for row in rows
         ]
 
-    def get_display_catalog_products(self) -> list[tuple[str, str, str]]:
+    def get_display_catalog_products(
+        self, *, include_search_id: bool = False,
+    ) -> list[tuple[str, ...]]:
         """Show every catalog or queue ID, preferring queue names on overlap."""
+        search_column = ", product_id_search" if include_search_id else ""
         with closing(self.connect()) as connection:
             rows = connection.execute(
-                """
-                SELECT product_id, product_name, shortened_name
+                f"""
+                SELECT product_id, product_name, shortened_name{search_column}
                 FROM (
                     SELECT catalog.product_id,
                            COALESCE(queue.product_name, catalog.product_name) AS product_name,
-                           COALESCE(queue.shortened_name, catalog.shortened_name) AS shortened_name
+                           COALESCE(queue.shortened_name, catalog.shortened_name) AS shortened_name,
+                           catalog.product_id_search
                     FROM catalog_products AS catalog
                     LEFT JOIN products AS queue ON queue.product_id = catalog.product_id
                     UNION ALL
-                    SELECT queue.product_id, queue.product_name, queue.shortened_name
+                    SELECT queue.product_id, queue.product_name, queue.shortened_name,
+                           queue.product_id_search
                     FROM products AS queue
                     LEFT JOIN catalog_products AS catalog ON catalog.product_id = queue.product_id
                     WHERE catalog.product_id IS NULL
@@ -128,7 +131,4 @@ class CatalogOperations:
                 ORDER BY product_id COLLATE NOCASE
                 """
             ).fetchall()
-        return [
-            (row["product_id"], row["product_name"], row["shortened_name"])
-            for row in rows
-        ]
+        return [tuple(row) for row in rows]

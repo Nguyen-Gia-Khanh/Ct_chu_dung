@@ -136,6 +136,17 @@ class SchemaOperations:
             # before BEGIN. Check all references before the transaction commits.
             connection.execute("PRAGMA foreign_keys = OFF")
             connection.execute("BEGIN IMMEDIATE")
+            # Generated aliases cover existing rows and every write path without rekeying IDs.
+            for table in ("products", "catalog_products"):
+                columns = {
+                    row["name"]
+                    for row in connection.execute(f"PRAGMA table_xinfo({table})")
+                }
+                if "product_id_search" not in columns:
+                    connection.execute(
+                        f"ALTER TABLE {table} ADD COLUMN product_id_search TEXT "
+                        "GENERATED ALWAYS AS (replace(product_id, '-', '')) VIRTUAL"
+                    )
             staging_columns = {
                 row["name"]
                 for row in connection.execute("PRAGMA table_info(wait_to_update_csv)")

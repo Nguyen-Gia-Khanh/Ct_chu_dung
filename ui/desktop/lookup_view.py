@@ -7,7 +7,7 @@ from collections import Counter
 from tkinter import ttk
 
 from .assignment_view import AssignmentView
-from mapper.core.common import MAX_VISIBLE_PRODUCTS, normalize_search
+from mapper.core.common import MAX_VISIBLE_PRODUCTS, normalize_search, product_search_text
 from mapper.persistence.database import Placement, WarehouseDatabase
 from utils.barcode_scanner import format_product_id
 
@@ -67,8 +67,8 @@ class ProductLookupView(ttk.Frame):
             for product_id, _product_name, shortened_name in catalog_rows
         }
         self.search_text = {
-            product_id: normalize_search(
-                f"{product_id} {product_name} {self.shortened_names[product_id]}"
+            product_id: product_search_text(
+                product_id, product_name, self.shortened_names[product_id]
             )
             for product_id, product_name in self.products.items()
         }

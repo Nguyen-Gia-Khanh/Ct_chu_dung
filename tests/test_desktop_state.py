@@ -13,9 +13,11 @@ class DesktopStateTests(TestCase):
     def test_reload_updates_search_indexes_without_redrawing_tables(self) -> None:
         app = StateActions()
         app.database = Mock()
-        app.database.get_product_records.return_value = [("P1", "Bolts", "Bolt")]
+        app.database.get_product_records.return_value = [("P1", "Bolts", "Bolt", "P1")]
         app.database.get_catalog_only_product_ids.return_value = set()
-        app.database.get_display_catalog_products.return_value = [("P1", "Bolts", "Bolt"), ("P2", "Washers", "Washer")]
+        app.database.get_display_catalog_products.return_value = [
+            ("P1", "Bolts", "Bolt", "P1"), ("P2", "Washers", "Washer", "P2"),
+        ]
         app.database.get_placement_details.return_value = {}
         app.database.get_on_hand_products.return_value = {}
         app.database.get_returned_queue_products.return_value = {}
