@@ -132,20 +132,17 @@ class ExceptionsView(ttk.Frame):
         addr_frame = ttk.Frame(assign_box)
         addr_frame.pack(fill="x", pady=(0, 6))
 
-        ttk.Label(addr_frame, text="Floor:").pack(side="left", padx=(0, 2))
-        ttk.Entry(addr_frame, textvariable=self.floor_var, width=4).pack(side="left", padx=(0, 6))
-
-        ttk.Label(addr_frame, text="Side:").pack(side="left", padx=(0, 2))
-        ttk.Entry(addr_frame, textvariable=self.side_var, width=4).pack(side="left", padx=(0, 6))
-
-        ttk.Label(addr_frame, text="Shelf:").pack(side="left", padx=(0, 2))
-        ttk.Entry(addr_frame, textvariable=self.shelf_var, width=5).pack(side="left", padx=(0, 6))
-
-        ttk.Label(addr_frame, text="Row:").pack(side="left", padx=(0, 2))
-        ttk.Entry(addr_frame, textvariable=self.row_var, width=4).pack(side="left", padx=(0, 6))
-
-        ttk.Label(addr_frame, text="Cell:").pack(side="left", padx=(0, 2))
-        ttk.Entry(addr_frame, textvariable=self.cell_var, width=4).pack(side="left", padx=(0, 8))
+        for label, variable, width, padding in (
+            ("Floor:", self.floor_var, 4, 6),
+            ("Side:", self.side_var, 4, 6),
+            ("Shelf:", self.shelf_var, 5, 6),
+            ("Row:", self.row_var, 4, 6),
+            ("Cell:", self.cell_var, 4, 8),
+        ):
+            ttk.Label(addr_frame, text=label).pack(side="left", padx=(0, 2))
+            entry = ttk.Entry(addr_frame, textvariable=variable, width=width)
+            entry.pack(side="left", padx=(0, padding))
+            entry.bind("<Return>", self._on_address_return)
 
         ttk.Button(addr_frame, text="Load address", command=self.load_address).pack(side="left")
 
@@ -395,6 +392,9 @@ class ExceptionsView(ttk.Frame):
         name, locations = found
         self.product_name_var.set(name)
         self.qty_var.set("")
+        self._show_found_locations(product_id, locations)
+
+    def _show_found_locations(self, product_id: str, locations: tuple[str, ...]) -> None:
         if locations:
             label = "Multiple locations" if len(locations) > 1 else "Saved location"
             self.found_locations_text.set(f"{label} for {product_id}: {', '.join(locations)}")
@@ -426,6 +426,10 @@ class ExceptionsView(ttk.Frame):
         self._refresh_after_change()
         if self.status_text:
             self.status_text.set(f"Saved name for {product_id}.")
+
+    def _on_address_return(self, _event: tk.Event | None = None) -> str:
+        self.load_address()
+        return "break"
 
     def load_address(self) -> None:
         floor = clean_location_segment(self.floor_var.get())
@@ -701,5 +705,10 @@ class ExceptionsView(ttk.Frame):
         self.refresh_catalog_tree()
         self.refresh_pending_tree()
         self.refresh_multi_location_tree()
+        product_id = format_product_id(self.product_id_var.get().strip())
+        if product_id:
+            found = self.database.find_product_locations(product_id)
+            if found is not None:
+                self._show_found_locations(product_id, found[1])
         if self.selected_address:
             self.refresh_cell_contents()

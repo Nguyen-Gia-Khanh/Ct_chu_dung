@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from mapper.core.common import clean_location_segment, make_slot_name, normalize_search
 from mapper.persistence.database import Placement, SlotAddress, WarehouseDatabase
@@ -17,6 +17,42 @@ from utils.barcode_scanner import (
     format_product_id,
     select_all_entry_text,
 )
+
+
+class DuplicateCellMergeDialog(simpledialog.Dialog):
+    """Choose whether to merge overlapping products or discard the cell move."""
+
+    def __init__(self, parent, product_ids, target_name):
+        self.product_ids = product_ids
+        self.target_name = target_name
+        self.result = False
+        super().__init__(parent, title="Products already in both cells")
+
+    def body(self, master):
+        ttk.Label(
+            master, text=f"{len(self.product_ids)} product(s) are already in both cells.\n"
+            f"Merge their quantities into {self.target_name} and move the other products?",
+            wraplength=460,
+        ).pack(anchor="w", padx=8, pady=8)
+        products = tk.Text(master, width=55, height=min(8, len(self.product_ids)), wrap="word")
+        products.insert("1.0", ", ".join(self.product_ids))
+        products.configure(state="disabled")
+        products.pack(fill="x", padx=8)
+        ttk.Label(master, text="An unknown quantity stays unknown.\n"
+                  "Discard move keeps both cells unchanged.", wraplength=460).pack(
+                      anchor="w", padx=8, pady=8)
+
+    def buttonbox(self):
+        buttons = ttk.Frame(self)
+        discard = ttk.Button(buttons, text="Discard move", command=self.cancel)
+        discard.pack(side="left", padx=5)
+        ttk.Button(buttons, text="Merge quantities", command=self.ok).pack(side="left", padx=5)
+        buttons.pack(pady=8)
+        discard.focus_set()
+        self.bind("<Escape>", self.cancel)
+
+    def apply(self):
+        self.result = True
 
 
 class CellTransferPane(ttk.LabelFrame):
@@ -857,7 +893,25 @@ class CellTransferView(ttk.Frame):
         if source_count == 0:
             self.status_text.set(f"{source_address.slot_name} is already empty.")
             return
-        if not messagebox.askyesno(
+        source_products: list[str] = []
+        target_products: list[str] = []
+        try:
+            raw_source = self.database.get_slot_contents(source_address.slot_id)
+            raw_target = self.database.get_slot_contents(target_address.slot_id)
+            if isinstance(raw_source, (list, tuple)):
+                source_products = [pid for pid, _, _ in raw_source]
+            if isinstance(raw_target, (list, tuple)):
+                target_products = [pid for pid, _, _ in raw_target]
+        except Exception as error:
+            messagebox.showerror("Cells could not be loaded", str(error), parent=self)
+            return
+        overlaps = sorted(set(source_products) & set(target_products))
+        if overlaps:
+            dialog = DuplicateCellMergeDialog(self, overlaps, target_address.slot_name)
+            if not dialog.result:
+                self.status_text.set("Discarded cell move. Both cells are unchanged.")
+                return
+        elif not messagebox.askyesno(
             "Combine complete cell contents?",
             f"Move all {source_count} product(s) from {source_address.slot_name} "
             f"into {target_address.slot_name}?\n\n"
@@ -865,18 +919,15 @@ class CellTransferView(ttk.Frame):
             parent=self,
         ):
             return
-        source_products: list[str] = []
         try:
-            raw_source = self.database.get_slot_contents(source_address.slot_id)
-            if isinstance(raw_source, (list, tuple)):
-                source_products = [pid for pid, _, _ in raw_source]
-        except Exception:
-            pass
-        try:
-            moved = self.database.combine_slot_contents(
-                source_address.slot_id,
-                target_address.slot_id,
-            )
+            if overlaps:
+                moved = self.database.combine_slot_contents(
+                    source_address.slot_id, target_address.slot_id, merge_duplicates=True,
+                )
+            else:
+                moved = self.database.combine_slot_contents(
+                    source_address.slot_id, target_address.slot_id,
+                )
             self.last_changed_updates = [
                 LocationUpdate(pid, target_address.slot_name) for pid in source_products
             ]

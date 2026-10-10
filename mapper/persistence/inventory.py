@@ -601,13 +601,16 @@ class InventoryOperations:
                 row["slot_id"]: row["product_count"]
                 for row in connection.execute(
                     """
-                    SELECT slots.slot_id, COUNT(placements.product_id) AS product_count
-                    FROM slots
-                    LEFT JOIN placements ON placements.slot_id = slots.slot_id
-                    WHERE slots.slot_id IN (?, ?)
-                    GROUP BY slots.slot_id
+                    SELECT slot_id, COUNT(*) AS product_count FROM (
+                        SELECT product_id, slot_id, stock_qty, assigned_at FROM placements
+                        WHERE slot_id IN (?, ?)
+                        UNION
+                        SELECT product_id, slot_id, stock_qty, assigned_at FROM exception_placements
+                        WHERE slot_id IN (?, ?)
+                    )
+                    GROUP BY slot_id
                     """,
-                    (first_slot_id, second_slot_id),
+                    (first_slot_id, second_slot_id, first_slot_id, second_slot_id),
                 )
             }
             connection.execute(
@@ -628,9 +631,14 @@ class InventoryOperations:
                     second_slot_id,
                 ),
             )
-        return counts[first_slot_id], counts[second_slot_id]
+            self._move_exception_cells(
+                connection, {first_slot_id: second_slot_id, second_slot_id: first_slot_id}
+            )
+        return counts.get(first_slot_id, 0), counts.get(second_slot_id, 0)
 
-    def combine_slot_contents(self, source_slot_id: int, target_slot_id: int) -> int:
+    def combine_slot_contents(
+        self, source_slot_id: int, target_slot_id: int, *, merge_duplicates: bool = False
+    ) -> int:
         """Atomically move every source-cell product into the target cell."""
         if source_slot_id == target_slot_id:
             raise ValueError("Choose two different cells to combine.")
@@ -642,13 +650,48 @@ class InventoryOperations:
             ).fetchall()
             if len(slots) != 2:
                 raise KeyError("One of the selected shelf cells no longer exists.")
+            overlaps = connection.execute(
+                """
+                SELECT product_id FROM (
+                    SELECT product_id, slot_id FROM placements
+                    WHERE slot_id IN (?, ?)
+                    UNION
+                    SELECT product_id, slot_id FROM exception_placements
+                    WHERE slot_id IN (?, ?)
+                )
+                GROUP BY product_id HAVING COUNT(*) > 1
+                ORDER BY product_id
+                """,
+                (source_slot_id, target_slot_id, source_slot_id, target_slot_id),
+            ).fetchall()
+            if overlaps and not merge_duplicates:
+                raise ValueError(
+                    f"Product {overlaps[0]['product_id']} is already in both cells. "
+                    "Remove one placement before combining. Both cells are unchanged."
+                )
             source_count = connection.execute(
-                "SELECT COUNT(*) FROM placements WHERE slot_id = ?",
-                (source_slot_id,),
+                """
+                SELECT COUNT(*) FROM (
+                    SELECT product_id, slot_id, stock_qty, assigned_at FROM placements
+                    WHERE slot_id = ?
+                    UNION
+                    SELECT product_id, slot_id, stock_qty, assigned_at FROM exception_placements
+                    WHERE slot_id = ?
+                )
+                """,
+                (source_slot_id, source_slot_id),
             ).fetchone()[0]
+            if overlaps:
+                self._merge_cell_duplicates(
+                    connection, [row["product_id"] for row in overlaps],
+                    source_slot_id, target_slot_id,
+                )
             connection.execute(
                 "UPDATE placements SET slot_id = ? WHERE slot_id = ?",
                 (target_slot_id, source_slot_id),
+            )
+            self._move_exception_cells(
+                connection, {source_slot_id: target_slot_id}, merge_duplicates=merge_duplicates
             )
         return int(source_count)
 

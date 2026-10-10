@@ -13,6 +13,98 @@ from utils.barcode_scanner import format_product_id
 from .models import validate_stock_quantity
 
 class ExceptionOperations:
+    def _merge_cell_duplicates(self, connection, product_ids, source_slot_id, target_slot_id) -> None:
+        """Keep one placement per overlapping product, with combined quantities."""
+        for product_id in product_ids:
+            records = []
+            for table in ("placements", "exception_placements"):
+                rows = connection.execute(
+                    f"SELECT * FROM {table} WHERE product_id = ? AND slot_id IN (?, ?) "
+                    "ORDER BY slot_id = ? DESC",
+                    (product_id, source_slot_id, target_slot_id, target_slot_id),
+                ).fetchall()
+                records.extend((table, dict(row)) for row in rows)
+            # Prefer the regular placement, otherwise the destination exception.
+            table, kept = records[0]
+            quantities = [row["stock_qty"] for _table, row in records]
+            quantity = None if None in quantities else sum(quantities)
+            if quantity is not None:
+                validate_stock_quantity(quantity)
+            for placement_table in ("placements", "exception_placements"):
+                connection.execute(
+                    f"DELETE FROM {placement_table} WHERE product_id = ? AND slot_id IN (?, ?)",
+                    (product_id, source_slot_id, target_slot_id),
+                )
+            kept["slot_id"] = target_slot_id
+            kept["stock_qty"] = quantity
+            columns = ", ".join(kept)
+            placeholders = ", ".join("?" for _ in kept)
+            connection.execute(
+                f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
+                tuple(kept.values()),
+            )
+
+    def _move_exception_cells(
+        self, connection, destinations: dict[int, int], *, merge_duplicates: bool = False
+    ) -> None:
+        """Move exception and staging rows together without swap-key collisions."""
+        placeholders = ", ".join("?" for _ in destinations)
+        source_ids = tuple(destinations)
+        placements = connection.execute(
+            f"SELECT * FROM exception_placements WHERE slot_id IN ({placeholders})",
+            source_ids,
+        ).fetchall()
+        staged = connection.execute(
+            f"SELECT * FROM wait_to_update_csv WHERE slot_id IN ({placeholders})",
+            source_ids,
+        ).fetchall()
+        slot_names = {
+            row["slot_id"]: row["slot_name"]
+            for row in connection.execute(
+                f"SELECT slot_id, slot_name FROM slots WHERE slot_id IN ({placeholders})",
+                tuple(destinations.values()),
+            )
+        }
+        # Reinsert the same records after clearing both sides, so a product
+        # saved in both cells can be switched without violating UNIQUE keys.
+        connection.execute(
+            f"DELETE FROM exception_placements WHERE slot_id IN ({placeholders})",
+            source_ids,
+        )
+        connection.execute(
+            f"DELETE FROM wait_to_update_csv WHERE slot_id IN ({placeholders})",
+            source_ids,
+        )
+        connection.executemany(
+            """
+            INSERT INTO exception_placements
+                (id, product_id, slot_id, stock_qty, assigned_at, committed_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ((row["id"], row["product_id"], destinations[row["slot_id"]],
+              row["stock_qty"], row["assigned_at"], row["committed_at"])
+             for row in placements),
+        )
+        staging_sql = """
+            INSERT INTO wait_to_update_csv
+                (id, product_id, product_name, slot_id, slot_name, created_at,
+                 csv_updated, catalog_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """
+        if merge_duplicates:
+            staging_sql += """
+                ON CONFLICT (product_id, slot_name) DO UPDATE SET
+                    csv_updated = MIN(wait_to_update_csv.csv_updated, excluded.csv_updated),
+                    catalog_updated = MIN(wait_to_update_csv.catalog_updated, excluded.catalog_updated)
+            """
+        connection.executemany(
+            staging_sql,
+            ((row["id"], row["product_id"], row["product_name"],
+              destinations[row["slot_id"]], slot_names[destinations[row["slot_id"]]],
+              row["created_at"], row["csv_updated"], row["catalog_updated"])
+             for row in staged),
+        )
+
     def find_product_locations(self, product_id: str) -> tuple[str, tuple[str, ...]] | None:
         """Find a registered or staged ID and all its saved locations."""
         with closing(self.connect()) as connection:
