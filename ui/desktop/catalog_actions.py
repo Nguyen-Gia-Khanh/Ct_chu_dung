@@ -7,7 +7,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 from .assignment_view import StockQuantityDialog
-from mapper.core.common import MAX_VISIBLE_PRODUCTS, normalize_search
+from mapper.core.common import MAX_VISIBLE_PRODUCTS, exact_product_search_id, normalize_search
 from mapper.features.csv_import import read_csv
 from .csv_dialog import ColumnMappingDialog
 from .widgets import sync_tree_rows
@@ -394,6 +394,15 @@ class CatalogActions:
         product_id = None
         if raw_query:
             product_id = self.product_id_lookup.get(raw_query.casefold())
+            if product_id is None:
+                product_id = exact_product_search_id(
+                    raw_query,
+                    (
+                        item_id.partition("::")[2]
+                        for tree in (self.assignments.queue_tree, self.assignments.catalog_tree)
+                        for item_id in tree.get_children()
+                    ),
+                )
 
         message = ""
         location_exists = False

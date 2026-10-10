@@ -5,7 +5,10 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from mapper.core.common import MAX_VISIBLE_PRODUCTS, make_slot_name, normalize_search
+from mapper.core.common import (
+    MAX_VISIBLE_PRODUCTS, exact_product_search_id, make_slot_name, normalize_search,
+    product_search_text,
+)
 from mapper.persistence.database import Placement, WarehouseDatabase
 from .shelf_address_lookup import ShelfAddressLookup
 from .widgets import ScrollableFrame, shelf_cell_visual, sync_tree_rows
@@ -290,34 +293,28 @@ class PrimalQueueView(ttk.Frame):
 
     def refresh(self) -> None:
         """Reload all data from database and refresh views."""
-        product_rows = self.database.get_product_records()
+        product_rows = self.database.get_product_records(include_search_id=True)
         catalog_only = self.database.get_catalog_only_product_ids()
         product_rows = [row for row in product_rows if row[0] not in catalog_only]
         self.products = {
             product_id: product_name
-            for product_id, product_name, _shortened_name in product_rows
+            for product_id, product_name, _shortened_name, _search_id in product_rows
         }
         self.product_shortened = {
             product_id: shortened_name
-            for product_id, _product_name, shortened_name in product_rows
+            for product_id, _product_name, shortened_name, _search_id in product_rows
         }
         self.product_search = {
-            product_id: normalize_search(
-                f"{product_id} {product_name} {shortened_name}"
-            )
-            for product_id, product_name, shortened_name in product_rows
+            row[0]: product_search_text(*row) for row in product_rows
         }
 
-        catalog_rows = self.database.get_display_catalog_products()
+        catalog_rows = self.database.get_display_catalog_products(include_search_id=True)
         self.catalog_products = {
             product_id: (product_name, shortened_name)
-            for product_id, product_name, shortened_name in catalog_rows
+            for product_id, product_name, shortened_name, _search_id in catalog_rows
         }
         self.catalog_search = {
-            product_id: normalize_search(
-                f"{product_id} {product_name} {shortened_name}"
-            )
-            for product_id, product_name, shortened_name in catalog_rows
+            row[0]: product_search_text(*row) for row in catalog_rows
         }
 
         self.placements = self.database.get_placement_details()
@@ -441,10 +438,15 @@ class PrimalQueueView(ttk.Frame):
             self.search_status_text.set("Type or scan a product ID to check if it is a hot seller.")
             return
 
-        exact_id = next(
-            (pid for pid in self.products if pid.casefold() == raw_query.casefold()),
-            None,
+        product_id = exact_product_search_id(
+            raw_query,
+            (
+                item_id.partition("::")[2]
+                for tree in (self.primal_tree, self.catalog_tree)
+                for item_id in tree.get_children()
+            ),
         )
+        exact_id = product_id if product_id in self.products else None
         if exact_id is not None:
             name = self.products[exact_id]
             if exact_id in self.placements:
@@ -467,10 +469,7 @@ class PrimalQueueView(ttk.Frame):
                 )
             return
 
-        cat_id = next(
-            (pid for pid in self.catalog_products if pid.casefold() == raw_query.casefold()),
-            None,
-        )
+        cat_id = product_id if product_id in self.catalog_products else None
         if cat_id is not None:
             name, _ = self.catalog_products[cat_id]
             loc_info = ""

@@ -7,7 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from mapper.core.common import clean_location_segment, make_slot_name, normalize_search
+from mapper.core.common import (
+    clean_location_segment, make_slot_name, normalize_search, product_search_text,
+)
 from mapper.persistence.database import SlotAddress, WarehouseDatabase
 from utils.barcode_scanner import (
     BarcodeScanner,
@@ -37,6 +39,7 @@ class ExceptionsView(ttk.Frame):
 
         self.selected_address: SlotAddress | None = None
         self.catalog_records: list[tuple[str, str, str]] = []
+        self.catalog_search: dict[str, str] = {}
 
         # Variables
         self.product_id_var = tk.StringVar(self)
@@ -683,7 +686,9 @@ class ExceptionsView(ttk.Frame):
                 self.multi_location_tree.selection_add(product_id)
 
     def refresh_catalog_tree(self) -> None:
-        self.catalog_records = self.database.get_display_catalog_products()
+        rows = self.database.get_display_catalog_products(include_search_id=True)
+        self.catalog_records = [row[:3] for row in rows]
+        self.catalog_search = {row[0]: product_search_text(*row) for row in rows}
         self._filter_catalog_tree()
 
     def _filter_catalog_tree(self, *_args) -> None:
@@ -692,7 +697,7 @@ class ExceptionsView(ttk.Frame):
         query = normalize_search(self.catalog_search_var.get())
         shown = 0
         for product_id, name, shortened_name in self.catalog_records:
-            if query and query not in normalize_search(f"{product_id} {name} {shortened_name}"):
+            if query and query not in self.catalog_search[product_id]:
                 continue
             self.catalog_tree.insert("", "end", iid=product_id, values=(product_id, name))
             if product_id in selected:

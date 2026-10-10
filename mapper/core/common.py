@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import sys
 import unicodedata
+from collections.abc import Iterable
 from pathlib import Path
 
 
@@ -45,6 +46,30 @@ def normalize_search(value: str) -> str:
     """Case- and accent-insensitive search, useful for Vietnamese names."""
     decomposed = unicodedata.normalize("NFD", value.casefold().replace("đ", "d"))
     return "".join(character for character in decomposed if not unicodedata.combining(character))
+
+
+def product_search_text(
+    product_id: str, name: str, shortened_name: str = "", search_id: str | None = None,
+) -> str:
+    """Cache both ID spellings in one searchable string when products load/change."""
+    search_id = product_id.replace("-", "") if search_id is None else search_id
+    text = f"{product_id} {name} {shortened_name}"
+    if search_id != product_id:
+        text += f" {search_id}"
+    return normalize_search(text)
+
+
+def exact_product_search_id(query: str, product_ids: Iterable[str]) -> str | None:
+    """Resolve visible results, preserving literal IDs and rejecting alias collisions."""
+    query = query.casefold()
+    aliases = set()
+    for product_id in product_ids:
+        folded = product_id.casefold()
+        if folded == query:
+            return product_id
+        if folded.replace("-", "") == query:
+            aliases.add(product_id)
+    return next(iter(aliases)) if len(aliases) == 1 else None
 
 
 def clean_location_segment(value: str) -> str:
