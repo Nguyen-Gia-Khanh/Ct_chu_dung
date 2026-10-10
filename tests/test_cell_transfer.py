@@ -151,7 +151,8 @@ class CellTransferControllerTests(unittest.TestCase):
 
         view.database.swap_slot_contents.assert_called_once_with(1, 2)
         view.on_changed.assert_called_once()
-        view.refresh.assert_called_once()
+        # The app callback owns the incremental cell refresh.
+        view.refresh.assert_not_called()
 
     @patch("ui.desktop.cell_transfer_view.messagebox.askyesno", return_value=True)
     def test_combine_controller_respects_button_direction(self, _confirm: Mock) -> None:
@@ -161,7 +162,7 @@ class CellTransferControllerTests(unittest.TestCase):
 
         view.database.combine_slot_contents.assert_called_once_with(2, 1)
         view.on_changed.assert_called_once()
-        view.refresh.assert_called_once()
+        view.refresh.assert_not_called()
 
     def test_pending_designer_changes_block_cell_operations(self) -> None:
         view = self.make_view()
