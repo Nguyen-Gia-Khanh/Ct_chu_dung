@@ -406,7 +406,32 @@ class InventoryOperations:
             )
         return len(quantities)
 
-    def update_on_hand_stock(self, product_id: str, quantity: int) -> None:
+    def get_slot_stock_modifications(self, slot_id: int) -> dict[str, str]:
+        with closing(self.connect()) as connection:
+            return dict(connection.execute(
+                """SELECT product_id, modified_at FROM stock_modifications
+                   WHERE product_id IN (
+                       SELECT product_id FROM placements WHERE slot_id = ?
+                       UNION SELECT product_id FROM exception_placements WHERE slot_id = ?
+                   )""",
+                (slot_id, slot_id),
+            ).fetchall())
+
+    @staticmethod
+    def _record_stock_modification(connection, product_id: str, modified_at: str | None) -> None:
+        if modified_at is None:
+            return
+        if datetime.fromisoformat(modified_at).utcoffset() is None:
+            raise ValueError("The stock modification time must include a timezone.")
+        connection.execute(
+            """INSERT INTO stock_modifications (product_id, modified_at) VALUES (?, ?)
+               ON CONFLICT(product_id) DO UPDATE SET modified_at = excluded.modified_at""",
+            (product_id, modified_at),
+        )
+
+    def update_on_hand_stock(
+        self, product_id: str, quantity: int, *, modified_at: str | None = None,
+    ) -> None:
         validate_stock_quantity(quantity)
         with closing(self.connect()) as connection, connection:
             cursor = connection.execute(
@@ -417,6 +442,7 @@ class InventoryOperations:
                 raise KeyError(
                     f"Product {product_id} is no longer in the on-hand queue."
                 )
+            self._record_stock_modification(connection, product_id, modified_at)
 
     def dequeue_on_hand(
         self,
@@ -971,6 +997,7 @@ class InventoryOperations:
         quantity: int,
         *,
         expected_slot_id: int | None = None,
+        modified_at: str | None = None,
     ) -> None:
         validate_stock_quantity(quantity)
         with closing(self.connect()) as connection, connection:
@@ -991,3 +1018,4 @@ class InventoryOperations:
                 raise KeyError(
                     f"Product {product_id} is no longer in that shelf address."
                 )
+            self._record_stock_modification(connection, product_id, modified_at)
