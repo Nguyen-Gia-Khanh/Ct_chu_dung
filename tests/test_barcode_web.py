@@ -3,9 +3,11 @@
 import http.client
 import json
 import threading
-from contextlib import closing
+import io
+import ssl
+from contextlib import closing, redirect_stdout, redirect_stderr
 
-from barcode_web.server import ScanStore, ScannerServer, phone_address
+from barcode_web.server import ScanStore, ScannerServer, phone_address, DATA
 from barcode_web.lookup import WarehouseLookup
 from tests.test_barcode_lookup import create_test_warehouse
 from tests.support import WorkspaceTestCase
@@ -127,3 +129,69 @@ class BarcodeWebTests(WorkspaceTestCase):
     def test_second_scanner_cannot_share_the_existing_port(self):
         with self.assertRaises(OSError):
             ScannerServer(self.server.server_address, self.store, "another-token", self.server.info)
+
+    def test_certificate_rejections_and_disconnects_do_not_dump_tracebacks(self):
+        from unittest.mock import patch, Mock
+        output, errors = io.StringIO(), io.StringIO()
+        rejection = ssl.SSLError("certificate rejected")
+        rejection.reason = "SSLV3_ALERT_CERTIFICATE_UNKNOWN"
+        failures = [rejection, rejection, ConnectionResetError(), BrokenPipeError(), TimeoutError(), ssl.SSLEOFError()]
+        with redirect_stdout(output), redirect_stderr(errors):
+            with patch.object(self.server, "finish_request", side_effect=failures):
+                for _failure in failures:
+                    self.server.process_request_thread(Mock(), ("192.168.1.19", 57030))
+            with patch("barcode_web.server.time.monotonic", return_value=self.server.last_connection_note + 61):
+                with patch.object(self.server, "finish_request", side_effect=rejection):
+                    self.server.process_request_thread(Mock(), ("192.168.1.19", 57031))
+        self.assertEqual(output.getvalue().count("needs certificate trust setup"), 2)
+        self.assertIn("http://192.168.1.2:8766/setup", output.getvalue())
+        self.assertEqual(errors.getvalue(), "")
+        self.assertEqual(self.request("GET", "/api/session")[0], 200)
+
+    def test_unexpected_application_errors_keep_diagnostics(self):
+        from unittest.mock import patch, Mock
+        with patch.object(self.server, "finish_request", side_effect=ValueError("unexpected bug")):
+            with patch("http.server.ThreadingHTTPServer.handle_error") as diagnostics:
+                self.server.process_request_thread(Mock(), ("127.0.0.1", 1234))
+        diagnostics.assert_called_once()
+
+    def test_real_tls_rejection_then_trusted_location_lookup(self):
+        from unittest.mock import patch
+        certs = DATA / "certs"
+        if not all((certs / name).exists() for name in ("server.pem", "server-key.pem", "rootCA.pem")):
+            self.skipTest("Run the launcher once to generate local HTTPS certificates")
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certs / "server.pem", certs / "server-key.pem")
+        self.server.socket = context.wrap_socket(self.server.socket, server_side=True, do_handshake_on_connect=False)
+        self.server.secure = True
+        noticed = threading.Event()
+        output, errors = io.StringIO(), io.StringIO()
+        original_print = print
+        def capture_note(*args, **kwargs):
+            original_print(*args, **kwargs)
+            if args and "needs certificate trust setup" in str(args[0]):
+                noticed.set()
+        with redirect_stdout(output), redirect_stderr(errors), patch("builtins.print", side_effect=capture_note):
+            # This isolated client has no trusted CAs; verification stays enabled.
+            untrusted = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            for _ in range(2):
+                connection = http.client.HTTPSConnection(*self.server.server_address, context=untrusted, timeout=5)
+                try:
+                    with self.assertRaises(ssl.SSLCertVerificationError):
+                        connection.request("GET", "/")
+                finally:
+                    connection.close()
+            self.assertTrue(noticed.wait(3), "certificate rejection should show one friendly setup note")
+            trusted = ssl.create_default_context(cafile=certs / "rootCA.pem")
+            connection = http.client.HTTPSConnection(*self.server.server_address, context=trusted, timeout=5)
+            try:
+                connection.request("POST", "/api/scans", json.dumps({
+                    "id": "trusted-tls", "text": "001234567890", "format": "Code128"}), {
+                    "Authorization": "Bearer test-token", "Content-Type": "application/json"})
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.loads(response.read())["lookup"]["locations"], ["L1-1A2-3", "L2-2B4-5"])
+            finally:
+                connection.close()
+        self.assertEqual(output.getvalue().count("needs certificate trust setup"), 1)
+        self.assertEqual(errors.getvalue(), "")

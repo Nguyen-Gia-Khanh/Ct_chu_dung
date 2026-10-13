@@ -17,7 +17,9 @@ import socket
 import sqlite3
 import ssl
 import subprocess
+import sys
 import threading
+import time
 from urllib.parse import urlsplit
 import urllib.request
 import webbrowser
@@ -166,7 +168,36 @@ class ScannerServer(ThreadingHTTPServer):
     def __init__(self, address, store, token, info, *, secure=False, lookup=None):
         self.store, self.token, self.info, self.secure = store, token, info, secure
         self.lookup = lookup
+        self.connection_note_lock = threading.Lock()
+        self.last_connection_note = None
         super().__init__(address, Handler)
+
+    def handle_error(self, request, client_address):
+        error = sys.exception()
+        if isinstance(error, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, TimeoutError,
+                              ssl.SSLEOFError, ssl.SSLZeroReturnError)):
+            # Closing a browser tab or abandoning a connection is normal.
+            return
+        if not isinstance(error, ssl.SSLError):
+            return super().handle_error(request, client_address)
+        reason = getattr(error, "reason", "")
+        if reason in ("UNEXPECTED_EOF_WHILE_READING", "EOF_OCCURRED_IN_VIOLATION_OF_PROTOCOL"):
+            return
+        with self.connection_note_lock:
+            now = time.monotonic()
+            if self.last_connection_note is not None and now - self.last_connection_note < 60:
+                return
+            self.last_connection_note = now
+            if reason in ("SSLV3_ALERT_CERTIFICATE_UNKNOWN", "TLSV1_ALERT_UNKNOWN_CA",
+                          "SSLV3_ALERT_BAD_CERTIFICATE", "CERTIFICATE_VERIFY_FAILED"):
+                setup = self.info.get("setup_urls", [])
+                instruction = (f"Open {setup[0]} on that phone." if setup else
+                               "Open the phone certificate setup link in the laptop receiver.")
+                print(f"Phone {client_address[0]} needs certificate trust setup. {instruction} "
+                      "The server is still running.", flush=True)
+            else:
+                print("A phone could not establish HTTPS. Open the current phone link from the receiver. "
+                      "The server is still running.", flush=True)
 
 
 class Handler(BaseHTTPRequestHandler):

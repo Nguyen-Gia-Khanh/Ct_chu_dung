@@ -32,6 +32,13 @@ Closing the receiver's browser tab does not stop the server. There are no
 background services, containers, scheduled tasks, or automatic startup.
 Only one server can own its ports: close the old launcher before starting again.
 
+Normal browser disconnects and abandoned connections are quiet. If a phone
+rejects the HTTPS certificate, the terminal shows one short setup instruction
+at most once per minute instead of repeated tracebacks. This message does not
+mean the server stopped; the phone must still install and trust the local CA
+if its scanner page cannot open. Unexpected application faults retain their
+tracebacks for diagnosis.
+
 The first launch downloads the pinned mkcert 1.4.4 Windows x64 executable and
 verifies its SHA-256 before running it to create a local CA and HTTPS certificate.
 It does **not** install a trusted root in Windows. The laptop receiver works
