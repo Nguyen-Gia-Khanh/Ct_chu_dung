@@ -14,12 +14,15 @@ from pathlib import Path
 import re
 import secrets
 import socket
+import sqlite3
 import ssl
 import subprocess
 import threading
 from urllib.parse import urlsplit
 import urllib.request
 import webbrowser
+
+from barcode_web.lookup import WarehouseLookup
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = Path(__file__).with_name("static")
@@ -44,6 +47,38 @@ def lan_addresses() -> list[str]:
     return list(dict.fromkeys(address for address in addresses
                              if ipaddress.ip_address(address).is_private
                              and not ipaddress.ip_address(address).is_loopback))
+
+
+def phone_address(addresses: list[str]) -> str | None:
+    """Advertise one real LAN address, preferring the configured Private network."""
+    if not addresses:
+        return None
+    if os.name == "nt":
+        preferred = ""
+        settings = DATA / "network-setup.json"
+        try:
+            preferred = json.loads(settings.read_text(encoding="utf-8-sig")).get("interface", "")
+            if not isinstance(preferred, str):
+                preferred = ""
+        except (OSError, ValueError, AttributeError):
+            pass
+        try:
+            result = subprocess.run([
+                "powershell.exe", "-NoProfile", "-Command",
+                "Get-NetIPConfiguration | Where-Object { "
+                "$_.NetProfile.NetworkCategory -eq 'Private' -and $_.IPv4DefaultGateway } | "
+                "Sort-Object { $_.InterfaceAlias -ne $env:WAREHOUSE_SCANNER_INTERFACE } | "
+                "ForEach-Object { $_.IPv4Address.IPAddress }"],
+                env={**os.environ, "WAREHOUSE_SCANNER_INTERFACE": preferred},
+                capture_output=True, text=True, timeout=12,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+            if result.returncode == 0:
+                for address in result.stdout.splitlines():
+                    if address.strip() in addresses:
+                        return address.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return addresses[0]
 
 
 def prepare_tls(addresses: list[str]) -> None:
@@ -120,9 +155,17 @@ class ScanStore:
 
 class ScannerServer(ThreadingHTTPServer):
     daemon_threads = True
+    allow_reuse_address = os.name != "nt"
 
-    def __init__(self, address, store, token, info, *, secure=False):
+    def server_bind(self):
+        if os.name == "nt":
+            # Windows SO_REUSEADDR permits competing servers on the same port.
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+    def __init__(self, address, store, token, info, *, secure=False, lookup=None):
         self.store, self.token, self.info, self.secure = store, token, info, secure
+        self.lookup = lookup
         super().__init__(address, Handler)
 
 
@@ -214,7 +257,12 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeError):
             return self.reply(400, {"error": "Invalid JSON."})
         try:
-            self.reply(200, self.server.store.add(payload))
+            lookup = (self.server.lookup.find(payload["text"]) if self.server.lookup else
+                      {"status": "unavailable", "product_id": None, "product_name": "", "locations": []})
+        except sqlite3.Error:
+            return self.reply(503, {"error": "Warehouse lookup failed. Check the database on the laptop, then retry."})
+        try:
+            self.reply(200, {**self.server.store.add(payload), "lookup": lookup})
         except OSError:
             self.reply(503, {"error": "Could not save the scan. Check the laptop's disk."})
 
@@ -226,32 +274,40 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--setup-port", type=int, default=8766)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--db", type=Path, help="Existing warehouse SQLite database (opened read-only)")
+    parser.add_argument("--lan-ip", help="Choose one of this laptop's LAN IPv4 addresses explicitly")
     args = parser.parse_args()
     addresses = lan_addresses()
     try:
+        if args.lan_ip and args.lan_ip not in addresses:
+            raise ValueError("--lan-ip must be an IPv4 address currently assigned to this laptop")
+        address = args.lan_ip or phone_address(addresses)
+        from mapper.core.common import default_database_path
+        lookup = WarehouseLookup(args.db if args.db is not None else default_database_path())
         prepare_tls(addresses)
         token = secrets.token_urlsafe(24)
-        info = {"phone_urls": [f"https://{ip}:{args.port}/#{token}" for ip in addresses],
-                "setup_urls": [f"http://{ip}:{args.setup_port}/setup" for ip in addresses]}
+        info = {"phone_urls": [f"https://{address}:{args.port}/#{token}"] if address else [],
+                "setup_urls": [f"http://{address}:{args.setup_port}/setup"] if address else []}
         store = ScanStore(DATA)
-        secure = ScannerServer(("0.0.0.0", args.port), store, token, info, secure=True)
+        secure = ScannerServer(("0.0.0.0", args.port), store, token, info, secure=True, lookup=lookup)
         try:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(DATA / "certs/server.pem", DATA / "certs/server-key.pem")
             secure.socket = context.wrap_socket(secure.socket, server_side=True, do_handshake_on_connect=False)
-            setup = ScannerServer(("0.0.0.0", args.setup_port), store, token, info)
+            setup = ScannerServer(("0.0.0.0", args.setup_port), store, token, info, lookup=lookup)
         except Exception:
             secure.server_close()
             raise
-    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, RuntimeError, sqlite3.Error, subprocess.CalledProcessError) as error:
         raise SystemExit(f"Cannot start scanner: {error}") from error
     threading.Thread(target=secure.serve_forever, daemon=True).start()
     receiver = f"http://localhost:{args.setup_port}/receiver"
-    print(f"\nLaptop receiver: {receiver}\nPhone links:", flush=True)
+    print(f"\nLaptop receiver: {receiver}\nPhone link:", flush=True)
     for url in info["phone_urls"]:
         print("  " + url, flush=True)
-    print("\nFirst use on each phone: open the HTTP setup link shown in the receiver."
+    print(f"\nWarehouse database (read-only): {lookup.path}"
+          "\nFirst use on each phone: open the HTTP setup link shown in the receiver."
           "\nClose this terminal/tab or press Ctrl+C to stop both servers."
           f"\nSaved scan text: {store.path}\n", flush=True)
     if not args.no_browser:

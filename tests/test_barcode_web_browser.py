@@ -8,6 +8,8 @@ import threading
 from playwright.sync_api import sync_playwright
 
 from barcode_web.server import ScanStore, ScannerServer
+from barcode_web.lookup import WarehouseLookup
+from tests.test_barcode_lookup import create_test_warehouse
 from tests.support import WorkspaceTestCase
 
 
@@ -24,7 +26,7 @@ class BarcodeBrowserTest(WorkspaceTestCase):
         server = ScannerServer(("127.0.0.1", 0), store, "browser-test", {
             "phone_urls": ["https://192.168.1.2:8765/#browser-test"],
             "setup_urls": ["http://192.168.1.2:8766/setup"],
-        })
+        }, lookup=WarehouseLookup(create_test_warehouse(self.folder / "warehouse.db")))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(server.server_close)
@@ -80,6 +82,8 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 if width == 393:
                     self.assertEqual(attempts[0], attempts[1], "retry must reuse the delivery ID and text")
                 self.assertEqual(page.locator("#result").inner_text(), "001234567890")
+                self.assertIn("00123-456-7890", page.locator("#product").inner_text())
+                self.assertEqual(page.locator("#locations").inner_text(), "L1-1A2-3\nL2-2B4-5")
                 self.assertEqual(page.evaluate("location.hash"), "")
                 page.wait_for_timeout(2500)
                 self.assertEqual(len(store.recent()), 1 if width == 393 else 3)
@@ -90,6 +94,7 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 page.wait_for_function("document.querySelector('#result').textContent === 'warehouse-test-001'")
                 page.wait_for_function("document.querySelector('#delivery').textContent === 'Received by laptop.'")
                 self.assertEqual(store.recent()[0]["text"], "warehouse-test-001")
+                self.assertEqual(page.locator("#locations").inner_text(), "Barcode not found in the warehouse.")
                 page.get_by_role("button", name="Stop", exact=True).click()
                 self.assertEqual(page.evaluate("window.fakeStream.getTracks().every(t => t.readyState === 'ended')"), True)
                 self.assertTrue(page.get_by_role("button", name="Start camera").is_enabled())

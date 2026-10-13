@@ -3,8 +3,11 @@
 import http.client
 import json
 import threading
+from contextlib import closing
 
-from barcode_web.server import ScanStore, ScannerServer
+from barcode_web.server import ScanStore, ScannerServer, phone_address
+from barcode_web.lookup import WarehouseLookup
+from tests.test_barcode_lookup import create_test_warehouse
 from tests.support import WorkspaceTestCase
 
 
@@ -15,7 +18,7 @@ class BarcodeWebTests(WorkspaceTestCase):
         self.server = ScannerServer(("127.0.0.1", 0), self.store, "test-token", {
             "phone_urls": ["https://192.168.1.2:8765/#test-token"],
             "setup_urls": ["http://192.168.1.2:8766/setup"],
-        })
+        }, lookup=WarehouseLookup(create_test_warehouse(self.folder / "warehouse.db")))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.addCleanup(self.close_server)
@@ -85,3 +88,42 @@ class BarcodeWebTests(WorkspaceTestCase):
             status, body = self.request("POST", "/api/scans", {"id": "scan-1", "text": "001", "format": "EAN13"})
         self.assertEqual(status, 503)
         self.assertIn("Could not save", json.loads(body)["error"])
+
+    def test_scan_returns_locations_and_retry_queries_current_database(self):
+        import sqlite3
+        payload = {"id": "location-1", "text": "001234567890", "format": "Code128"}
+        status, body = self.request("POST", "/api/scans", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["lookup"]["locations"], ["L1-1A2-3", "L2-2B4-5"])
+        with closing(sqlite3.connect(self.server.lookup.path)) as connection, connection:
+            connection.execute("DELETE FROM exception_placements WHERE product_id='00123-456-7890'")
+        answer = json.loads(self.request("POST", "/api/scans", payload)[1])
+        self.assertTrue(answer["duplicate"])
+        self.assertEqual(answer["lookup"]["locations"], ["L1-1A2-3"])
+        self.assertEqual(len(self.store.recent()), 1)
+
+    def test_failed_database_lookup_is_retryable(self):
+        import sqlite3
+        from unittest.mock import patch
+        payload = {"id": "location-1", "text": "001234567890", "format": "Code128"}
+        with patch.object(self.server.lookup, "find", side_effect=sqlite3.OperationalError("database locked")):
+            status, body = self.request("POST", "/api/scans", payload)
+        self.assertEqual(status, 503)
+        self.assertIn("Warehouse lookup failed", json.loads(body)["error"])
+        self.assertFalse(self.store.recent())
+        self.assertEqual(self.request("POST", "/api/scans", payload)[0], 200)
+
+    def test_one_phone_address_with_private_network_preference_and_fallback(self):
+        import os
+        from unittest.mock import patch, Mock
+        addresses = ["192.168.1.21", "192.168.1.13", "172.31.64.1"]
+        if os.name == "nt":
+            with patch("barcode_web.server.subprocess.run", return_value=Mock(returncode=0, stdout="192.168.1.13\n")):
+                self.assertEqual(phone_address(addresses), "192.168.1.13")
+            with patch("barcode_web.server.subprocess.run", side_effect=OSError("network selection unavailable")):
+                self.assertEqual(phone_address(addresses), "192.168.1.21")
+        self.assertIsNone(phone_address([]))
+
+    def test_second_scanner_cannot_share_the_existing_port(self):
+        with self.assertRaises(OSError):
+            ScannerServer(self.server.server_address, self.store, "another-token", self.server.info)

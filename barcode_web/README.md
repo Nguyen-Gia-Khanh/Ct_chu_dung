@@ -1,7 +1,8 @@
 # Phone barcode scanner
 
 This is a standalone LAN website. It sends decoded barcode **text** to the
-laptop, without accessing the warehouse database or desktop app. No Docker,
+laptop, queries the existing warehouse database read-only, and returns the
+product name, stored ID, and all saved locations to the phone. No Docker,
 Node server, or additional Python packages are required. It uses the project's
 existing `.venv` and Python's standard library.
 
@@ -10,21 +11,26 @@ existing `.venv` and Python's standard library.
 1. Connect laptop and phone to the same local network.
 2. Double-click **`start_barcode_server.cmd`** at the repository root. If the
    repository `.venv` is missing, run the existing `setup_venv.cmd` first.
-3. The laptop receiver opens at `http://localhost:8766/receiver`. It lists
-   phone links and certificate setup links for the laptop's LAN addresses.
-   Choose the address for the network shared with your phone; virtual adapters
-   can also appear in this list.
+3. The laptop receiver opens at `http://localhost:8766/receiver`. It shows one
+   phone link and its first-use certificate setup link. Windows prefers an
+   active Private network with a gateway, prioritizing the interface selected
+   with `configure_network.ps1`. Virtual adapters are not advertised when a
+   suitable Private network is available. Other platforms/fallbacks use the
+   default route. To override selection, pass `--lan-ip 192.168.1.13` with an
+   address currently assigned to the laptop.
 4. On each phone, open the HTTP certificate setup link once and follow the
    Android/Chrome or iPhone/Safari instructions. Then open the corresponding
    **HTTPS phone link**, press **Start camera**, and allow camera access.
 5. Scanned content appears in the phone, the laptop receiver, the terminal,
    and `data/barcode_web/scans.jsonl`. The receiver displays the last 200 scans;
    the log keeps older scans. Barcode text is preserved, including leading
-   zeros, spaces and separators; it is not reformatted into a product ID.
+   zeros, spaces and separators. The phone also shows the product and its
+   locations, or a clear unknown/unassigned/ambiguous result.
 
 **Close the server's terminal window/tab, or press Ctrl+C, to stop both servers.**
 Closing the receiver's browser tab does not stop the server. There are no
 background services, containers, scheduled tasks, or automatic startup.
+Only one server can own its ports: close the old launcher before starting again.
 
 The first launch downloads the pinned mkcert 1.4.4 Windows x64 executable and
 verifies its SHA-256 before running it to create a local CA and HTTPS certificate.
@@ -82,7 +88,29 @@ Optional command-line arguments:
 
 ```powershell
 .\start_barcode_server.cmd --no-browser --port 8765 --setup-port 8766
+# Select another existing database explicitly:
+.\start_barcode_server.cmd --db "C:\path\warehouse_locations.db"
 ```
+
+## Warehouse lookup
+
+The default database follows the desktop app's `default_database_path()` rules,
+normally `data/warehouse_locations.db`. The selected path is printed at startup.
+SQLite opens it with `mode=ro`: no creation, migrations, inventory updates, or
+assignment changes occur. Missing databases fail with a startup message.
+
+The raw barcode remains unchanged in the scan log. Lookup trims surrounding
+whitespace and accepts exact stored IDs or their dashless spellings, ignoring
+ASCII case. It reuses `exact_product_search_id` to prefer a literal match and
+reject ambiguous aliases instead of guessing. Matches include working products,
+catalog-only products, and staged exception products. Product names and all
+distinct regular/exception locations use the existing `find_product_locations`
+query. Saved location labels are returned as stored, one per line on the phone.
+
+Each scan/retry queries current SQLite data; assignments saved in the desktop
+app become visible on the next lookup without restarting the web server.
+Unknown products and known products without a saved location are separate
+results. A database failure keeps the scan pending on the phone for retry.
 
 ## Frame processing
 
@@ -116,6 +144,8 @@ Each request uses the current session token from the phone-link fragment.
 
 - `server.py`: certificate generation, two foreground HTTP servers, bounded
   text-only API, local receiver session, JSONL recording and shutdown.
+- `lookup.py`: read-only SQLite connection, exact/dashless matching, and reuse
+  of the desktop persistence lookup for regular and exception locations.
 - `static/scanner.js`: camera lifecycle, crop/scale, 15 FPS scheduling, one-frame
   backpressure, duplicate suppression and acknowledged/retryable delivery.
 - `static/worker.js` and `processing.js`: phone-side decoder and convolution.
@@ -125,13 +155,15 @@ Each request uses the current session token from the phone-link fragment.
   archive integrity verified before extraction; no CDN requests at runtime.
 - `../tests/test_barcode_web.py`: live HTTP validation, persistence, retries,
   unauthorized requests and private-key/path access checks.
+- `../tests/test_barcode_lookup.py`: exact/dashless IDs, alias collisions,
+  catalog/staged exceptions, multiple locations and enforced read-only access.
 - `../tests/test_barcode_web.js`: bundled WASM/worker decoding of synthetic
   Code 128 and QR images, filter correctness, and 15-frame workload timing.
 
 Run from the repository root:
 
 ```powershell
-& '.\.venv\Scripts\python.exe' -m unittest tests.test_barcode_web
+& '.\.venv\Scripts\python.exe' -m unittest tests.test_barcode_web tests.test_barcode_lookup
 node tests/test_barcode_web.js
 & '.\.venv\Scripts\python.exe' -m unittest tests.test_barcode_web_browser
 ```

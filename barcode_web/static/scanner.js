@@ -6,6 +6,9 @@ const status = document.querySelector("#status");
 const delivery = document.querySelector("#delivery");
 const retry = document.querySelector("#retry");
 const filter = document.querySelector("#filter");
+const lookupPanel = document.querySelector("#lookup");
+const product = document.querySelector("#product");
+const locations = document.querySelector("#locations");
 const aim = document.querySelector(".aim");
 const canvas = document.createElement("canvas");
 const context = canvas.getContext("2d", { willReadFrequently: true });
@@ -52,6 +55,7 @@ async function sendPending() {
     });
     const answer = await response.json();
     if (!response.ok || !answer.ok) throw new Error(answer.error || "Laptop rejected the scan.");
+    showLookup(answer.lookup);
     pending = null;
     sessionStorage.removeItem("pending-scan");
     delivery.textContent = "Received by laptop.";
@@ -63,6 +67,21 @@ async function sendPending() {
     retry.hidden = false;
   } finally {
     sending = false;
+  }
+}
+
+function showLookup(found) {
+  lookupPanel.hidden = false;
+  product.textContent = found?.product_id ? `${found.product_id} · ${found.product_name}` : "";
+  locations.className = "";
+  if (found?.status === "found") {
+    locations.textContent = found.locations.join("\n");
+    locations.className = "success";
+  } else {
+    locations.textContent = found?.status === "unassigned" ? "Product found; no saved location." :
+      found?.status === "not_found" ? "Barcode not found in the warehouse." :
+      found?.status === "ambiguous" ? `Barcode matches multiple IDs: ${found.matches.join(", ")}.` :
+      "Warehouse lookup is not configured on the laptop.";
   }
 }
 
@@ -91,6 +110,10 @@ function receiveFrame(event) {
   lastSeen = now;
   if (repeated || pending) return;
   document.querySelector("#result").textContent = found.text;
+  lookupPanel.hidden = false;
+  product.textContent = "";
+  locations.textContent = "Looking up location…";
+  locations.className = "";
   pending = { id: crypto.randomUUID(), text: found.text, format: found.format };
   sessionStorage.setItem("pending-scan", JSON.stringify(pending));
   void sendPending();
