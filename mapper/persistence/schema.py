@@ -83,6 +83,11 @@ class SchemaOperations:
                     snapshot TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS stock_modifications (
+                    product_id TEXT PRIMARY KEY,
+                    modified_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS exception_placements (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
                     product_id   TEXT NOT NULL,

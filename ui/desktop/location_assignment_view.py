@@ -705,7 +705,7 @@ class LocationAssignmentView(ttk.Frame):
         body.columnconfigure(0, weight=1)
         self.contents_tree = ttk.Treeview(
             body,
-            columns=("product_id", "product_name", "stock_qty", "assigned_at"),
+            columns=("product_id", "product_name", "stock_qty", "assigned_at", "stock_modified_at"),
             show="headings",
             selectmode="extended",
             height=18,
@@ -714,12 +714,14 @@ class LocationAssignmentView(ttk.Frame):
         self.contents_tree.heading("product_name", text="Product name")
         self.contents_tree.heading("stock_qty", text="Stock")
         self.contents_tree.heading("assigned_at", text="Added to shelf")
+        self.contents_tree.heading("stock_modified_at", text="Latest stock modification")
         self.contents_tree.column("product_id", width=110, minwidth=80, stretch=False)
         self.contents_tree.column("product_name", width=180, minwidth=100)
         self.contents_tree.column(
             "stock_qty", width=60, minwidth=45, anchor="e", stretch=False
         )
         self.contents_tree.column("assigned_at", width=205, minwidth=160, stretch=False)
+        self.contents_tree.column("stock_modified_at", width=205, minwidth=180, stretch=False)
         contents_scroll = ttk.Scrollbar(
             body, orient="vertical", command=self.contents_tree.yview
         )

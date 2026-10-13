@@ -269,10 +269,13 @@ class AssignmentActions:
             minvalue=0,
             maxvalue=9_223_372_036_854_775_807,
         )
-        if quantity is None:
+        if quantity is None or quantity == item.stock_qty:
             return
         try:
-            self.database.update_on_hand_stock(product_id, quantity)
+            self.database.update_on_hand_stock(
+                product_id, quantity,
+                modified_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+            )
         except Exception as error:
             messagebox.showerror(
                 "Stock could not be updated", str(error), parent=self.root
@@ -397,6 +400,7 @@ class AssignmentActions:
             f"Loaded {address.slot_name} · {len(contents)} product(s)"
         )
         rows = []
+        stock_modifications = self.database.get_slot_stock_modifications(address.slot_id)
         for product_id, product_name, placement in contents:
             rows.append((
                 f"saved::{product_id}",
@@ -409,6 +413,7 @@ class AssignmentActions:
                     placement.assigned_at.replace("T", " ")
                     if placement.assigned_at
                     else "Unknown",
+                    stock_modifications.get(product_id, "").replace("T", " "),
                 ),
                 (),
             ))
@@ -863,6 +868,7 @@ class AssignmentActions:
                 product_id,
                 quantity,
                 expected_slot_id=address.slot_id,
+                modified_at=datetime.now().astimezone().isoformat(timespec="seconds"),
             )
         except Exception as error:
             messagebox.showerror(
