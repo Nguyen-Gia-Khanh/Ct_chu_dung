@@ -1,10 +1,11 @@
 # Phone barcode scanner
 
-This is a standalone LAN website. It sends decoded barcode **text** to the
-laptop, queries the existing warehouse database read-only, and returns the
-product name, stored ID, and all saved locations to the phone. No Docker,
-Node server, or additional Python packages are required. It uses the project's
-existing `.venv` and Python's standard library.
+This is a standalone LAN website. The phone sends camera frames to the laptop
+for image processing and decoding. The laptop queries the existing warehouse
+database read-only and returns the product name, stored ID, and all saved
+locations to the phone. It uses the project's existing `.venv`, OpenCV and
+native ZXing. Run `setup_venv.cmd` after updating dependencies, then restart
+the scanner launcher and reload the phone page.
 
 ## Start and stop
 
@@ -46,8 +47,8 @@ over localhost HTTP and does not require certificate installation. If you want
 to test the scanner on the laptop itself, open
 `http://localhost:8766/scan#TOKEN`, replacing TOKEN with the fragment from a
 current phone link. Localhost is allowed to use the camera without HTTPS.
-Subsequent launches need no internet; JavaScript and the decoder's WASM are
-served locally. Use Chrome or Safari directly, rather than a messaging app's
+Subsequent launches need no internet; JavaScript is served locally and decoding
+runs on the laptop. Use Chrome or Safari directly, rather than a messaging app's
 embedded browser.
 
 ## Phone certificates and network access
@@ -123,15 +124,24 @@ results. A database failure keeps the scan pending on the phone for retry.
 
 The phone requests a rear camera preview at 30 FPS, with a 15 FPS minimum.
 Scanning targets **15 selected frames per second**, independently of preview.
-Frames are cropped to the aiming box, scaled uniformly to at most 960 × 480,
-and transferred to a phone-side Web Worker. It converts to grayscale, applies
-a gentle sharpening convolution on alternate frames when enabled, and decodes
-with ZXing-C++ WASM. Unsharpened frames remain in the cycle because sharpening
-can damage some barcodes. Rotation/detection is handled by ZXing; there is no
-custom perspective-rectification stage or claim to recover blurred detail.
+The whole camera view is scaled uniformly to at most 1280 × 720 and encoded
+as JPEG at 92% quality. The phone sends it to authenticated `POST /api/frames`
+over local HTTPS. Image processing and native ZXing decoding run on the laptop;
+the current scanner page loads no Web Worker or WASM decoder.
 
-There is at most **one frame in flight**. Slower phones skip processing frames
-instead of building a queue. The measured scan rate and processing time are
+The laptop tries the untouched view first. With **Enhance red labels** enabled,
+it locates red ink in HSV and joins disconnected bars in a separate detection
+mask. It tries up to three cropped regions, leaving margins for quiet zones,
+then corrects a four-corner ink outline or deskews its enclosing rectangle.
+It tries the green channel (red ink appears dark against white), a gentle
+3 × 3 sharpening kernel, and Otsu thresholding as successive fallbacks. It also
+processes the full view if red detection misses the label. Sharpening is only
+a fallback because it can damage thin bars. Ink outlines approximate the label
+plane; wrinkled plastic, glare and blurred detail still need a clearer image.
+
+There is at most **one frame in flight per phone** and one concurrent decode
+across phones. Slower capture, Wi-Fi or decoding skips frames rather than
+building a queue. The measured scan rate and laptop processing time are
 visible; a 15 FPS target is not a hardware guarantee. The preview remains a
 normal video element. The camera stops when the tab becomes hidden and needs
 an explicit restart when you return.
@@ -141,8 +151,9 @@ EAN/UPC and ITF), QR and Data Matrix. Keep the whole code plus its blank margins
 inside the box. Hold still and avoid glare. Move a barcode out for about 1.2
 seconds before deliberately scanning the same value again.
 
-Only `{id, text, format}` JSON is sent to the laptop. No frames, photos, video,
-or processing results are uploaded. A failed delivery stays pending on the
+JPEG frames are processed in memory and discarded without logging. Frame byte
+size and dimensions are bounded before native decoding. Only decoded
+`{id, text, format}` JSON is saved through `/api/scans`. A failed delivery stays pending on the
 phone and blocks accepting another barcode until retried. Retries reuse the
 same ID; the server suppresses duplicate delivery IDs in its last 2,000 records.
 Each request uses the current session token from the phone-link fragment.
@@ -150,12 +161,15 @@ Each request uses the current session token from the phone-link fragment.
 ## Source navigation and checks
 
 - `server.py`: certificate generation, two foreground HTTP servers, bounded
-  text-only API, local receiver session, JSONL recording and shutdown.
+  frame/text APIs, local receiver session, JSONL recording and shutdown.
+- `processing.py`: JPEG validation, red-region cropping, perspective/angle
+  correction, convolution/threshold fallbacks and native ZXing decoding.
 - `lookup.py`: read-only SQLite connection, exact/dashless matching, and reuse
   of the desktop persistence lookup for regular and exception locations.
-- `static/scanner.js`: camera lifecycle, crop/scale, 15 FPS scheduling, one-frame
+- `static/scanner.js`: camera lifecycle, JPEG upload, 15 FPS scheduling, one-frame
   backpressure, duplicate suppression and acknowledged/retryable delivery.
-- `static/worker.js` and `processing.js`: phone-side decoder and convolution.
+- `static/worker.js` and `processing.js`: legacy phone-side decoder and
+  convolution, unused by the current scanner page.
 - `static/index.html`, `receiver.html`, `setup.html`, `style.css`: small scanner,
   laptop receiver and phone certificate instructions.
 - `static/vendor/`: unmodified zxing-wasm 3.1.5 reader assets and licenses. npm
@@ -164,13 +178,16 @@ Each request uses the current session token from the phone-link fragment.
   unauthorized requests and private-key/path access checks.
 - `../tests/test_barcode_lookup.py`: exact/dashless IDs, alias collisions,
   catalog/staged exceptions, multiple locations and enforced read-only access.
+- `../tests/test_barcode_processing.py`: generated red component labels on white
+  packaging with black contents, rotation/perspective/low contrast, QR fallback,
+  blank frames and rejection of invalid/oversized images.
 - `../tests/test_barcode_web.js`: bundled WASM/worker decoding of synthetic
   Code 128 and QR images, filter correctness, and 15-frame workload timing.
 
 Run from the repository root:
 
 ```powershell
-& '.\.venv\Scripts\python.exe' -m unittest tests.test_barcode_web tests.test_barcode_lookup
+& '.\.venv\Scripts\python.exe' -m unittest tests.test_barcode_processing tests.test_barcode_web tests.test_barcode_lookup
 node tests/test_barcode_web.js
 & '.\.venv\Scripts\python.exe' -m unittest tests.test_barcode_web_browser
 ```
@@ -183,5 +200,7 @@ The optional browser check needs the already installed Playwright package,
 Node, and Chrome. It uses fake video in an isolated headless Chrome process
 at Android/iPhone viewport sizes; it is not a real Safari or phone camera test.
 
-Upstream references: [ZXing WASM](https://github.com/Sec-ant/zxing-wasm),
+Upstream references: [ZXing Python](https://github.com/zxing-cpp/zxing-cpp/tree/master/wrappers/python),
+[OpenCV filtering](https://docs.opencv.org/4.13.0/d4/d86/group__imgproc__filter.html),
+[legacy ZXing WASM](https://github.com/Sec-ant/zxing-wasm),
 [mkcert mobile trust instructions](https://github.com/FiloSottile/mkcert#mobile-devices).

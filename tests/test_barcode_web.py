@@ -33,7 +33,7 @@ class BarcodeWebTests(WorkspaceTestCase):
     def request(self, method, path, payload=None, *, token="test-token", content_type="application/json"):
         connection = http.client.HTTPConnection(*self.server.server_address, timeout=5)
         headers = {"Authorization": f"Bearer {token}", "Content-Type": content_type}
-        body = json.dumps(payload).encode() if payload is not None else None
+        body = payload if isinstance(payload, bytes) else json.dumps(payload).encode() if payload is not None else None
         connection.request(method, path, body, headers)
         response = connection.getresponse()
         status, body = response.status, response.read()
@@ -90,6 +90,30 @@ class BarcodeWebTests(WorkspaceTestCase):
             status, body = self.request("POST", "/api/scans", {"id": "scan-1", "text": "001", "format": "EAN13"})
         self.assertEqual(status, 503)
         self.assertIn("Could not save", json.loads(body)["error"])
+
+    def test_frames_decode_without_saving_and_keep_auth_and_limits(self):
+        import cv2
+        import numpy as np
+        import zxingcpp
+        frame = np.asarray(zxingcpp.write_barcode(zxingcpp.BarcodeFormat.Code128, "001234567890", 660, 240))
+        jpeg = cv2.imencode(".jpg", frame)[1].tobytes()
+        status, body = self.request("POST", "/api/frames", jpeg, content_type="image/jpeg")
+        self.assertEqual(status, 200)
+        answer = json.loads(body)
+        self.assertEqual(answer["results"][0]["text"], "001234567890")
+        self.assertGreaterEqual(answer["milliseconds"], 0)
+        self.assertFalse(self.store.path.exists(), "image processing must not persist frames or scans")
+        self.assertEqual(self.request("POST", "/api/frames", jpeg, token="wrong", content_type="image/jpeg")[0], 403)
+        self.assertEqual(self.request("POST", "/api/frames", {}, content_type="application/json")[0], 415)
+        self.assertEqual(self.request("POST", "/api/frames", b"not jpeg", content_type="image/jpeg")[0], 400)
+        self.assertEqual(self.request("POST", "/api/frames", b"x" * 1_000_001, content_type="image/jpeg")[0], 413)
+        self.server.frame_slot.acquire()
+        try:
+            self.assertEqual(self.request("POST", "/api/frames", jpeg, content_type="image/jpeg")[0], 429)
+        finally:
+            self.server.frame_slot.release()
+        # Invalid requests and busy responses must not strand the processing slot.
+        self.assertEqual(self.request("POST", "/api/frames", jpeg, content_type="image/jpeg")[0], 200)
 
     def test_scan_returns_locations_and_retry_queries_current_database(self):
         import sqlite3

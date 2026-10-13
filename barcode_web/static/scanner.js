@@ -11,15 +11,15 @@ const product = document.querySelector("#product");
 const locations = document.querySelector("#locations");
 const aim = document.querySelector(".aim");
 const canvas = document.createElement("canvas");
-const context = canvas.getContext("2d", { willReadFrequently: true });
+const context = canvas.getContext("2d");
 const fragment = location.hash.slice(1);
 if (fragment) {
   sessionStorage.setItem("scanner-token", fragment);
   history.replaceState(null, "", location.pathname);
 }
 const token = sessionStorage.getItem("scanner-token");
-let stream, worker, frameHandle, active = false, starting = false, busy = false;
-let previous = 0, frames = 0, processed = 0, elapsed = 0, sampleAt = 0;
+let stream, frameRequest, frameHandle, active = false, starting = false, busy = false;
+let previous = 0, processed = 0, elapsed = 0, sampleAt = 0, generation = 0;
 let lastText = null, lastSeen = 0, pending = null, sending = false;
 
 function message(text, error = false) {
@@ -29,10 +29,10 @@ function message(text, error = false) {
 
 function stop() {
   active = false;
+  generation++;
+  frameRequest?.abort();
   if (video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(frameHandle);
   else cancelAnimationFrame(frameHandle);
-  worker?.terminate();
-  worker = null;
   stream?.getTracks().forEach(track => track.stop());
   stream = null;
   video.srcObject = null;
@@ -85,25 +85,18 @@ function showLookup(found) {
   }
 }
 
-function receiveFrame(event) {
-  if (!active || event.data.type === "ready") return;
-  busy = false;
-  if (event.data.type === "error") {
-    stop();
-    message(`Decoder failed: ${event.data.message}`, true);
-    return;
-  }
+function receiveFrame(answer) {
   processed++;
-  elapsed += event.data.milliseconds;
+  elapsed += answer.milliseconds;
   const now = performance.now();
   if (now - sampleAt >= 1000) {
     document.querySelector("#rate").textContent =
-      `${(processed * 1000 / (now - sampleAt)).toFixed(1)} scans/s · ${(elapsed / processed).toFixed(0)} ms processing · target 15`;
+      `${(processed * 1000 / (now - sampleAt)).toFixed(1)} scans/s · ${(elapsed / processed).toFixed(0)} ms on laptop`;
     processed = 0;
     elapsed = 0;
     sampleAt = now;
   }
-  const found = event.data.results[0];
+  const found = answer.results[0];
   if (!found) return;
   const repeated = found.text === lastText && now - lastSeen < 1200;
   lastText = found.text;
@@ -119,6 +112,40 @@ function receiveFrame(event) {
   void sendPending();
 }
 
+async function sendFrame(current) {
+  const request = new AbortController();
+  frameRequest = request;
+  let timer;
+  try {
+    const jpeg = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", .92));
+    if (!active || generation !== current) return;
+    if (!jpeg) throw new Error("Camera frame could not be captured.");
+    timer = setTimeout(() => request.abort(), 5000);
+    const response = await fetch("/api/frames", {
+      method: "POST", headers: { "Content-Type": "image/jpeg", Authorization: `Bearer ${token}`,
+        "X-Enhance": filter.checked ? "1" : "0" }, body: jpeg, signal: request.signal,
+    });
+    if (!active || generation !== current) return;
+    const answer = await response.json();
+    if (!active || generation !== current) return;
+    if (response.status === 429) return;
+    if (!response.ok || !answer.ok) throw new Error(answer.error || "Laptop could not process the frame.");
+    message("Scanning on laptop. Keep the whole label inside the box.");
+    receiveFrame(answer);
+  } catch (error) {
+    if (active && generation === current) {
+      message(`Frame not processed: ${error.name === "AbortError" ? "Laptop timed out." : error.message} Retrying…`, true);
+      previous = performance.now() + 1000;
+    }
+  } finally {
+    clearTimeout(timer);
+    if (generation === current) {
+      busy = false;
+      frameRequest = null;
+    }
+  }
+}
+
 function nextFrame(callback) {
   if (video.requestVideoFrameCallback) frameHandle = video.requestVideoFrameCallback(callback);
   else frameHandle = requestAnimationFrame(callback);
@@ -126,24 +153,21 @@ function nextFrame(callback) {
 
 function frame(now) {
   if (!active) return;
-  if (!busy && now >= previous - 2 && video.readyState >= 2) {
+  if (!busy && !pending && now >= previous - 2 && video.readyState >= 2) {
     // Carry the deadline forward so video-frame jitter cannot accumulate drift.
     previous = Math.max(previous + 1000 / 15, now + 1);
-    // Crop exactly the aiming box and scale uniformly; never stretch barcode bars.
-    const width = video.videoWidth * .9, height = video.videoHeight * .6;
-    const scale = Math.min(1, 960 / width, 480 / height);
+    // Send the whole view so the laptop can locate the red label and preserve quiet zones.
+    const width = video.videoWidth, height = video.videoHeight;
+    const scale = Math.min(1, 1280 / width, 720 / height);
     const targetWidth = Math.max(1, Math.round(width * scale));
     const targetHeight = Math.max(1, Math.round(height * scale));
     if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
       canvas.width = targetWidth;
       canvas.height = targetHeight;
     }
-    context.drawImage(video, video.videoWidth * .05, video.videoHeight * .2,
-                      width, height, 0, 0, canvas.width, canvas.height);
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    context.drawImage(video, 0, 0, width, height, 0, 0, canvas.width, canvas.height);
     busy = true;
-    worker.postMessage({ buffer: pixels.data.buffer, width: canvas.width, height: canvas.height,
-                         sharpen: filter.checked && (++frames % 2 === 0) }, [pixels.data.buffer]);
+    void sendFrame(generation);
   }
   nextFrame(frame);
 }
@@ -155,26 +179,19 @@ async function start() {
     return message("Camera needs trusted HTTPS. Install the certificate using the laptop's setup link, then reopen the HTTPS phone link.", true);
   }
   starting = true;
+  const current = generation;
   startButton.disabled = true;
-  message("Starting camera and decoder…");
+  message("Connecting to laptop and starting camera…");
   try {
     // Verify the session before asking permission; old links must not silently lose scans.
     const check = await fetch("/api/scans", { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5000) });
     if (!check.ok) throw new Error("Phone link expired. Open the new link from the laptop receiver.");
-    worker = new Worker("/worker.js");
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Decoder did not load. Reload the page.")), 15000);
-      worker.onerror = event => { clearTimeout(timer); reject(new Error(event.message || "Decoder failed to load.")); };
-      worker.onmessage = event => {
-        clearTimeout(timer);
-        if (event.data.type === "ready") resolve();
-        else reject(new Error(event.data.message));
-      };
-    });
+    if (generation !== current) return;
     stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: {
       facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 },
       frameRate: { ideal: 30, min: 15 },
     } });
+    if (generation !== current) { stop(); return; }
     video.srcObject = stream;
     await video.play();
     const track = stream.getVideoTracks()[0];
@@ -186,15 +203,14 @@ async function start() {
     } catch (_) { /* Device's default autofocus remains available. */ }
     video.style.maxHeight = "none";
     document.querySelector(".camera").style.maxWidth = `${Math.min(760, innerHeight * .62 * video.videoWidth / video.videoHeight)}px`;
-    worker.onmessage = receiveFrame;
-    worker.onerror = () => { stop(); message("Decoder stopped. Start the camera again.", true); };
+    if (generation !== current) { stop(); return; }
     active = true;
     lastText = null;
-    previous = frames = processed = elapsed = 0;
+    previous = processed = elapsed = 0;
     sampleAt = performance.now();
     stopButton.disabled = false;
     aim.hidden = false;
-    message("Scanning. Keep the whole barcode inside the box.");
+    message("Scanning on laptop. Keep the whole label inside the box.");
     nextFrame(frame);
     if (pending) void sendPending();
   } catch (error) {

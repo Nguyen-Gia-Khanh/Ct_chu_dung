@@ -1,4 +1,4 @@
-"""Small foreground LAN server. Only decoded text is accepted from phones."""
+"""Foreground LAN scanner: process phone images in memory and save decoded text."""
 
 from __future__ import annotations
 
@@ -168,6 +168,7 @@ class ScannerServer(ThreadingHTTPServer):
     def __init__(self, address, store, token, info, *, secure=False, lookup=None):
         self.store, self.token, self.info, self.secure = store, token, info, secure
         self.lookup = lookup
+        self.frame_slot = threading.BoundedSemaphore(1)
         self.connection_note_lock = threading.Lock()
         self.last_connection_note = None
         super().__init__(address, Handler)
@@ -266,12 +267,15 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200, (STATIC / name).read_bytes(), mime)
 
     def do_POST(self):
-        if urlsplit(self.path).path != "/api/scans":
+        path = urlsplit(self.path).path
+        if path not in ("/api/scans", "/api/frames"):
             return self.reply(404, {"error": "Not found"})
         if not self.server.secure and not ipaddress.ip_address(self.client_address[0]).is_loopback:
             return self.reply(403, {"error": "Send scans over HTTPS."})
         if not self.authorized():
             return
+        if path == "/api/frames":
+            return self.process_frame()
         if self.headers.get_content_type() != "application/json":
             return self.reply(415, {"error": "Only barcode JSON is accepted."})
         try:
@@ -297,6 +301,31 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             self.reply(503, {"error": "Could not save the scan. Check the laptop's disk."})
 
+    def process_frame(self):
+        from barcode_web.processing import MAX_FRAME_BYTES, decode_frame
+        if self.headers.get_content_type() != "image/jpeg":
+            return self.reply(415, {"error": "Send a JPEG camera frame."})
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return self.reply(400, {"error": "Invalid frame length."})
+        if not 0 < length <= MAX_FRAME_BYTES:
+            return self.reply(413, {"error": "Camera frame is too large or empty."})
+        # One native decode at a time across phones; reject excess work instead of queuing it.
+        if not self.server.frame_slot.acquire(blocking=False):
+            return self.reply(429, {"error": "Laptop is processing another frame. Retry shortly."})
+        try:
+            frame = self.rfile.read(length)
+            if len(frame) != length:
+                return self.reply(400, {"error": "Incomplete camera frame."})
+            try:
+                answer = decode_frame(frame, enhance=self.headers.get("X-Enhance", "1") != "0")
+            except ValueError as error:
+                return self.reply(400, {"error": str(error)})
+            self.reply(200, {"ok": True, **answer})
+        finally:
+            self.server.frame_slot.release()
+
 
 def main():
     from utils.runtime import ensure_repo_venv
@@ -308,6 +337,10 @@ def main():
     parser.add_argument("--db", type=Path, help="Existing warehouse SQLite database (opened read-only)")
     parser.add_argument("--lan-ip", help="Choose one of this laptop's LAN IPv4 addresses explicitly")
     args = parser.parse_args()
+    try:
+        from barcode_web import processing  # Verify native dependencies before opening servers.
+    except ImportError as error:
+        raise SystemExit("Scanner image processing is missing. Run setup_venv.cmd, then restart.") from error
     addresses = lan_addresses()
     try:
         if args.lan_ip and args.lan_ip not in addresses:

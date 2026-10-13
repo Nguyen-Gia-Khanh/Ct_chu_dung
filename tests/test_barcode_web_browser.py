@@ -40,7 +40,17 @@ class BarcodeBrowserTest(WorkspaceTestCase):
             for width, height in [(393, 851), (375, 812)]:
                 page = browser.new_page(viewport={"width": width, "height": height})
                 errors = []
+                uploaded_frames = []
+                requested_workers = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
+                page.on("request", lambda request: requested_workers.append(request.url) if "/worker.js" in request.url else None)
+                def frame_upload(route):
+                    uploaded_frames.append(route.request.post_data_buffer)
+                    if width == 393 and len(uploaded_frames) == 1:
+                        route.abort()
+                    else:
+                        route.continue_()
+                page.route("**/api/frames", frame_upload)
                 page.add_init_script("""
                     const fixtures = FIXTURES;
                     const source = document.createElement('canvas');
@@ -82,6 +92,9 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 if width == 393:
                     self.assertEqual(attempts[0], attempts[1], "retry must reuse the delivery ID and text")
                 self.assertEqual(page.locator("#result").inner_text(), "001234567890")
+                self.assertTrue(uploaded_frames)
+                self.assertTrue(all(frame.startswith(b"\xff\xd8") for frame in uploaded_frames))
+                self.assertFalse(requested_workers, "the phone must not load its old WASM decoding worker")
                 self.assertIn("00123-456-7890", page.locator("#product").inner_text())
                 self.assertEqual(page.locator("#locations").inner_text(), "L1-1A2-3\nL2-2B4-5")
                 self.assertEqual(page.evaluate("location.hash"), "")
@@ -96,6 +109,9 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 self.assertEqual(store.recent()[0]["text"], "warehouse-test-001")
                 self.assertEqual(page.locator("#locations").inner_text(), "Barcode not found in the warehouse.")
                 page.get_by_role("button", name="Stop", exact=True).click()
+                frame_count = len(uploaded_frames)
+                page.wait_for_timeout(250)
+                self.assertEqual(len(uploaded_frames), frame_count, "stopping must halt frame uploads")
                 self.assertEqual(page.evaluate("window.fakeStream.getTracks().every(t => t.readyState === 'ended')"), True)
                 self.assertTrue(page.get_by_role("button", name="Start camera").is_enabled())
                 self.assertFalse(errors, errors)
