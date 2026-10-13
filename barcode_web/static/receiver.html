@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Received barcodes</title>
+<link rel="stylesheet" href="/style.css">
+<h1>Received barcodes</h1>
+<p>Open a phone link below on the same Wi-Fi. First install the HTTPS certificate on that phone using its setup link.</p>
+<ul id="links"></ul>
+<p id="status" role="status">Connecting…</p>
+<table><thead><tr><th>Time</th><th>Barcode content</th></tr></thead><tbody id="scans"></tbody></table>
+<p class="muted">Close the server's terminal tab/window to stop it. Closing this browser tab leaves the server running. Scans are saved to data/barcode_web/scans.jsonl.</p>
+<script>
+const status = document.querySelector('#status');
+let token;
+async function refresh() {
+  try {
+    if (!token) {
+      const response = await fetch('/api/session');
+      if (!response.ok) throw new Error('Open this receiver on the laptop.');
+      const session = await response.json();
+      token = session.token;
+      const links = document.querySelector('#links');
+      links.replaceChildren();
+      session.phone_urls.forEach((url, i) => {
+        const item = document.createElement('li');
+        const phone = document.createElement('a');
+        phone.href = url; phone.textContent = url;
+        const setup = document.createElement('a');
+        setup.href = session.setup_urls[i]; setup.textContent = 'First-use certificate setup';
+        const line = document.createElement('small'); line.append(setup);
+        item.append(phone, line); links.append(item);
+      });
+      if (!session.phone_urls.length) links.textContent = 'No LAN address found. Connect the laptop to your network and restart.';
+    }
+    const response = await fetch('/api/scans', { headers: { Authorization: `Bearer ${token}` } });
+    if (response.status === 403) token = null;
+    if (!response.ok) throw new Error('Could not read scans.');
+    const scans = await response.json();
+    const rows = scans.map(scan => {
+      const row = document.createElement('tr');
+      const time = document.createElement('td'); time.textContent = new Date(scan.received_at).toLocaleTimeString();
+      const value = document.createElement('td'); value.className = 'value'; value.textContent = scan.text;
+      const format = document.createElement('small'); format.textContent = scan.format;
+      value.append(format); row.append(time, value); return row;
+    });
+    document.querySelector('#scans').replaceChildren(...rows);
+    status.textContent = scans.length ? 'Connected. Latest scans appear first.' : 'Connected. Waiting for a barcode.';
+    status.className = 'success';
+  } catch (error) {
+    status.textContent = `Disconnected: ${error.message}`;
+    status.className = 'error';
+  } finally { setTimeout(refresh, 1500); }
+}
+refresh();
+</script>
+</html>

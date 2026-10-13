@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Scanner HTTPS setup</title>
+<link rel="stylesheet" href="/style.css">
+<h1>First-use phone setup</h1>
+<p>The camera requires a trusted HTTPS connection to your laptop. Install this laptop's local certificate once on each phone.</p>
+<p><a href="/rootCA.cer">Download laptop CA certificate</a></p>
+<p><strong>Android / Chrome</strong></p>
+<ol><li>Download the certificate above.</li><li>In Settings, search for “Install a certificate”. Choose <strong>CA certificate</strong> (usually Security → Encryption &amp; credentials → Install a certificate). Select the downloaded file and confirm. Menu names vary by phone.</li><li>Open the current <strong>HTTPS phone link</strong> from the laptop receiver in Chrome. Press Start camera and allow camera access.</li></ol>
+<p><strong>iPhone / Safari</strong></p>
+<ol><li>Open this setup page in Safari and download the certificate. Allow the configuration profile.</li><li>Open Settings → General → VPN &amp; Device Management (or Profile Downloaded). Install the mkcert profile.</li><li>Open Settings → General → About → Certificate Trust Settings. Enable full trust for this mkcert root.</li><li>Open the current <strong>HTTPS phone link</strong> from the laptop receiver in Safari. Press Start camera and allow camera access.</li></ol>
+<p>Only install the certificate from your own laptop. A trusted CA can issue certificates your phone accepts; protect the laptop's private keys. You can remove the certificate from Settings when you stop using this scanner.</p>
+<p class="muted">This HTTP page is only for certificate setup. Camera scanning and sending barcode text use HTTPS. The server never serves private keys.</p>
+</html>
