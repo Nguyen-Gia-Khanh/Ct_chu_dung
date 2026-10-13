@@ -115,6 +115,16 @@ catalog-only products, and staged exception products. Product names and all
 distinct regular/exception locations use the existing `find_product_locations`
 query. Saved location labels are returned as stored, one per line on the phone.
 
+Enable **Include cell contents** on the phone before scanning to request a table
+for every saved location. Each table lists all barcodes in that cell, their
+product names, and stock, including catalog-only and staged exceptions. Each
+barcode appears once per cell; quantities across regular/exception placements
+in the same cell are summed, with unknown stock shown as a dash. The checkbox
+starts unchecked. When unchecked, the server skips cell-content queries and
+returns only the normal product/location lookup. Changing the checkbox applies
+to the next scan or retry; it clears any previous cell tables immediately.
+Cell data and this request option are not saved in the scan log.
+
 Each scan/retry queries current SQLite data; assignments saved in the desktop
 app become visible on the next lookup without restarting the web server.
 Unknown products and known products without a saved location are separate

@@ -9,6 +9,8 @@ const filter = document.querySelector("#filter");
 const lookupPanel = document.querySelector("#lookup");
 const product = document.querySelector("#product");
 const locations = document.querySelector("#locations");
+const cellData = document.querySelector("#cell-data");
+const cells = document.querySelector("#cells");
 const aim = document.querySelector(".aim");
 const canvas = document.createElement("canvas");
 const context = canvas.getContext("2d");
@@ -51,7 +53,7 @@ async function sendPending() {
   try {
     const response = await fetch("/api/scans", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify(pending), signal: AbortSignal.timeout(5000),
+      body: JSON.stringify({ ...pending, include_cell_contents: cellData.checked }), signal: AbortSignal.timeout(5000),
     });
     const answer = await response.json();
     if (!response.ok || !answer.ok) throw new Error(answer.error || "Laptop rejected the scan.");
@@ -71,12 +73,37 @@ async function sendPending() {
 }
 
 function showLookup(found) {
+  cells.replaceChildren();
+  cells.hidden = true;
   lookupPanel.hidden = false;
   product.textContent = found?.product_id ? `${found.product_id} · ${found.product_name}` : "";
   locations.className = "";
   if (found?.status === "found") {
     locations.textContent = found.locations.join("\n");
     locations.className = "success";
+    if (cellData.checked && found.cells?.length) {
+      for (const cell of found.cells) {
+        const table = document.createElement("table");
+        const caption = table.createCaption();
+        caption.textContent = cell.location;
+        const header = table.createTHead().insertRow();
+        for (const label of ["Barcode", "Product", "Stock"]) {
+          const th = document.createElement("th");
+          th.scope = "col";
+          th.textContent = label;
+          header.append(th);
+        }
+        const body = table.createTBody();
+        for (const item of cell.products) {
+          const row = body.insertRow();
+          for (const value of [item.product_id, item.product_name, item.stock_qty ?? "—"]) {
+            row.insertCell().textContent = value;
+          }
+        }
+        cells.append(table);
+      }
+      cells.hidden = false;
+    }
   } else {
     locations.textContent = found?.status === "unassigned" ? "Product found; no saved location." :
       found?.status === "not_found" ? "Barcode not found in the warehouse." :
@@ -107,6 +134,8 @@ function receiveFrame(answer) {
   product.textContent = "";
   locations.textContent = "Looking up location…";
   locations.className = "";
+  cells.replaceChildren();
+  cells.hidden = true;
   pending = { id: crypto.randomUUID(), text: found.text, format: found.format };
   sessionStorage.setItem("pending-scan", JSON.stringify(pending));
   void sendPending();
@@ -224,6 +253,10 @@ async function start() {
 startButton.addEventListener("click", start);
 stopButton.addEventListener("click", () => { stop(); message("Camera stopped."); });
 retry.addEventListener("click", sendPending);
+cellData.addEventListener("change", () => {
+  cells.replaceChildren();
+  cells.hidden = true;
+});
 addEventListener("pagehide", stop);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && active) { stop(); message("Camera paused while this tab was hidden. Press Start camera to resume."); }

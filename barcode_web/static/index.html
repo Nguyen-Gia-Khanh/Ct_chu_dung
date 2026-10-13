@@ -10,6 +10,7 @@
   <button id="start" class="primary">Start camera</button>
   <button id="stop" disabled>Stop</button>
   <label><input id="filter" type="checkbox" checked> Enhance red labels</label>
+  <label><input id="cell-data" type="checkbox"> Include cell contents</label>
 </div>
 <p id="status" role="status" aria-live="polite">Open the current phone link from the laptop receiver.</p>
 <p id="rate" class="muted">Laptop processing. Camera preview runs independently.</p>
@@ -17,6 +18,7 @@
 <section id="lookup" hidden aria-live="polite">
   <p id="product"></p>
   <output id="locations" aria-label="Warehouse locations"></output>
+  <div id="cells" hidden></div>
 </section>
 <p id="delivery" role="status" aria-live="polite"></p>
 <button id="retry" hidden>Retry sending</button>

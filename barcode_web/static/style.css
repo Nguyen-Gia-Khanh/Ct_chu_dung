@@ -22,4 +22,8 @@ table { width: 100%; border-collapse: collapse; background: white; }
 td, th { text-align: left; padding: 10px; border-bottom: 1px solid #d5d9df; vertical-align: top; }
 td:first-child { white-space: nowrap; }
 small { display: block; }
+#cells table { margin-top: 16px; table-layout: fixed; }
+#cells caption { text-align: left; font-weight: 600; padding: 8px 0; }
+#cells td, #cells th { white-space: normal; overflow-wrap: anywhere; padding: 8px; }
+#cells th:last-child { width: 3em; }
 [hidden] { display: none !important; }

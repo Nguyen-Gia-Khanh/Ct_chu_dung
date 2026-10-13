@@ -139,6 +139,24 @@ class BarcodeWebTests(WorkspaceTestCase):
         self.assertFalse(self.store.recent())
         self.assertEqual(self.request("POST", "/api/scans", payload)[0], 200)
 
+    def test_optional_cell_data_is_validated_current_and_not_saved(self):
+        import sqlite3
+        payload = {"id": "cells-1", "text": "001234567890", "format": "Code128"}
+        for invalid in (None, "true", 1, [], {}):
+            self.assertEqual(self.request("POST", "/api/scans", {
+                **payload, "include_cell_contents": invalid})[0], 400)
+        for flag in (False, True):
+            status, body = self.request("POST", "/api/scans", {**payload, "include_cell_contents": flag})
+            self.assertEqual(status, 200)
+            self.assertEqual("cells" in json.loads(body)["lookup"], flag)
+        self.assertNotIn("include_cell_contents", self.store.recent()[0])
+        with closing(sqlite3.connect(self.server.lookup.path)) as connection, connection:
+            connection.execute("DELETE FROM exception_placements WHERE product_id='CAT-001'")
+        answer = json.loads(self.request("POST", "/api/scans", {**payload, "include_cell_contents": True})[1])
+        self.assertTrue(answer["duplicate"])
+        self.assertEqual(len(answer["lookup"]["cells"][1]["products"]), 1)
+        self.assertEqual(len(self.store.recent()), 1)
+
     def test_one_phone_address_with_private_network_preference_and_fallback(self):
         import os
         from unittest.mock import patch, Mock

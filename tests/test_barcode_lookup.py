@@ -62,7 +62,7 @@ class WarehouseLookupTests(WorkspaceTestCase):
 
     def test_read_only_and_current_assignments(self):
         before = hashlib.sha256(self.path.read_bytes()).digest()
-        self.lookup.find("001234567890")
+        self.lookup.find("001234567890", include_cell_contents=True)
         with closing(self.lookup.connect()) as connection:
             with self.assertRaises(sqlite3.OperationalError):
                 connection.execute("DELETE FROM placements")
@@ -75,3 +75,27 @@ class WarehouseLookupTests(WorkspaceTestCase):
         with self.assertRaises(sqlite3.OperationalError):
             WarehouseLookup(missing)
         self.assertFalse(missing.exists())
+
+    def test_optional_cell_contents_include_all_barcodes_and_names(self):
+        from unittest.mock import patch
+        with patch.object(self.lookup, "cell_contents", wraps=self.lookup.cell_contents) as contents:
+            self.assertNotIn("cells", self.lookup.find("001234567890"))
+            contents.assert_not_called()
+        found = self.lookup.find("001234567890", include_cell_contents=True)
+        self.assertEqual(found["cells"], [
+            {"location": "L1-1A2-3", "products": [
+                {"product_id": "00123-456-7890", "product_name": "Test part", "stock_qty": 10},
+            ]},
+            {"location": "L2-2B4-5", "products": [
+                {"product_id": "00123-456-7890", "product_name": "Test part", "stock_qty": 2},
+                {"product_id": "CAT-001", "product_name": "Catalog exception", "stock_qty": 3},
+            ]},
+        ])
+        self.assertEqual(self.lookup.find("STAGE01", include_cell_contents=True)["cells"][0]["products"], [
+            {"product_id": "STAGE-01", "product_name": "Staged exception", "stock_qty": 1},
+        ])
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            connection.execute("UPDATE exception_placements SET stock_qty=NULL WHERE product_id='CAT-001'")
+        self.assertIsNone(self.lookup.find("CAT001", include_cell_contents=True)["cells"][0]["products"][1]["stock_qty"])
+        for barcode in ("unknown", "NOLOC", "AAB"):
+            self.assertEqual(self.lookup.find(barcode, include_cell_contents=True)["cells"], [])

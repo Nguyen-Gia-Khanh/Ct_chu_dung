@@ -283,7 +283,10 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 < length <= 32768:
                 return self.reply(413, {"error": "Barcode request is too large or empty."})
             payload = json.loads(self.rfile.read(length))
-            if (not isinstance(payload, dict) or set(payload) != {"id", "text", "format"}
+            if not isinstance(payload, dict):
+                return self.reply(400, {"error": "Invalid barcode data."})
+            include_cell_contents = payload.pop("include_cell_contents", False)
+            if (type(include_cell_contents) is not bool or set(payload) != {"id", "text", "format"}
                     or not all(isinstance(value, str) for value in payload.values())
                     or not re.fullmatch(r"[A-Za-z0-9-]{1,64}", payload["id"])
                     or not 0 < len(payload["text"]) <= 4096
@@ -292,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeError):
             return self.reply(400, {"error": "Invalid JSON."})
         try:
-            lookup = (self.server.lookup.find(payload["text"]) if self.server.lookup else
+            lookup = (self.server.lookup.find(payload["text"], include_cell_contents=include_cell_contents) if self.server.lookup else
                       {"status": "unavailable", "product_id": None, "product_name": "", "locations": []})
         except sqlite3.Error:
             return self.reply(503, {"error": "Warehouse lookup failed. Check the database on the laptop, then retry."})

@@ -73,7 +73,10 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                     };
                 """.replace("FIXTURES", fixtures))
                 page.goto(base + "/scan#browser-test")
+                cell_option = page.get_by_role("checkbox", name="Include cell contents")
+                self.assertFalse(cell_option.is_checked())
                 if width == 393:
+                    cell_option.check()
                     attempts = []
                     def fail_first_post(route):
                         if route.request.method == "POST":
@@ -97,17 +100,29 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 self.assertFalse(requested_workers, "the phone must not load its old WASM decoding worker")
                 self.assertIn("00123-456-7890", page.locator("#product").inner_text())
                 self.assertEqual(page.locator("#locations").inner_text(), "L1-1A2-3\nL2-2B4-5")
+                if width == 393:
+                    self.assertTrue(attempts[0]["include_cell_contents"])
+                    self.assertEqual(page.locator("#cells caption").all_text_contents(), ["L1-1A2-3", "L2-2B4-5"])
+                    self.assertEqual(page.locator("#cells tbody tr").count(), 3)
+                    self.assertIn("CAT-001", page.locator("#cells").inner_text())
+                    self.assertIn("Catalog exception", page.locator("#cells").inner_text())
+                else:
+                    self.assertTrue(page.locator("#cells").is_hidden())
                 self.assertEqual(page.evaluate("location.hash"), "")
                 page.wait_for_timeout(2500)
                 self.assertEqual(len(store.recent()), 1 if width == 393 else 3)
                 self.assertEqual(page.evaluate("document.body.scrollWidth <= innerWidth"), True)
                 print(f"Chrome {width}x{height}: {page.locator('#rate').inner_text()}")
-                page.screenshot(path=str(preview / f"scanner-{width}.png"))
+                page.screenshot(path=str(preview / f"scanner-{width}.png"), full_page=True)
+                cell_option.uncheck()
+                self.assertTrue(page.locator("#cells").is_hidden())
+                self.assertEqual(page.locator("#cells table").count(), 0)
                 page.evaluate("window.fakeLabel = 'qr'")
                 page.wait_for_function("document.querySelector('#result').textContent === 'warehouse-test-001'")
                 page.wait_for_function("document.querySelector('#delivery').textContent === 'Received by laptop.'")
                 self.assertEqual(store.recent()[0]["text"], "warehouse-test-001")
                 self.assertEqual(page.locator("#locations").inner_text(), "Barcode not found in the warehouse.")
+                self.assertTrue(page.locator("#cells").is_hidden())
                 page.get_by_role("button", name="Stop", exact=True).click()
                 frame_count = len(uploaded_frames)
                 page.wait_for_timeout(250)
