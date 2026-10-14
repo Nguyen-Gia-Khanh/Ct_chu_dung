@@ -1,8 +1,7 @@
-"""Read images beside this script in images/ and export an eight-column Excel file."""
+"""Read images beside this script in images/ and export an Excel file with a filterable flagged column."""
 
 from bisect import bisect_right
 from datetime import datetime
-import json
 import os
 from pathlib import Path
 import re
@@ -15,7 +14,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 IMAGE_FOLDER = "images"
 OUTPUT_FILENAME = ""  # Empty: timestamped workbook beside this script.
-MIN_CONFIDENCE = 0.90
+MIN_CONFIDENCE = 0.80  # Flag cells below this OCR score (0-1).
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
@@ -48,8 +47,6 @@ def assemble(column_results, row_edges, min_confidence):
                 issues.append({"column": COLUMNS[column], "issue": "outside_rows", "token": token})
                 continue
             cells[row][column].append(token)
-            if token["score"] < min_confidence:
-                issues.append({"row": row + 1, "column": COLUMNS[column], "issue": "low_confidence", "token": token})
             # Small overlap from detector padding is tolerated; larger overlap needs review.
             margin = max(2, (y1 - y0) * 0.15)
             if y0 < row_edges[row] - margin or y1 > row_edges[row + 1] + margin:
@@ -61,7 +58,12 @@ def assemble(column_results, row_edges, min_confidence):
             # ponytail: near-horizontal text only; clustered baselines for more complex layouts.
             tokens.sort(key=lambda t: (round(t["box"][1] / 5), t["box"][0]))
             record[name] = " ".join(t["text"] for t in tokens).strip()
-            scores[name] = min((t["score"] for t in tokens), default=None)
+            # Weight each text line by its length, so tiny uncertain fragments do not dominate.
+            characters = sum(len(t["text"].strip()) for t in tokens)
+            scores[name] = sum(t["score"] * len(t["text"].strip()) for t in tokens) / characters if characters else None
+            if scores[name] is not None and scores[name] < min_confidence:
+                issues.append({"row": row_number, "column": name, "issue": "low_confidence",
+                               "score": scores[name], "threshold": min_confidence})
         if not record["index"].isdigit():
             issues.append({"row": row_number, "column": "index", "issue": "missing_or_non_numeric_index"})
         for name in ("time", "date", "id", "content", "total_raw"):
@@ -77,12 +79,10 @@ def assemble(column_results, row_edges, min_confidence):
     for row, (previous, current) in enumerate(zip(indices, indices[1:]), 2):
         if previous is not None and current is not None and current != previous + 1:
             issues.append({"row": row, "issue": "index_gap_or_duplicate", "previous": previous, "current": current})
-    return {"columns": list(COLUMNS), "rows": records, "confidence": confidence,
-            "issues": issues, "ocr_tokens": column_results,
-            "column_8_meaning": "unverified", "amounts_normalized": False}
+    return {"rows": records, "confidence": confidence, "issues": issues}
 
 
-def write_excel(path, results, files):
+def write_excel(path, results, failures=()):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -91,53 +91,43 @@ def write_excel(path, results, files):
     workbook = Workbook()
     data = workbook.active
     data.title = "Data"
-    data.append(COLUMNS)
-    review = workbook.create_sheet("Review")
-    review.append(("source_file", "excel_row", "column", "issue", "raw_text", "confidence"))
-    log = workbook.create_sheet("Files")
-    log.append(("source_file", "status", "first_excel_row", "last_excel_row", "rows", "review_flags", "error"))
-
-    def put_text(sheet, row, column, value):
-        cell = sheet.cell(row, column, str(value) if value is not None else None)
-        cell.data_type = "s"  # Preserve IDs and prevent OCR strings becoming formulas.
-        cell.number_format = "@"
-
+    data.append((*COLUMNS, "flagged"))
     for result in results:
-        start = data.max_row + 1
-        for record in result["rows"]:
-            row = data.max_row + 1
-            for column, name in enumerate(COLUMNS, 1):
-                put_text(data, row, column, record[name] or None)
-            data.row_dimensions[row].height = min(160, max(30, 15 * (len(record["content"]) // 75 + 1)))
+        flags = {}
         for issue in result["issues"]:
-            excel_row = start + issue["row"] - 1 if "row" in issue else None
-            token = issue.get("token", {})
-            values = (result["source"], excel_row, issue.get("column", ""), issue["issue"], token.get("text", ""), token.get("score"))
-            review.append(values)
-            for column in (1, 3, 4, 5):
-                put_text(review, review.max_row, column, values[column - 1])
-            if excel_row:
-                flagged_columns = [COLUMNS.index(issue["column"]) + 1] if issue.get("column") in COLUMNS else [6, 7]
-                for column in flagged_columns:
-                    data.cell(excel_row, column).fill = PatternFill("solid", fgColor="FFF2CC")
-    for entry in files:
-        log.append(tuple(entry.get(name) for name in ("source_file", "status", "first_excel_row", "last_excel_row", "rows", "review_flags", "error")))
-        for column in (1, 2, 7):
-            put_text(log, log.max_row, column, log.cell(log.max_row, column).value)
-    for sheet, widths in ((data, (9, 24, 16, 24, 78, 20, 20, 20)),
-                          (review, (35, 14, 18, 36, 65, 16)), (log, (35, 18, 18, 18, 12, 16, 65))):
-        sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = sheet.dimensions
-        sheet.row_dimensions[1].height = 24
-        for cell in sheet[1]:
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill("solid", fgColor="243746")
-        for column, width in enumerate(widths, 1):
-            sheet.column_dimensions[sheet.cell(1, column).column_letter].width = width
-        for row in sheet.iter_rows(min_row=2):
-            for cell in row:
-                cell.alignment = Alignment(vertical="top", wrap_text=True)
-    # Write completely before publishing the workbook beside the script.
+            message = issue["issue"].replace("_", " ")
+            if issue.get("column"):
+                message = issue["column"] + ": " + message
+            if issue["issue"] == "low_confidence":
+                message += f" {issue['score']:.2f} < {issue['threshold']:.2f}"
+            if "row" not in issue:
+                message += ": " + issue.get("token", {}).get("text", "")
+            flags.setdefault(issue.get("row"), []).append(message)
+        for number, record in enumerate(result["rows"], 1):
+            messages = flags.get(number, [])
+            flagged = result["source"] + ": " + "; ".join(dict.fromkeys(messages)) if messages else None
+            data.append((*[record[name] or None for name in COLUMNS], flagged))
+            data.row_dimensions[data.max_row].height = min(160, max(30, 15 * (len(record["content"]) // 75 + 1)))
+        if flags.get(None):
+            data.append((*[None for _ in COLUMNS], result["source"] + ": " + "; ".join(dict.fromkeys(flags[None]))))
+    # Keep failed photos visible when filtering flagged, without creating another sheet.
+    for failure in failures:
+        data.append((*[None for _ in COLUMNS], failure["source_file"] + ": " + failure["error"]))
+    data.freeze_panes = "A2"
+    data.auto_filter.ref = data.dimensions
+    data.row_dimensions[1].height = 24
+    for cell in data[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="243746")
+    for column, width in enumerate((9, 24, 16, 24, 78, 20, 20, 20, 100), 1):
+        data.column_dimensions[data.cell(1, column).column_letter].width = width
+    for row in data.iter_rows(min_row=2):
+        for cell in row:
+            cell.data_type = "s"  # Preserve IDs and prevent OCR strings becoming formulas.
+            cell.number_format = "@"
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+        if row[-1].value:
+            row[-1].fill = PatternFill("solid", fgColor="FFF2CC")
     temporary = path.with_name(path.stem + ".tmp_" + uuid4().hex + ".xlsx")
     try:
         workbook.save(temporary)
@@ -270,18 +260,6 @@ def detect_rows(column_results, height):
     return rows
 
 
-def preview(table, columns, rows, destination):
-    from PIL import ImageDraw
-
-    overlay = table.copy()
-    draw = ImageDraw.Draw(overlay)
-    for x in columns:
-        draw.line((x, 0, x, table.height), fill="lime", width=2)
-    for y in rows:
-        draw.line((0, y, table.width, y), fill="red", width=2)
-    overlay.save(destination)
-
-
 def create_ocr():
     os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(SCRIPT_DIR.parent / ".venv-ocr" / "model_cache"))
     from paddleocr import PaddleOCR
@@ -316,10 +294,7 @@ def extract(table, layout, threshold, ocr):
         column_results.append(tokens)
         print(f"Read column {column + 1}/8: {COLUMNS[column]}", flush=True)
     layout["rows"] = detect_rows(column_results, table.height)
-    result = assemble(column_results, layout["rows"], threshold)
-    result["model"] = "PP-OCRv5_mobile_det + latin_PP-OCRv5_mobile_rec"
-    result["token_box_coordinates"] = "pixels relative to each column in rectified table"
-    return result
+    return assemble(column_results, layout["rows"], threshold)
 
 
 def prepare_table(path):
@@ -354,9 +329,7 @@ def main():
         return
     if not (3, 10) <= sys.version_info[:2] <= (3, 13):
         raise RuntimeError(f"Python {sys.version.split()[0]} cannot run this PaddleOCR setup. Use 64-bit Python 3.12 in a separate virtual environment.")
-    work = SCRIPT_DIR / "ocr_work" / output.stem
-    work.mkdir(parents=True, exist_ok=True)
-    results, files = [], []
+    results, failures = [], []
     print("Loading OCR model...", flush=True)
     ocr = create_ocr()
     for number, path in enumerate(images, 1):
@@ -364,27 +337,21 @@ def main():
         try:
             table, current = prepare_table(path)
             result = extract(table, current, MIN_CONFIDENCE, ocr)
-            preview(table, current["columns"], current["rows"], work / (path.name + ".layout.png"))
             result["source"] = path.name
-            result["layout"] = current
-            (work / (path.name + ".raw.json")).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-            start = 2 + sum(len(previous["rows"]) for previous in results)
             results.append(result)
-            files.append({"source_file": path.name, "status": "processed", "first_excel_row": start,
-                          "last_excel_row": start + len(result["rows"]) - 1, "rows": len(result["rows"]),
-                          "review_flags": len(result["issues"]), "error": ""})
         except KeyboardInterrupt:
-            files.append({"source_file": path.name, "status": "interrupted", "error": "Stopped by user"})
-            files.extend({"source_file": remaining.name, "status": "not_processed", "error": "Batch interrupted"} for remaining in images[number:])
+            failures.append({"source_file": path.name, "error": "Stopped by user"})
+            failures.extend({"source_file": remaining.name, "error": "Not processed: batch interrupted"}
+                            for remaining in images[number:])
             print("Interrupted; saving completed images.")
             break
         except Exception as error:
             print(f"Failed {path.name}: {error}")
-            files.append({"source_file": path.name, "status": "failed", "rows": 0, "error": str(error)})
-    write_excel(output, results, files)
-    failed = sum(entry["status"] != "processed" for entry in files)
+            failures.append({"source_file": path.name, "error": "Failed: " + str(error)})
+    write_excel(output, results, failures)
+    flagged = sum(len({issue["row"] for issue in result["issues"] if "row" in issue}) for result in results)
     print(f"Saved {sum(len(result['rows']) for result in results)} rows from {len(results)} images to {output}")
-    print(f"{failed} files failed or were not processed. Check Files and Review sheets.")
+    print(f"{flagged} transaction rows flagged; {len(failures)} images failed or were not processed. Filter the flagged column to review.")
 
 
 if __name__ == "__main__":
