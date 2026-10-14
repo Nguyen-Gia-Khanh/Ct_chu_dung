@@ -12,14 +12,14 @@ from openpyxl import load_workbook
 from PIL import Image, ImageDraw
 
 from tests.support import WorkspaceTestCase
-from utils import statement_ocr
-from utils.statement_ocr import COLUMNS, assemble, detect_rows, detect_table, discover_images, extract, write_excel
+from utils.ocr_work import statement_ocr
+from utils.ocr_work.statement_ocr import COLUMNS, assemble, detect_rows, detect_table, discover_images, extract, write_excel
 
 
 class StatementOCRTests(WorkspaceTestCase):
     def test_manual_run_uses_local_ocr_environment_without_options(self):
-        script = Path(__file__).resolve().parents[1] / "utils" / "statement_ocr.py"
-        interpreter = script.parent.parent / ".venv-ocr" / "Scripts" / "python.exe"
+        script = Path(__file__).resolve().parents[1] / "utils" / "ocr_work" / "statement_ocr.py"
+        interpreter = script.parents[2] / ".venv-ocr" / "Scripts" / "python.exe"
         with patch.object(sys, "executable", "other-python.exe"), patch.object(Path, "is_file", return_value=True):
             with patch("subprocess.call", return_value=0) as launch:
                 with self.assertRaises(SystemExit) as stopped:

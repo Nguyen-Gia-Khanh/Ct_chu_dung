@@ -32,7 +32,11 @@ ui/web/node_modules/
 
 # Local statement photos and OCR artifacts (utils only)
 utils/images/
-utils/ocr_work/
+utils/ocr_work/*
+!utils/ocr_work/statement_ocr.py
+!utils/ocr_work/statement_ocr_requirements.txt
+!utils/ocr_work/statement_ocr_colab.py
+!utils/ocr_work/statement_ocr_colab.ipynb
 utils/**/*.[jJ][pP][gG]
 utils/**/*.[jJ][pP][eE][gG]
 utils/**/*.[pP][nN][gG]
