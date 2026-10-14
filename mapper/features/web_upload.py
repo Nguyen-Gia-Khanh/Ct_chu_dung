@@ -26,7 +26,7 @@ from .kiotviet_settings import validate_store_url, validate_tab_count
 # Chrome connection and upload timings.
 DEBUGGER_ADDRESS = "127.0.0.1:9222"
 TIMEOUT_SECONDS = 20
-STEP_DELAY_SECONDS = 2.0
+STEP_DELAY_SECONDS = 1.0
 # Controls only the final product Save. A newly created location must always
 # save its own dialog before it can be assigned to the product.
 SAVE_ON_UPLOAD = True  # Keep False while testing; set True only for production.
