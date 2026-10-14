@@ -111,12 +111,44 @@ class StatementOCRTests(WorkspaceTestCase):
             self.assertIsNone(workbook["Data"]["F2"].value)
             self.assertIn("money_in: low confidence 0.65 < 0.90", workbook["Data"]["I2"].value)
             self.assertIn("missing or non numeric index", workbook["Data"]["I3"].value)
+            self.assertEqual(workbook["Data"]["G2"].fill.fgColor.rgb, "00F4CCCC")
+            self.assertEqual(workbook["Data"]["A3"].fill.fgColor.rgb, "00F4CCCC")
+            self.assertEqual(workbook["Data"]["D2"].fill.fill_type, None)
+            self.assertEqual(workbook["Data"]["F2"].fill.fill_type, None)
+            self.assertEqual(workbook["Data"]["I2"].fill.fgColor.rgb, "00FFF2CC")
             self.assertEqual(workbook["Data"]["I5"].value, "bad.jpg: Unreadable image")
             self.assertEqual(workbook["Data"].auto_filter.ref, "A1:I5")
         finally:
             workbook.close()
         with self.assertRaises(FileExistsError):
             write_excel(output, [result], [])
+
+    def test_amount_conflicts_and_index_gaps_highlight_only_affected_cells(self):
+        def token(text, top):
+            return {"text": text, "score": 0.99, "box": [2, top, 25, top + 12]}
+
+        columns = [[token(text, 10), token(text, 50)] for text in
+                   ("001", "09:17:14", "17/06/2025", "000123", "description", "", "", "9,000")]
+        columns[0][1]["text"] = "003"
+        columns[5] = [token("1,000", 50)]
+        columns[6] = [token("2,000", 50)]
+        result = assemble(columns, [0, 40, 80], 0.8)
+        result["source"] = "page1.jpg"
+        path = self.folder / "conflicts.xlsx"
+        # A second photo verifies issue row numbers are local to each photo.
+        write_excel(path, [{"source": "clean.jpg", "rows": [result["rows"][1]], "issues": []}, result])
+        workbook = load_workbook(path)
+        try:
+            sheet = workbook["Data"]
+            pink_cells = {cell.coordinate for row in sheet.iter_rows(min_row=2) for cell in row
+                          if cell.fill.fgColor.rgb == "00F4CCCC"}
+            self.assertEqual(pink_cells, {"F3", "G3", "A4", "F4", "G4"})
+            self.assertIsNone(sheet["I2"].value)
+            self.assertIn("no amount detected", sheet["I3"].value)
+            self.assertIn("both amount columns populated", sheet["I4"].value)
+            self.assertIn("index gap or duplicate", sheet["I4"].value)
+        finally:
+            workbook.close()
 
     def test_confidence_cutoff_ignores_small_weak_fragments(self):
         columns = [[{"text": text, "score": 0.99, "box": [2, 10, 25, 22]}] for text in
