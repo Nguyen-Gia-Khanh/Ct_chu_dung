@@ -92,8 +92,14 @@ def write_excel(path, results, failures=()):
     data = workbook.active
     data.title = "Data"
     data.append((*COLUMNS, "flagged"))
+    review_fill = PatternFill("solid", fgColor="F4CCCC")
+    row_issue_columns = {
+        "no_amount_detected": ("money_out", "money_in"),
+        "both_amount_columns_populated": ("money_out", "money_in"),
+        "index_gap_or_duplicate": ("index",),
+    }
     for result in results:
-        flags = {}
+        flags, review_columns = {}, {}
         for issue in result["issues"]:
             message = issue["issue"].replace("_", " ")
             if issue.get("column"):
@@ -103,10 +109,14 @@ def write_excel(path, results, failures=()):
             if "row" not in issue:
                 message += ": " + issue.get("token", {}).get("text", "")
             flags.setdefault(issue.get("row"), []).append(message)
+            affected = (issue["column"],) if issue.get("column") else row_issue_columns.get(issue["issue"], ())
+            review_columns.setdefault(issue.get("row"), set()).update(affected)
         for number, record in enumerate(result["rows"], 1):
             messages = flags.get(number, [])
             flagged = result["source"] + ": " + "; ".join(dict.fromkeys(messages)) if messages else None
             data.append((*[record[name] or None for name in COLUMNS], flagged))
+            for name in review_columns.get(number, ()):
+                data.cell(data.max_row, COLUMNS.index(name) + 1).fill = review_fill
             data.row_dimensions[data.max_row].height = min(160, max(30, 15 * (len(record["content"]) // 75 + 1)))
         if flags.get(None):
             data.append((*[None for _ in COLUMNS], result["source"] + ": " + "; ".join(dict.fromkeys(flags[None]))))
