@@ -46,6 +46,120 @@ class StatementOCRTests(WorkspaceTestCase):
         with self.assertRaisesRegex(ValueError, "column boundaries"):
             detect_table(Image.new("RGB", (900, 800), "white"))
 
+    def test_template_recovers_internal_divider_but_rejects_another_form(self):
+        fractions = statement_ocr.COLUMN_FRACTIONS
+        image = Image.new("RGB", (1100, 900), "white")
+        draw = ImageDraw.Draw(image)
+        for index, fraction in enumerate(fractions):
+            if index != 4:
+                x = 40 + round(fraction * 1000)
+                draw.line((x, 70, x, 820), fill="black", width=3)
+        source = np.float32([[0, 0], [1099, 0], [1099, 899], [0, 899]])
+        target = np.float32([[80, 80], [1160, 35], [1120, 1010], [30, 950]])
+        photo = Image.fromarray(cv2.warpPerspective(np.asarray(image), cv2.getPerspectiveTransform(source, target),
+                                                   (1200, 1050), borderValue=(255, 255, 255)))
+        table, layout = detect_table(photo, fractions)
+        self.assertEqual(layout["inferred_columns"], [3, 4])
+        np.testing.assert_allclose(np.array(layout["columns"]) / table.width, fractions, atol=0.006)
+        table, layout = statement_ocr.normalize_table(table, layout)
+        self.assertEqual(table.width, statement_ocr.MIN_TABLE_WIDTH)
+        self.assertEqual(layout["columns"], [round(f * table.width) for f in fractions])
+        wrong_form = Image.new("RGB", (1100, 900), "white")
+        draw = ImageDraw.Draw(wrong_form)
+        for x in range(40, 1041, 125):
+            draw.line((x, 70, x, 820), fill="black", width=3)
+        with self.assertRaisesRegex(ValueError, "column template"):
+            detect_table(wrong_form, fractions)
+        for missing in (0, 8):
+            cropped = Image.new("RGB", (1100, 900), "white")
+            draw = ImageDraw.Draw(cropped)
+            for index, fraction in enumerate(fractions):
+                if index != missing:
+                    x = 40 + round(fraction * 1000)
+                    draw.line((x, 70, x, 820), fill="black", width=3)
+            with self.assertRaisesRegex(ValueError, "column template"):
+                detect_table(cropped, fractions)
+
+    def test_whole_paper_unwarping_recovers_bad_geometry_and_keeps_color(self):
+        distant = Image.new("RGB", (1200, 1200), "#333366")
+        ImageDraw.Draw(distant).rectangle((320, 250, 850, 850), fill="white")
+        paper = statement_ocr.crop_document(distant)
+        self.assertLess(paper.width, 700)
+        self.assertGreater(paper.width, 530)  # Retain the complete paper plus a margin.
+        original = Image.new("RGB", (1100, 900), "#333366")
+        ImageDraw.Draw(original).rectangle((40, 40, 1060, 860), fill="white")
+        path = self.folder / "curved.jpg"
+        original.save(path)
+        corrected = original.copy()
+        draw = ImageDraw.Draw(corrected)
+        for fraction in statement_ocr.COLUMN_FRACTIONS:
+            x = 60 + round(fraction * 980)
+            draw.line((x, 70, x, 820), fill="black", width=3)
+        draw.rectangle((650, 400, 700, 450), fill="red")
+        received = []
+
+        class FakeUnwarper:
+            def predict(self, pixels):
+                received.append(pixels)
+                return [{"doctr_img": np.asarray(corrected)[:, :, ::-1].copy()}]
+
+        table, layout = statement_ocr.prepare_table(path, FakeUnwarper())
+        self.assertEqual(len(received), 1)  # One complete paper, never individual OCR columns.
+        self.assertGreater(received[0].shape[1], 900)
+        self.assertGreater(received[0].shape[0], 750)
+        pixels = np.asarray(table)
+        self.assertGreater(np.sum((pixels[:, :, 0] > 200) & (pixels[:, :, 1] < 40) & (pixels[:, :, 2] < 40)), 100)
+        self.assertEqual(len(layout["columns"]), 9)
+        # A learned model can damage good geometry; reject that result and keep the readable grid.
+        corrected.save(path)
+        expected, _ = statement_ocr.prepare_table(path)
+        class BadUnwarper:
+            def predict(self, pixels):
+                return [{"doctr_img": np.full((900, 1100, 3), 255, dtype=np.uint8)}]
+        retained, _ = statement_ocr.prepare_table(path, BadUnwarper())
+        np.testing.assert_array_equal(np.asarray(expected), np.asarray(retained))
+
+    def test_native_digit_crops_stay_in_the_correct_rescaled_rows(self):
+        table = Image.new("RGB", (800, 180), "white")
+        draw = ImageDraw.Draw(table)
+        for top in (10, 110):
+            draw.rectangle((6, top, 20, top + 11), fill="black")
+        layout = {"columns": [round(f * table.width) for f in statement_ocr.COLUMN_FRACTIONS]}
+        scaled, layout = statement_ocr.normalize_table(table, layout)
+        layout["rows"] = [0, 180, 360]
+        received = []
+        class Recognizer:
+            def predict(self, crops, batch_size):
+                received.extend(crops)
+                return [{"rec_text": "001", "rec_score": 0.99}, {"rec_text": "002", "rec_score": 0.99}]
+        tokens = statement_ocr.read_index_tokens(scaled, layout, Recognizer())
+        self.assertEqual([crop.shape[:2] for crop in received], [(14, 17), (14, 17)])
+        # Source glyphs remain 12 pixels tall, while boxes map into the 360-pixel output.
+        self.assertLess(tokens[0]["box"][3], 180)
+        self.assertGreater(tokens[1]["box"][1], 180)
+        result = assemble([tokens, *[[] for _ in COLUMNS[1:]]], layout["rows"], 0.8)
+        self.assertEqual([row["index"] for row in result["rows"]], ["001", "002"])
+        heights = []
+        class OCR:
+            def predict(self, pixels):
+                column = len(heights) + 1
+                heights.append(pixels.shape[0])
+                values = {1: ["17/06/2025 09:00", "17/06/2025 10:00"],
+                          2: ["17/06/2025", "17/06/2025"], 3: ["0001", "0002"],
+                          4: ["first", "second"], 5: ["1,000", ""],
+                          6: ["", "2,000"], 7: ["5,000", "7,000"]}[column]
+                factor = 1 if column >= 5 else 2
+                nonempty = [(text, top) for text, top in zip(values, (10, 110)) if text]
+                return [{"rec_texts": [text for text, _ in nonempty],
+                         "rec_scores": [0.99 for _ in nonempty],
+                         "rec_boxes": [[12, top * factor + 12, 35, (top + 12) * factor + 12]
+                                       for _, top in nonempty]}]
+        extracted = extract(scaled, layout, 0.8, OCR(), Recognizer())
+        self.assertEqual(heights, [384, 384, 384, 384, 204, 204, 204])
+        self.assertEqual(extracted["rows"][0]["money_out"], "1,000")
+        self.assertEqual(extracted["rows"][1]["money_in"], "2,000")
+        self.assertEqual([row["total_raw"] for row in extracted["rows"]], ["5,000", "7,000"])
+
     def test_wrapped_rows_missing_index_and_excel_text_are_preserved(self):
         def token(text, top, bottom=None, score=0.99):
             return {"text": text, "score": score, "box": [2, top, 25, bottom or top + 12]}
@@ -91,6 +205,12 @@ class StatementOCRTests(WorkspaceTestCase):
         extracted = extract(table, layout, 0.9, FakeOCR(), FakeNumberRecognizer())
         self.assertEqual(extracted["rows"], result["rows"])
         self.assertEqual(len(crop_sizes), 7)
+        layout["inferred_columns"] = [3, 4]
+        predictions.extend(prediction(tokens) for tokens in columns[1:])
+        inferred = extract(table, layout, 0.9, FakeOCR(), FakeNumberRecognizer())
+        self.assertEqual([(issue["row"], issue["column"]) for issue in inferred["issues"]
+                          if issue["issue"] == "column_boundary_inferred"],
+                         [(row, name) for row in range(1, 4) for name in ("id", "content")])
         with self.assertRaisesRegex(ValueError, "No transaction"):
             detect_rows([[] for _ in COLUMNS], 180)
         folder = self.folder
@@ -165,6 +285,20 @@ class StatementOCRTests(WorkspaceTestCase):
         columns[3] = []
         self.assertEqual(assemble(columns, [0, 40], 0.8)["issues"],
                          [{"row": 1, "column": "id", "issue": "no_text_detected"}])
+        columns[3] = [{"text": "000123", "score": 0.99, "box": [2, 10, 25, 22]}]
+        columns[6][0]["text"] = "1,00J"
+        result = assemble(columns, [0, 40], 0.8)
+        self.assertEqual(result["issues"], [{"row": 1, "column": "money_in", "issue": "non_numeric_amount"}])
+        self.assertEqual(result["rows"][0]["money_in"], "1,00J")
+        result["source"] = "page.jpg"
+        path = self.folder / "non_numeric.xlsx"
+        write_excel(path, [result])
+        book = load_workbook(path)
+        try:
+            self.assertEqual(book.active["G2"].fill.fgColor.rgb, "00F4CCCC")
+            self.assertIn("money_in: non numeric amount", book.active["I2"].value)
+        finally:
+            book.close()
 
     def test_batch_writes_only_one_workbook_and_keeps_failures_visible(self):
         folder = self.folder
@@ -174,7 +308,7 @@ class StatementOCRTests(WorkspaceTestCase):
             (images / name).touch()
         result = {"rows": [dict.fromkeys(COLUMNS, "001")], "issues": []}
         with patch.multiple(statement_ocr, SCRIPT_DIR=folder, IMAGE_FOLDER="images", OUTPUT_FILENAME="result.xlsx"):
-            with patch.object(statement_ocr, "create_ocr", return_value=(None, None)), patch.object(statement_ocr, "prepare_table", return_value=(None, {})):
+            with patch.object(statement_ocr, "create_ocr", return_value=(None, None, None)), patch.object(statement_ocr, "prepare_table", return_value=(None, {})):
                 with patch.object(statement_ocr, "extract", side_effect=[ValueError("Unreadable image"), result]):
                     statement_ocr.main()
         self.assertEqual(sorted(path.name for path in folder.iterdir()), ["images", "result.xlsx"])
