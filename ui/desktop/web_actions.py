@@ -312,7 +312,7 @@ class WebActions:
         if hasattr(self, "cell_transfer") and hasattr(self.cell_transfer, "status_text"):
             self.cell_transfer.status_text.set(status)
         self.status_text.set(
-            f"{status} Leave the website tab untouched until it finishes."
+            f"{status} You can switch Chrome tabs while it runs."
         )
         self.web_upload_events = Queue()
         Thread(

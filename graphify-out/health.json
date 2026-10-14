@@ -1,0 +1,205 @@
+{
+  "node_count": 1158,
+  "unverified_node_count": 0,
+  "raw_edge_count": 2844,
+  "non_object_edges": 0,
+  "missing_endpoint_edges": 0,
+  "dangling_endpoint_edges": 205,
+  "external_reference_edges": 4,
+  "self_loop_edges": 17,
+  "valid_candidate_edges": 2635,
+  "exact_duplicate_edges": 0,
+  "directed_unique_endpoint_pairs": 2595,
+  "directed_same_endpoint_collapsed_edges": 40,
+  "undirected_unique_endpoint_pairs": 2594,
+  "undirected_same_endpoint_collapsed_edges": 41,
+  "same_endpoint_group_count": 38,
+  "relation_variant_groups": 35,
+  "source_file_variant_groups": 0,
+  "source_location_variant_groups": 0,
+  "context_variant_groups": 3,
+  "post_build_graph_type": "Graph",
+  "post_build_node_count": 1208,
+  "post_build_edge_count": 2787,
+  "post_build_error": "",
+  "producer_suppression": {
+    "path": "C:\\Users\\Admin\\Desktop\\fhs\\Auto\\DA projects\\Ct_chu_dung\\.worktrees\\repository-graph\\.venv\\Lib\\site-packages\\graphify\\extract.py",
+    "total_sites": 12,
+    "sites": [
+      {
+        "line": 1676,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 2209,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 2211,
+        "name": "seen_doc_refs",
+        "tuple_arity": 0,
+        "sample": "seen_doc_refs: set[str] = set()"
+      },
+      {
+        "line": 2628,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 2775,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n.get(\"id\") for n in nodes}"
+      },
+      {
+        "line": 3501,
+        "name": "seen_keys",
+        "tuple_arity": 0,
+        "sample": "seen_keys: set[tuple] = set()"
+      },
+      {
+        "line": 3670,
+        "name": "seen_keys",
+        "tuple_arity": 0,
+        "sample": "seen_keys: set[tuple] = set()"
+      },
+      {
+        "line": 5777,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 5885,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 5964,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 6479,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 6480,
+        "name": "seen_edges",
+        "tuple_arity": 4,
+        "sample": "seen_edges: set[tuple[str, str, str, str | None]] = set()"
+      }
+    ],
+    "error": ""
+  },
+  "examples": [
+    {
+      "source": "mapper_api_dependencies_get_database",
+      "target": "mapper_persistence_database_warehousedatabase",
+      "edge_count": 3,
+      "relations": [
+        "calls",
+        "references",
+        "uses"
+      ],
+      "source_files": [
+        "mapper/api/dependencies.py"
+      ],
+      "source_locations": [
+        "L17",
+        "L18"
+      ],
+      "contexts": [
+        "",
+        "call",
+        "return_type"
+      ]
+    },
+    {
+      "source": "ui_desktop_designer_shelfdesigner_prepare_row_inputs",
+      "target": "ui_desktop_designer_shelfdesigner_prepare_row_inputs_update_result",
+      "edge_count": 3,
+      "relations": [
+        "calls",
+        "contains",
+        "indirect_call"
+      ],
+      "source_files": [
+        "ui/desktop/designer.py"
+      ],
+      "source_locations": [
+        "L131",
+        "L134",
+        "L135"
+      ],
+      "contexts": [
+        "",
+        "argument",
+        "call"
+      ]
+    },
+    {
+      "source": "mapper_api_server_warehouseapihandler",
+      "target": "mapper_api_read_routes_readroutes",
+      "edge_count": 2,
+      "relations": [
+        "inherits",
+        "uses"
+      ],
+      "source_files": [
+        "mapper/api/server.py"
+      ],
+      "source_locations": [
+        "L21"
+      ],
+      "contexts": [
+        ""
+      ]
+    },
+    {
+      "source": "mapper_api_server_warehouseapihandler",
+      "target": "mapper_api_write_routes_writeroutes",
+      "edge_count": 2,
+      "relations": [
+        "inherits",
+        "uses"
+      ],
+      "source_files": [
+        "mapper/api/server.py"
+      ],
+      "source_locations": [
+        "L21"
+      ],
+      "contexts": [
+        ""
+      ]
+    },
+    {
+      "source": "mapper_api_server_warehouseapihandler",
+      "target": "mapper_api_static_files_staticfiles",
+      "edge_count": 2,
+      "relations": [
+        "inherits",
+        "uses"
+      ],
+      "source_files": [
+        "mapper/api/server.py"
+      ],
+      "source_locations": [
+        "L21"
+      ],
+      "contexts": [
+        ""
+      ]
+    }
+  ]
+}

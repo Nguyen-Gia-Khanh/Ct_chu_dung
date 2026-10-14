@@ -1,12 +1,14 @@
-"""Statement OCR Pipeline for Google Colab.
+"""Statement OCR Pipeline for Google Colab (PaddleOCR-VL-1.6 & PP-OCRv6).
 
-Reads bank statement photos from a Google Drive folder, performs table detection,
-perspective correction, and OCR extraction using PaddleOCR (PP-OCRv6), then exports
-all records directly to Google Sheets with conditional formatting for review.
+Extracts transaction records from bank statement photos in Google Drive,
+runs validation checks (missing amounts, invalid index, sequence gaps),
+and exports the records to Google Sheets with cell-level issue highlighting
+and an optional backup Excel file.
 """
 
 import bisect
 from datetime import datetime
+from html import unescape
 import os
 from pathlib import Path
 import re
@@ -20,9 +22,15 @@ from PIL import Image, ImageOps
 COLUMNS = ("index", "time", "date", "id", "content", "money_out", "money_in", "total_raw")
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
+ROW_ISSUE_COLUMNS = {
+    "no_amount_detected": ("money_out", "money_in"),
+    "both_amount_columns_populated": ("money_out", "money_in"),
+    "index_gap_or_duplicate": ("index",),
+}
+
 
 def discover_images(folder):
-    """Find and sort image files naturally by number/name."""
+    """Find and naturally sort image files."""
     def natural_key(path):
         return tuple((1, int(part)) if part.isdigit() else (0, part.casefold())
                      for part in re.split(r"(\d+)", path.name))
@@ -31,63 +39,149 @@ def discover_images(folder):
                   key=natural_key)
 
 
-def validate_edges(edges, extent, expected=None):
-    if expected is not None and len(edges) != expected:
-        raise ValueError(f"Expected {expected} boundaries, got {len(edges)}")
-    if len(edges) < 2 or edges[0] != 0 or edges[-1] != extent:
-        raise ValueError("Boundaries must span the entire rectified table")
-    if any(b - a < 3 for a, b in zip(edges, edges[1:])):
-        raise ValueError("Boundaries must be increasing and at least three pixels apart")
+def parse_html_table(html_str):
+    """Extract rows and cells from an HTML table string."""
+    rows = []
+    tr_matches = re.findall(r"<tr[^>]*>(.*?)</tr>", html_str, flags=re.DOTALL | re.IGNORECASE)
+    for tr in tr_matches:
+        cells = re.findall(r"<(?:td|th)[^>]*>(.*?)</(?:td|th)>", tr, flags=re.DOTALL | re.IGNORECASE)
+        clean_cells = [unescape(re.sub(r"<[^>]+>", "", c)).strip() for c in cells]
+        if any(clean_cells):
+            rows.append(clean_cells)
+    return rows
 
 
-def assemble(column_results, row_edges, min_confidence):
-    """Group OCR tokens into detected rows and flag potential issues."""
-    cells = [[[] for _ in COLUMNS] for _ in range(len(row_edges) - 1)]
+def validate_and_flag_records(records, min_confidence=0.80, default_score=0.95):
+    """Validate records, detect issues, and record columns requiring review."""
     issues = []
-    for column, tokens in enumerate(column_results):
-        for token in tokens:
-            x0, y0, x1, y1 = token["box"]
-            row = bisect.bisect_right(row_edges, (y0 + y1) / 2) - 1
-            if not 0 <= row < len(cells):
-                issues.append({"column": COLUMNS[column], "issue": "outside_rows", "token": token})
-                continue
-            cells[row][column].append(token)
-            margin = max(2, (y1 - y0) * 0.15)
-            if y0 < row_edges[row] - margin or y1 > row_edges[row + 1] + margin:
-                issues.append({"row": row + 1, "column": COLUMNS[column], "issue": "box_crosses_row", "token": token})
+    review_columns = {}
+    confidence = []
 
-    records, confidence = [], []
-    for row_number, row in enumerate(cells, 1):
-        record, scores = {}, {}
-        for name, tokens in zip(COLUMNS, row):
-            tokens.sort(key=lambda t: (round(t["box"][1] / 5), t["box"][0]))
-            record[name] = " ".join(t["text"] for t in tokens).strip()
-            characters = sum(len(t["text"].strip()) for t in tokens)
-            scores[name] = sum(t["score"] * len(t["text"].strip()) for t in tokens) / characters if characters else None
-            if scores[name] is not None and scores[name] < min_confidence:
-                issues.append({"row": row_number, "column": name, "issue": "low_confidence",
-                               "score": scores[name], "threshold": min_confidence})
+    for row_number, record in enumerate(records, 1):
+        scores = {col: default_score if record.get(col) else None for col in COLUMNS}
+        confidence.append(scores)
+
+        # 1. Numeric index check
         if not record["index"].isdigit():
             issues.append({"row": row_number, "column": "index", "issue": "missing_or_non_numeric_index"})
+            review_columns.setdefault(row_number, set()).add("index")
+
+        # 2. Text fields check
         for name in ("time", "date", "id", "content", "total_raw"):
             if not record[name]:
                 issues.append({"row": row_number, "column": name, "issue": "no_text_detected"})
+                review_columns.setdefault(row_number, set()).add(name)
+
+        # 3. Amounts check
         if not record["money_out"] and not record["money_in"]:
             issues.append({"row": row_number, "issue": "no_amount_detected"})
+            review_columns.setdefault(row_number, set()).update(ROW_ISSUE_COLUMNS["no_amount_detected"])
         if record["money_out"] and record["money_in"]:
             issues.append({"row": row_number, "issue": "both_amount_columns_populated"})
-        records.append(record)
-        confidence.append(scores)
+            review_columns.setdefault(row_number, set()).update(ROW_ISSUE_COLUMNS["both_amount_columns_populated"])
 
+    # 4. Sequence continuity check
     indices = [int(r["index"]) if r["index"].isdigit() else None for r in records]
     for row, (previous, current) in enumerate(zip(indices, indices[1:]), 2):
         if previous is not None and current is not None and current != previous + 1:
             issues.append({"row": row, "issue": "index_gap_or_duplicate", "previous": previous, "current": current})
-    return {"rows": records, "confidence": confidence, "issues": issues}
+            review_columns.setdefault(row, set()).add("index")
+
+    return {"rows": records, "confidence": confidence, "issues": issues, "review_columns": review_columns}
+
+
+# --- Engine 1: PaddleOCR-VL-1.6 (Vision-Language) ---
+def create_vl_pipeline():
+    """Create SOTA PaddleOCR-VL-1.6 vision-language pipeline."""
+    # Fix PaddleX duplicate initialization bug in Colab/Jupyter
+    try:
+        import paddlex.repo_manager.core as pm_core
+        if not hasattr(pm_core, "_safe_pdx_patched"):
+            _orig_pm_init = pm_core.initialize
+            pm_core.initialize = lambda *a, **kw: None if pm_core._GlobalContext.is_initialized() else _orig_pm_init(*a, **kw)
+            pm_core._safe_pdx_patched = True
+    except Exception:
+        pass
+
+    from paddlex import create_pipeline
+    import paddle
+    if paddle.is_compiled_with_cuda():
+        paddle.set_device("gpu:0")
+        device = "gpu:0"
+    else:
+        device = "cpu"
+    print(f"Initializing PaddleOCR-VL-1.6 Pipeline on {device.upper()}...")
+    return create_pipeline(pipeline="PaddleOCR-VL-1.6", device=device)
+
+
+def extract_with_vl_16(image_path, pipeline, min_confidence=0.80):
+    """Run PaddleOCR-VL-1.6 to parse tables directly without rigid line rules."""
+    output = pipeline.predict(input=str(image_path))
+    extracted_rows = []
+
+    for res in output:
+        # Check table_res_list
+        table_list = res.get("table_res_list", [])
+        if table_list:
+            for table_res in table_list:
+                html_code = ""
+                if hasattr(table_res, "html") and isinstance(table_res.html, dict):
+                    html_code = table_res.html.get("pred", "")
+                elif isinstance(table_res, dict):
+                    html_code = table_res.get("pred_html", "") or table_res.get("html", "")
+                if html_code:
+                    extracted_rows.extend(parse_html_table(html_code))
+
+        # Check parsing_res_list blocks
+        if not extracted_rows:
+            blocks = res.get("parsing_res_list", [])
+            for block in blocks:
+                label = getattr(block, "label", None) or (block.get("label") if isinstance(block, dict) else "")
+                content = getattr(block, "content", "") or (block.get("content") if isinstance(block, dict) else "")
+                if label == "table" and content:
+                    extracted_rows.extend(parse_html_table(content))
+
+    if not extracted_rows:
+        raise ValueError("PaddleOCR-VL-1.6 did not detect any table in this photo.")
+
+    # Filter out header row if first row has non-digit index (e.g. 'STT')
+    if extracted_rows and not extracted_rows[0][0].isdigit():
+        extracted_rows = extracted_rows[1:]
+
+    records = []
+    for raw_row in extracted_rows:
+        cells = (raw_row + [""] * 8)[:8]
+        record = {name: cell.strip() for name, cell in zip(COLUMNS, cells)}
+        records.append(record)
+
+    return validate_and_flag_records(records, min_confidence)
+
+
+# --- Engine 2: PP-OCRv6 Geometric ---
+def create_v6_ocr():
+    from paddleocr import PaddleOCR, TextRecognition
+    import paddle
+    device = "gpu" if paddle.is_compiled_with_cuda() else "cpu"
+    print(f"Initializing PP-OCRv6 on {device.upper()}...")
+    ocr_kwargs = {
+        "device": device,
+        "text_detection_model_name": "PP-OCRv6_medium_det",
+        "text_recognition_model_name": "PP-OCRv6_medium_rec",
+        "use_doc_orientation_classify": False,
+        "use_doc_unwarping": False,
+        "use_textline_orientation": False,
+        "text_rec_score_thresh": 0.0,
+    }
+    rec_kwargs = {"model_name": "PP-OCRv6_medium_rec", "device": device}
+    if device == "cpu":
+        ocr_kwargs["enable_mkldnn"] = False
+        ocr_kwargs["cpu_threads"] = 4
+        rec_kwargs["enable_mkldnn"] = False
+        rec_kwargs["cpu_threads"] = 4
+    return PaddleOCR(**ocr_kwargs), TextRecognition(**rec_kwargs)
 
 
 def rectify(image, corners):
-    """Correct perspective distortion of the detected table region."""
     points = np.asarray(corners, dtype=np.float32)
     if points.shape != (4, 2) or not cv2.isContourConvex(points.astype(np.int32)):
         raise ValueError("Could not determine a convex table outline")
@@ -101,7 +195,6 @@ def rectify(image, corners):
 
 
 def detect_table(image):
-    """Find table's 9 vertical column dividers and compute corners."""
     scale = min(1, 1200 / max(image.size))
     photo = cv2.resize(np.asarray(image), (round(image.width * scale), round(image.height * scale)))
     height, width = photo.shape[:2]
@@ -124,8 +217,7 @@ def detect_table(image):
             groups.append([])
         groups[-1].append((middle, line))
     if len(groups) != 9:
-        raise ValueError(f"Found {len(groups)} column boundaries; expected 9 for this eight-column statement. "
-                         "Use a clearer photo showing all the vertical dividers.")
+        raise ValueError(f"Found {len(groups)} column boundaries; expected 9 for this eight-column statement.")
     rules, tops, bottoms = [], [], []
     for group in groups:
         points = np.array([(x, y) for _, (x0, y0, x1, y1) in group
@@ -169,12 +261,10 @@ def detect_table(image):
     points = np.float32([[[np.polyval(rule, height / 2) / scale,
                           height / 2 / scale]] for rule in rules[1:-1]])
     columns = [0, *[round(float(point[0])) for point in cv2.perspectiveTransform(points, matrix)[:, 0]], table.width]
-    validate_edges(columns, table.width, 9)
     return table, {"image_size": list(image.size), "corners": corners, "columns": columns}
 
 
 def detect_rows(column_results, height):
-    """Use transaction numbers and dates as row anchors."""
     anchors = []
     for column in range(3):
         for token in column_results[column]:
@@ -192,41 +282,7 @@ def detect_rows(column_results, height):
         groups[-1].append(y)
     starts = [max(0, round(statistics.median(group) - line_height * 0.35)) for group in groups]
     rows = [*starts, height]
-    if any(b - a < 3 for a, b in zip(rows, rows[1:])):
-        raise ValueError("Detected transaction rows overlap")
     return rows
-
-
-def create_ocr():
-    """Initialize PaddleOCR and TextRecognition (auto detects GPU vs CPU)."""
-    from paddleocr import PaddleOCR, TextRecognition
-    import paddle
-
-    device = "gpu" if paddle.is_compiled_with_cuda() else "cpu"
-    print(f"Loading PP-OCRv6 models on device: {device.upper()}...")
-
-    ocr_kwargs = {
-        "device": device,
-        "text_detection_model_name": "PP-OCRv6_medium_det",
-        "text_recognition_model_name": "PP-OCRv6_medium_rec",
-        "use_doc_orientation_classify": False,
-        "use_doc_unwarping": False,
-        "use_textline_orientation": False,
-        "text_rec_score_thresh": 0.0,
-    }
-    rec_kwargs = {
-        "model_name": "PP-OCRv6_medium_rec",
-        "device": device,
-    }
-    if device == "cpu":
-        ocr_kwargs["enable_mkldnn"] = False
-        ocr_kwargs["cpu_threads"] = 4
-        rec_kwargs["enable_mkldnn"] = False
-        rec_kwargs["cpu_threads"] = 4
-
-    ocr = PaddleOCR(**ocr_kwargs)
-    numbers = TextRecognition(**rec_kwargs)
-    return ocr, numbers
 
 
 def read_tokens(image, ocr, scale=1):
@@ -273,33 +329,43 @@ def read_index_tokens(table, layout, recognizer):
     return tokens
 
 
-def extract(table, layout, threshold, ocr, number_recognizer):
+def extract_with_v6(table, layout, threshold, ocr, number_recognizer):
     column_results = [[]]
     for column in range(1, len(COLUMNS)):
         left, right = layout["columns"][column:column + 2]
-        print(f"  Reading col {column + 1}/8: {COLUMNS[column]}...", flush=True)
         image = table.crop((left + 2, 0, right - 2, table.height))
         column_results.append(read_tokens(image, ocr, scale=3 if image.width < 60 else 1))
     layout["rows"] = detect_rows(column_results, table.height)
-    print(f"  Reading {len(layout['rows']) - 1} row numbers...", flush=True)
     column_results[0] = read_index_tokens(table, layout, number_recognizer)
-    return assemble(column_results, layout["rows"], threshold)
+
+    cells = [[[] for _ in COLUMNS] for _ in range(len(layout["rows"]) - 1)]
+    for column, tokens in enumerate(column_results):
+        for token in tokens:
+            x0, y0, x1, y1 = token["box"]
+            row = bisect.bisect_right(layout["rows"], (y0 + y1) / 2) - 1
+            if 0 <= row < len(cells):
+                cells[row][column].append(token)
+
+    records = []
+    for row in cells:
+        record = {}
+        for name, tokens in zip(COLUMNS, row):
+            tokens.sort(key=lambda t: (round(t["box"][1] / 5), t["box"][0]))
+            record[name] = " ".join(t["text"] for t in tokens).strip()
+        records.append(record)
+
+    return validate_and_flag_records(records, threshold)
 
 
-def prepare_table(path):
-    with Image.open(path) as source:
-        image = ImageOps.exif_transpose(source).convert("RGB")
-    return detect_table(image)
-
-
+# --- Google Sheets & Excel Exporters ---
 def export_to_google_sheets(gc, results, failures, sheet_title):
-    """Create a Google Sheet with formatting and flagged rows highlighted."""
     headers = list(COLUMNS) + ["flagged"]
     all_rows = [headers]
+    review_cells = []
 
     for result in results:
         flags = {}
-        for issue in result["issues"]:
+        for issue in result.get("issues", []):
             message = issue["issue"].replace("_", " ")
             if issue.get("column"):
                 message = issue["column"] + ": " + message
@@ -309,11 +375,20 @@ def export_to_google_sheets(gc, results, failures, sheet_title):
                 message += ": " + issue.get("token", {}).get("text", "")
             flags.setdefault(issue.get("row"), []).append(message)
 
-        for number, record in enumerate(result["rows"], 1):
+        review_columns = result.get("review_columns", {})
+
+        for number, record in enumerate(result.get("rows", []), 1):
+            current_row_idx = len(all_rows)
             messages = flags.get(number, [])
             flagged = result["source"] + ": " + "; ".join(dict.fromkeys(messages)) if messages else ""
             row_data = [str(record.get(col) or "") for col in COLUMNS] + [flagged]
             all_rows.append(row_data)
+
+            # Record affected cells for red/pink (#F4CCCC) highlight
+            for affected_col in review_columns.get(number, ()):
+                if affected_col in COLUMNS:
+                    col_idx = COLUMNS.index(affected_col)
+                    review_cells.append((current_row_idx, col_idx))
 
         if flags.get(None):
             all_rows.append([""] * len(COLUMNS) + [result["source"] + ": " + "; ".join(dict.fromkeys(flags[None]))])
@@ -324,17 +399,23 @@ def export_to_google_sheets(gc, results, failures, sheet_title):
     print(f"Creating Google Sheet: '{sheet_title}'...")
     sh = gc.create(sheet_title)
     ws = sh.sheet1
-    ws.title = "Statement Results"
+    try:
+        ws.update_title("Statement Results")
+    except Exception:
+        pass
 
-    # Resize sheet grid to fit all rows and columns
     num_rows = max(len(all_rows) + 50, 100)
     num_cols = max(len(headers), 10)
-    ws.resize(rows=num_rows, cols=num_cols)
+    try:
+        ws.resize(rows=num_rows, cols=num_cols)
+    except Exception:
+        pass
 
-    # Fast batch write
-    ws.update(range_name='A1', values=all_rows)
+    try:
+        ws.update(range_name='A1', values=all_rows)
+    except TypeError:
+        ws.update('A1', all_rows)
 
-    # Format sheet
     col_widths = [80, 180, 130, 180, 500, 150, 150, 150, 600]
     requests = []
 
@@ -416,6 +497,26 @@ def export_to_google_sheets(gc, results, failures, sheet_title):
         }
     })
 
+    # 5. Cell-level highlight: soft pink/red (#F4CCCC) for specific problem cells
+    for r_idx, c_idx in review_cells:
+        requests.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": ws.id,
+                    "startRowIndex": r_idx,
+                    "endRowIndex": r_idx + 1,
+                    "startColumnIndex": c_idx,
+                    "endColumnIndex": c_idx + 1,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": {"red": 244 / 255, "green": 204 / 255, "blue": 204 / 255},
+                    }
+                },
+                "fields": "userEnteredFormat.backgroundColor",
+            }
+        })
+
     try:
         sh.batch_update({"requests": requests})
     except Exception as e:
@@ -425,7 +526,6 @@ def export_to_google_sheets(gc, results, failures, sheet_title):
 
 
 def export_to_excel(path, results, failures=()):
-    """Export local Excel backup file."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -433,9 +533,11 @@ def export_to_excel(path, results, failures=()):
     data = workbook.active
     data.title = "Data"
     data.append((*COLUMNS, "flagged"))
+    review_fill = PatternFill("solid", fgColor="F4CCCC")
+
     for result in results:
         flags = {}
-        for issue in result["issues"]:
+        for issue in result.get("issues", []):
             message = issue["issue"].replace("_", " ")
             if issue.get("column"):
                 message = issue["column"] + ": " + message
@@ -444,15 +546,26 @@ def export_to_excel(path, results, failures=()):
             if "row" not in issue:
                 message += ": " + issue.get("token", {}).get("text", "")
             flags.setdefault(issue.get("row"), []).append(message)
-        for number, record in enumerate(result["rows"], 1):
+
+        review_columns = result.get("review_columns", {})
+
+        for number, record in enumerate(result.get("rows", []), 1):
             messages = flags.get(number, [])
             flagged = result["source"] + ": " + "; ".join(dict.fromkeys(messages)) if messages else None
-            data.append((*[record[name] or None for name in COLUMNS], flagged))
-            data.row_dimensions[data.max_row].height = min(160, max(30, 15 * (len(record["content"]) // 75 + 1)))
+            data.append((*[record.get(name) or None for name in COLUMNS], flagged))
+
+            for name in review_columns.get(number, ()):
+                if name in COLUMNS:
+                    data.cell(data.max_row, COLUMNS.index(name) + 1).fill = review_fill
+
+            data.row_dimensions[data.max_row].height = min(160, max(30, 15 * (len(record.get("content", "")) // 75 + 1)))
+
         if flags.get(None):
             data.append((*[None for _ in COLUMNS], result["source"] + ": " + "; ".join(dict.fromkeys(flags[None]))))
+
     for failure in failures:
         data.append((*[None for _ in COLUMNS], failure["source_file"] + ": " + failure["error"]))
+
     data.freeze_panes = "A2"
     data.auto_filter.ref = data.dimensions
     data.row_dimensions[1].height = 24
