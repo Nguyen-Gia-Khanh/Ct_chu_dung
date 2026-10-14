@@ -262,38 +262,80 @@ def detect_rows(column_results, height):
 
 def create_ocr():
     os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(SCRIPT_DIR.parent / ".venv-ocr" / "model_cache"))
-    from paddleocr import PaddleOCR
+    from paddleocr import PaddleOCR, TextRecognition
 
-    return PaddleOCR(device="cpu", enable_mkldnn=False, cpu_threads=4,
-                    text_detection_model_name="PP-OCRv5_mobile_det",
-                    text_recognition_model_name="latin_PP-OCRv5_mobile_rec",
+    ocr = PaddleOCR(device="cpu", enable_mkldnn=False, cpu_threads=4,
+                    text_detection_model_name="PP-OCRv6_medium_det",
+                    text_recognition_model_name="PP-OCRv6_medium_rec",
                     use_doc_orientation_classify=False, use_doc_unwarping=False,
                     use_textline_orientation=False, text_rec_score_thresh=0.0)
+    numbers = TextRecognition(model_name="PP-OCRv6_medium_rec", device="cpu",
+                              enable_mkldnn=False, cpu_threads=4)
+    return ocr, numbers
 
 
-def extract(table, layout, threshold, ocr):
+def read_tokens(image, ocr, scale=1):
     import cv2
     import numpy as np
 
-    column_results = []
-    # Read each detected column separately so adjacent amounts cannot merge.
-    for column, (left, right) in enumerate(zip(layout["columns"], layout["columns"][1:])):
-        crop = np.asarray(table.crop((left + 2, 0, right - 2, table.height)))[:, :, ::-1].copy()
-        scale = 3 if crop.shape[1] < 60 else 1
-        if scale > 1:
-            crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-        crop = cv2.copyMakeBorder(crop, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=(255, 255, 255))
-        tokens = []
-        for prediction in ocr.predict(crop):
-            for text, score, box in zip(prediction["rec_texts"], prediction["rec_scores"], prediction["rec_boxes"], strict=True):
-                if text.strip():
-                    x0, y0, x1, y1 = (int(v) for v in box)
-                    tokens.append({"text": text, "score": float(score),
-                                   "box": [round((x0 - 12) / scale + 2), round((y0 - 12) / scale),
-                                           round((x1 - 12) / scale + 2), round((y1 - 12) / scale)]})
-        column_results.append(tokens)
-        print(f"Read column {column + 1}/8: {COLUMNS[column]}", flush=True)
+    crop = np.asarray(image)[:, :, ::-1].copy()
+    if scale > 1:
+        crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    crop = cv2.copyMakeBorder(crop, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=(255, 255, 255))
+    tokens = []
+    for prediction in ocr.predict(crop):
+        for text, score, box in zip(prediction["rec_texts"], prediction["rec_scores"], prediction["rec_boxes"], strict=True):
+            if text.strip():
+                x0, y0, x1, y1 = (int(v) for v in box)
+                tokens.append({"text": text, "score": float(score),
+                               "box": [round((x0 - 12) / scale + 2), round((y0 - 12) / scale),
+                                       round((x1 - 12) / scale + 2), round((y1 - 12) / scale)]})
+    return tokens
+
+
+def read_index_tokens(table, layout, recognizer):
+    import cv2
+    import numpy as np
+
+    left, right = layout["columns"][:2]
+    crops, boxes = [], []
+    for top, bottom in zip(layout["rows"], layout["rows"][1:]):
+        crop = np.asarray(table.crop((left + 3, top, right - 3, bottom)))[:, :, ::-1].copy()
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        ink = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                    cv2.THRESH_BINARY_INV, 31, 10)
+        _, _, stats, _ = cv2.connectedComponentsWithStats(ink)
+        # Discard specks and tall divider fragments, then trim whitespace around the digits.
+        letters = [(x, y, x + w, y + h) for x, y, w, h, area in stats[1:]
+                   if area >= 5 and w >= 2 and h >= 4 and h < crop.shape[0] * 0.8 and h <= crop.shape[1]]
+        if not letters:
+            continue
+        x0 = max(0, min(b[0] for b in letters) - 1)
+        y0 = max(0, min(b[1] for b in letters) - 1)
+        x1 = min(crop.shape[1], max(b[2] for b in letters) + 1)
+        y1 = min(crop.shape[0], max(b[3] for b in letters) + 1)
+        crops.append(crop[y0:y1, x0:x1])
+        boxes.append([x0 + 3, y0 + top, x1 + 3, y1 + top])
+    tokens = []
+    if crops:
+        for box, prediction in zip(boxes, recognizer.predict(crops, batch_size=8), strict=True):
+            text = prediction["rec_text"].strip()
+            if text:
+                tokens.append({"text": text, "score": float(prediction["rec_score"]), "box": box})
+    return tokens
+
+
+def extract(table, layout, threshold, ocr, number_recognizer):
+    column_results = [[]]
+    # Read dates first; a full-height narrow index crop can merge many row numbers.
+    for column in range(1, len(COLUMNS)):
+        left, right = layout["columns"][column:column + 2]
+        print(f"Reading column {column + 1}/8: {COLUMNS[column]}...", flush=True)
+        image = table.crop((left + 2, 0, right - 2, table.height))
+        column_results.append(read_tokens(image, ocr, scale=3 if image.width < 60 else 1))
     layout["rows"] = detect_rows(column_results, table.height)
+    print(f"Reading {len(layout['rows']) - 1} row-number cells...", flush=True)
+    column_results[0] = read_index_tokens(table, layout, number_recognizer)
     return assemble(column_results, layout["rows"], threshold)
 
 
@@ -330,13 +372,13 @@ def main():
     if not (3, 10) <= sys.version_info[:2] <= (3, 13):
         raise RuntimeError(f"Python {sys.version.split()[0]} cannot run this PaddleOCR setup. Use 64-bit Python 3.12 in a separate virtual environment.")
     results, failures = [], []
-    print("Loading OCR model...", flush=True)
-    ocr = create_ocr()
+    print("Loading PP-OCRv6 medium (CPU)...", flush=True)
+    ocr, number_recognizer = create_ocr()
     for number, path in enumerate(images, 1):
         print(f"[{number}/{len(images)}] {path.name}", flush=True)
         try:
             table, current = prepare_table(path)
-            result = extract(table, current, MIN_CONFIDENCE, ocr)
+            result = extract(table, current, MIN_CONFIDENCE, ocr, number_recognizer)
             result["source"] = path.name
             results.append(result)
         except KeyboardInterrupt:

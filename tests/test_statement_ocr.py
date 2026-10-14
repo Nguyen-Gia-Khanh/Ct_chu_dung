@@ -63,21 +63,34 @@ class StatementOCRTests(WorkspaceTestCase):
         self.assertEqual(result["rows"][1]["index"], "")
         self.assertEqual(result["rows"][1]["content"], "=formula")
         self.assertTrue(any(issue["issue"] == "low_confidence" for issue in result["issues"]))
-        predictions = []
-        for column, tokens in enumerate(columns):
-            scale = 3 if column == 0 else 1
-            predictions.append({"rec_texts": [t["text"] for t in tokens],
-                                "rec_scores": [t["score"] for t in tokens],
-                                "rec_boxes": [[12, t["box"][1] * scale + 12,
-                                               35, t["box"][3] * scale + 12] for t in tokens]})
+        def prediction(tokens):
+            return {"rec_texts": [t["text"] for t in tokens],
+                    "rec_scores": [t["score"] for t in tokens],
+                    "rec_boxes": [[12, t["box"][1] + 12, 35, t["box"][3] + 12] for t in tokens]}
+
+        predictions = [prediction(tokens) for tokens in columns[1:]]
+        crop_sizes = []
 
         class FakeOCR:
             def predict(self, crop):
+                crop_sizes.append(crop.shape[:2])
                 return [predictions.pop(0)]
 
+        class FakeNumberRecognizer:
+            def predict(self, crops, batch_size):
+                self_test.assertEqual(len(crops), 2)  # Blank index cell does not generate a guess.
+                self_test.assertTrue(all(crop.shape[0] < 30 for crop in crops))
+                return [{"rec_text": "001", "rec_score": 0.99}, {"rec_text": "003", "rec_score": 0.99}]
+
+        self_test = self
         layout = {"columns": [0, 40, 120, 200, 340, 550, 640, 730, 820]}
-        extracted = extract(Image.new("RGB", (820, 180), "white"), layout, 0.9, FakeOCR())
+        table = Image.new("RGB", (820, 180), "white")
+        ink = ImageDraw.Draw(table)
+        ink.rectangle((4, 10, 20, 21), fill="black")
+        ink.rectangle((4, 135, 20, 146), fill="black")
+        extracted = extract(table, layout, 0.9, FakeOCR(), FakeNumberRecognizer())
         self.assertEqual(extracted["rows"], result["rows"])
+        self.assertEqual(len(crop_sizes), 7)
         with self.assertRaisesRegex(ValueError, "No transaction"):
             detect_rows([[] for _ in COLUMNS], 180)
         folder = self.folder
@@ -129,7 +142,7 @@ class StatementOCRTests(WorkspaceTestCase):
             (images / name).touch()
         result = {"rows": [dict.fromkeys(COLUMNS, "001")], "issues": []}
         with patch.multiple(statement_ocr, SCRIPT_DIR=folder, IMAGE_FOLDER="images", OUTPUT_FILENAME="result.xlsx"):
-            with patch.object(statement_ocr, "create_ocr"), patch.object(statement_ocr, "prepare_table", return_value=(None, {})):
+            with patch.object(statement_ocr, "create_ocr", return_value=(None, None)), patch.object(statement_ocr, "prepare_table", return_value=(None, {})):
                 with patch.object(statement_ocr, "extract", side_effect=[ValueError("Unreadable image"), result]):
                     statement_ocr.main()
         self.assertEqual(sorted(path.name for path in folder.iterdir()), ["images", "result.xlsx"])
