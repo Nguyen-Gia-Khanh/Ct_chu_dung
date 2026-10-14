@@ -13,7 +13,9 @@ is Tkinter; `ui/web/` and `mapper/api/` are retained as deprecated code.
 - [Tab 5: Switch / Combine Cells](#tab-5-switch--combine-cells)
 - [Tab 6: Special Exceptions](#tab-6-special-exceptions)
 - [Tab 7: Web Location Sync](#tab-7-web-location-sync)
+- [Warehouse label printer and PDF layout](#warehouse-label-printer-and-pdf-layout)
 - [Shared files: function sections and tab consumers](#shared-files-function-sections-and-tab-consumers)
+- [Verification workflow](#verification-workflow)
 
 Each tab section identifies its view, action methods, shared dependencies, save
 boundary, and checks. Shared files below are divided by named classes/functions
@@ -419,6 +421,37 @@ to the database method, then check how the successful write refreshes caches
 and visible widgets. Put transactional inventory changes in persistence rather
 than modifying only a tree row or in-memory dictionary.
 
+## Warehouse label printer and PDF layout
+
+For printed-label changes, read [utils/labels/pdf.py](utils/labels/pdf.py) first.
+It contains `Cell` / `Product`, `_compute_layout_slots`, and `render_labels_pdf`.
+The renderer owns A4 packing, label borders, location text, product tables,
+font fitting, and atomic PDF output. Keep PDF-only work in this file.
+
+Read [utils/labels/app.py](utils/labels/app.py) when the change involves label
+selection, data loading, export controls, or print history. `LabelDatabase.read_shelves`
+reads `products.shortened_name`, falling back to `products.product_name` when
+the shortened name is blank. `LabelPrinterApp.start_print` and `_print_worker`
+pass the selected height, orientation, mode, and name-limit option to the renderer.
+The launcher is [warehouse_label_printer.py](warehouse_label_printer.py).
+
+The 3 and 7 cm full labels use a location column beside the product table.
+The 14.5 cm full labels use two equal header cells (`L1-3` | `G2-1`) above
+a full-width product table. The large-layout constants set a 144 pt location
+cap, 64 pt product cap, and 8 pt visible vertical header padding. Glyph bounds
+keep that padding independent of the fitted font size; replacing them with
+whole-font ascent/descent adds unwanted whitespace. Both fonts shrink to fit.
+The 30-character checkbox truncates product names only; it leaves IDs intact.
+
+[tests/test_label_pdf.py](tests/test_label_pdf.py) checks the location split,
+header/product placement, font fitting, height/orientation combinations,
+name limiting, print modes, pagination, and preserving an existing PDF on failure.
+Run the targeted checks from the project root:
+
+```powershell
+& '.venv\Scripts\python.exe' -m unittest tests.test_label_pdf -v
+```
+
 ## Refreshes and shared controls
 
 [state_actions.py](ui/desktop/state_actions.py) owns desktop cache reconciliation:
@@ -460,6 +493,10 @@ export to verify the result after resync.
 
 ## Verification workflow
 
+`tests/` is the single root for test code. Put new tests here, named
+`test_*.py`; do not create `testers/` or place tests beside implementation files.
+Use `tests.support.WorkspaceTestCase` for scratch files under ignored `tmp/`.
+
 Run from the project root using the same environment as the launcher:
 
 ```powershell
@@ -476,6 +513,7 @@ Relevant existing tests are:
 | `tests/test_multi_locations.py` | Multiple-location comparison and complete website location sets. |
 | `tests/test_shelf_address_lookup.py` | Floor/side/shelf address matching. |
 | `tests/test_paths.py` | Legacy database path handling. |
+| `tests/test_label_pdf.py` | Label layout, PDF rendering, name limits, and safe output replacement. |
 
 For manual UI checks, create a separate scratch database under `tmp/` and
 launch with `--db`; import sample products and commit a sample shelf there.

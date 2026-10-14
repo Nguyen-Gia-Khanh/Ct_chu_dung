@@ -402,6 +402,7 @@ L1-1A8-10
 | `mapper/api/` | Local HTTP API for the deprecated web UI. |
 | `ui/web/` | Deprecated React/TypeScript UI, retained for reference. |
 | `utils/labels/` | Label printer implementation. |
+| `tests/` | Test code; start with the file map and verification workflow in `instruction.md`. |
 | `utils/laya/` | Laya extraction tools. |
 | `utils/icsparts/` | ICS Parts catalog and part master scrapers. |
 | `utils/build_exe.py`, `utils/launcher.c` | Rebuild the small desktop launchers. |

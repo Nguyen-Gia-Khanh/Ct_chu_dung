@@ -17,14 +17,12 @@ __pycache__/
 *.xlsx
 ~$*
 
-# Local tests and generated comparison results
-testers/
+# Generated comparison results
 xl/app_result/
 
 # Launcher scripts
 run.bat
 run.ps1
-test_flip/
 
 # Runtime data, local scratch space, and frontend dependencies
 data/*
