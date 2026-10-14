@@ -33,6 +33,21 @@ MKCERT_URL = "https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkc
 MKCERT_SHA256 = "d2660b50a9ed59eada480750561c96abc2ed4c9a38c6a24d93e30e0977631398"
 
 
+def load_token(folder: Path) -> str:
+    """Keep phone links valid across server restarts without removing authentication."""
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "session-token.txt"
+    try:
+        with path.open("x", encoding="ascii") as output:
+            output.write(secrets.token_urlsafe(24))
+    except FileExistsError:
+        pass
+    token = path.read_text(encoding="ascii").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{32}", token):
+        raise ValueError(f"Invalid scanner token in {path}. Remove that file to create a new phone link.")
+    return token
+
+
 def lan_addresses() -> list[str]:
     addresses = []
     try:
@@ -352,7 +367,7 @@ def main():
         from mapper.core.common import default_database_path
         lookup = WarehouseLookup(args.db if args.db is not None else default_database_path())
         prepare_tls(addresses)
-        token = secrets.token_urlsafe(24)
+        token = load_token(DATA)
         info = {"phone_urls": [f"https://{address}:{args.port}/#{token}"] if address else [],
                 "setup_urls": [f"http://{address}:{args.setup_port}/setup"] if address else []}
         store = ScanStore(DATA)
