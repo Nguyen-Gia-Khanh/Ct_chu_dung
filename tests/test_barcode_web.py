@@ -7,7 +7,7 @@ import io
 import ssl
 from contextlib import closing, redirect_stdout, redirect_stderr
 
-from barcode_web.server import ScanStore, ScannerServer, phone_address, DATA
+from barcode_web.server import ScanStore, ScannerServer, load_token, phone_address, DATA
 from barcode_web.lookup import WarehouseLookup
 from tests.test_barcode_lookup import create_test_warehouse
 from tests.support import WorkspaceTestCase
@@ -55,6 +55,25 @@ class BarcodeWebTests(WorkspaceTestCase):
         with self.store.path.open("a", encoding="utf-8") as output:
             output.write("\nnull\n[]\n{}\nnot-json\n")
         self.assertEqual(ScanStore(self.folder).recent(), self.store.recent())
+
+    def test_saved_phone_token_authenticates_after_server_restart(self):
+        token = load_token(self.folder)
+        self.server.token = token
+        payload = {"id": "restart-1", "text": "001234567890", "format": "Code128"}
+        self.assertEqual(self.request("POST", "/api/scans", payload, token=token)[0], 200)
+        info, lookup = self.server.info, self.server.lookup
+        self.close_server()
+        self.server = ScannerServer(("127.0.0.1", 0), ScanStore(self.folder),
+                                    load_token(self.folder), info, lookup=lookup)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.assertEqual(json.loads(self.request("GET", "/api/session")[1])["token"], token)
+        status, body = self.request("POST", "/api/scans", payload, token=token)
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["duplicate"])
+        self.assertEqual(json.loads(body)["lookup"]["locations"], ["L1-1A2-3", "L2-2B4-5"])
+        self.assertEqual(self.request("GET", "/api/scans", token="wrong")[0], 403)
+        self.assertEqual(self.request("GET", "/session-token.txt", token=token)[0], 404)
 
     def test_rejects_images_extra_fields_invalid_json_and_missing_session(self):
         payload = {"id": "scan-123", "text": "0123", "format": "Code128"}
@@ -237,3 +256,23 @@ class BarcodeWebTests(WorkspaceTestCase):
                 connection.close()
         self.assertEqual(output.getvalue().count("needs certificate trust setup"), 1)
         self.assertEqual(errors.getvalue(), "")
+
+
+class PersistentScannerLinkTests(WorkspaceTestCase):
+    def test_token_is_saved_reused_and_can_be_reset(self):
+        folder = self.folder / "scanner"
+        token = load_token(folder)
+        self.assertRegex(token, r"^[A-Za-z0-9_-]{32}$")
+        path = folder / "session-token.txt"
+        self.assertEqual(path.read_text(encoding="ascii"), token)
+        self.assertEqual(load_token(folder), token)
+        path.unlink()
+        self.assertNotEqual(load_token(folder), token)
+
+    def test_invalid_saved_tokens_fail_without_silently_changing_the_link(self):
+        path = self.folder / "session-token.txt"
+        for invalid in ("", "short", "a" * 32 + "\nextra", "a" * 31 + "!"):
+            path.write_text(invalid, encoding="ascii")
+            with self.assertRaisesRegex(ValueError, "Invalid scanner token"):
+                load_token(self.folder)
+            self.assertEqual(path.read_text(encoding="ascii"), invalid)
