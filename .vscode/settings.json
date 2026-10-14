@@ -10,5 +10,12 @@
             "database": "${workspaceFolder:Ct_chu_dung}/data/warehouse_locations.db"
         }
     ],
-    "git.ignoreLimitWarning": true
+    "git.ignoreLimitWarning": true,
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true
+    },
+    "search.exclude": {
+        "**/__pycache__": true
+    }
 }
