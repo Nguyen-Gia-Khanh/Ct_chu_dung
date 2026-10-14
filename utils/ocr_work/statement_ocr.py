@@ -15,6 +15,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 IMAGE_FOLDER = "images"
 OUTPUT_FILENAME = ""  # Empty: timestamped workbook beside this script.
 MIN_CONFIDENCE = 0.80  # Flag cells below this OCR score (0-1).
+# Divider fractions measured from the two supplied statements, after perspective correction.
+COLUMN_FRACTIONS = (0, 0.0362, 0.1114, 0.1877, 0.3842, 0.7239, 0.8216, 0.9066, 1)
+MIN_TABLE_WIDTH = 1600
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
@@ -33,6 +36,12 @@ def validate_edges(edges, extent, expected=None):
         raise ValueError("Boundaries must span the entire rectified table")
     if any(b - a < 3 for a, b in zip(edges, edges[1:])):
         raise ValueError("Boundaries must be increasing and at least three pixels apart")
+
+
+def amount_issues(records):
+    return [{"row": number, "column": column, "issue": "non_numeric_amount"}
+            for number, record in enumerate(records, 1) for column in COLUMNS[-3:]
+            if record[column] and not re.fullmatch(r"[+-]?\d[\d,.\s]*", record[column])]
 
 
 def assemble(column_results, row_edges, min_confidence):
@@ -79,6 +88,7 @@ def assemble(column_results, row_edges, min_confidence):
     for row, (previous, current) in enumerate(zip(indices, indices[1:]), 2):
         if previous is not None and current is not None and current != previous + 1:
             issues.append({"row": row, "issue": "index_gap_or_duplicate", "previous": previous, "current": current})
+    issues.extend(amount_issues(records))
     return {"rows": records, "confidence": confidence, "issues": issues}
 
 
@@ -156,6 +166,8 @@ def rectify(image, corners):
     points = np.asarray(corners, dtype=np.float32)
     if points.shape != (4, 2) or not cv2.isContourConvex(points.astype(np.int32)):
         raise ValueError("Could not determine a convex table outline")
+    if (points < -3).any() or (points[:, 0] > image.width + 2).any() or (points[:, 1] > image.height + 2).any():
+        raise ValueError("Detected table extends beyond the image; the complete table must be visible")
     width = round(max(np.linalg.norm(points[1] - points[0]), np.linalg.norm(points[2] - points[3])))
     height = round(max(np.linalg.norm(points[3] - points[0]), np.linalg.norm(points[2] - points[1])))
     if min(width, height) < 30:
@@ -165,8 +177,8 @@ def rectify(image, corners):
     return Image.fromarray(cv2.warpPerspective(np.asarray(image), matrix, (width, height)))
 
 
-def detect_table(image):
-    """Find this photo's nine vertical rules and correct its perspective."""
+def detect_table(image, column_fractions=None):
+    """Fit the printed rules; use a matching template to recover internal dividers."""
     import cv2
     import numpy as np
 
@@ -192,7 +204,7 @@ def detect_table(image):
         if not groups or middle - statistics.mean(item[0] for item in groups[-1]) > max(3, width * 0.008):
             groups.append([])
         groups[-1].append((middle, line))
-    if len(groups) != 9:
+    if (column_fractions is None and len(groups) != 9) or not 5 <= len(groups) <= 9:
         raise ValueError(f"Found {len(groups)} column boundaries; expected 9 for this eight-column statement. "
                          "Use a clearer photo showing all the vertical dividers.")
     rules, tops, bottoms = [], [], []
@@ -208,8 +220,8 @@ def detect_table(image):
         # Broken rules can end early. Fit the boundary supported by most dividers.
         ends = np.array(ends)
         best, valid = (-1, float("-inf")), None
-        for left in range(8):
-            for right in range(left + 1, 9):
+        for left in range(len(rules) - 1):
+            for right in range(left + 1, len(rules)):
                 edge = np.polyfit(middle_x[[left, right]], ends[[left, right]], 1)
                 residual = np.abs(np.polyval(edge, middle_x) - ends)
                 support = residual < height * 0.015
@@ -240,8 +252,77 @@ def detect_table(image):
     points = np.float32([[[np.polyval(rule, height / 2) / scale,
                           height / 2 / scale]] for rule in rules[1:-1]])
     columns = [0, *[round(float(point[0])) for point in cv2.perspectiveTransform(points, matrix)[:, 0]], table.width]
-    validate_edges(columns, table.width, 9)
-    return table, {"image_size": list(image.size), "corners": corners, "columns": columns}
+    layout = {"image_size": list(image.size), "corners": corners, "columns": columns,
+              "inferred_columns": [], "geometry_error": 0.0}
+    if column_fractions is not None:
+        expected = np.asarray(column_fractions)
+        validate_edges([round(float(x) * 10000) for x in expected], 10000, 9)
+        observed = np.asarray(columns) / table.width
+        matches = np.abs(observed[:, None] - expected).argmin(axis=1)
+        errors = np.abs(observed - expected[matches])
+        if len(set(matches)) != len(matches) or errors.max() > 0.012:
+            raise ValueError("Detected dividers do not match the statement column template")
+        missing = sorted(set(range(1, 8)) - set(matches))
+        complete = [round(float(x) * table.width) for x in expected]
+        for index, boundary in zip(matches, columns):
+            complete[int(index)] = boundary
+        layout["columns"] = complete
+        layout["inferred_columns"] = sorted({int(column) for edge in missing for column in (edge - 1, edge)})
+        layout["geometry_error"] = float(errors.mean()) + 0.01 * len(missing)
+    # Curvature appears as residuals around the fitted straight divider lines.
+    rule_span = middle_x[-1] - middle_x[0]
+    residuals = [abs(x - np.polyval(rule, y)) / rule_span
+                 for rule, group in zip(rules, groups)
+                 for _, (x0, y0, x1, y1) in group for x, y in ((x0, y0), (x1, y1))]
+    layout["geometry_error"] += float(np.mean(residuals))
+    validate_edges(layout["columns"], table.width, 9)
+    return table, layout
+
+
+def crop_document(image):
+    """Find the largest bright paper region, retaining a margin and native pixels."""
+    import cv2
+    import numpy as np
+
+    scale = min(1, 1200 / max(image.size))
+    preview = np.asarray(image.resize((round(image.width * scale), round(image.height * scale))))
+    # ponytail: bright-paper mask; use page segmentation if paper and background blend together.
+    gray = cv2.cvtColor(preview, cv2.COLOR_RGB2GRAY)
+    _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    mask[cv2.cvtColor(preview, cv2.COLOR_RGB2HSV)[:, :, 1] > 70] = 0
+    size = max(3, round(min(mask.shape) / 40))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((size, size), np.uint8))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return image
+    paper = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(paper) < mask.size * 0.15:
+        return image
+    x, y, w, h = cv2.boundingRect(paper)
+    margin = max(image.size) * 0.015
+    return image.crop((max(0, round(x / scale - margin)), max(0, round(y / scale - margin)),
+                       min(image.width, round((x + w) / scale + margin)),
+                       min(image.height, round((y + h) / scale + margin))))
+
+
+def normalize_table(table, layout):
+    """Align divider positions to the template in one resampling, without downscaling."""
+    import cv2
+    import numpy as np
+    from PIL import Image
+
+    width = max(table.width, MIN_TABLE_WIDTH)
+    height = round(table.height * width / table.width)
+    columns = [round(fraction * width) for fraction in COLUMN_FRACTIONS]
+    x = np.interp(np.arange(width), columns, layout["columns"]).astype(np.float32)
+    y = np.linspace(0, table.height - 1, height, dtype=np.float32)
+    map_x, map_y = np.meshgrid(x, y)
+    pixels = cv2.remap(np.asarray(table), map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    # Preserve native financial digit strokes; enlargement can change a 2 into a Z or a 4 into a 1.
+    layout["native_table"] = table
+    layout["native_columns"] = layout["columns"]
+    layout["columns"] = columns
+    return Image.fromarray(pixels), layout
 
 
 def detect_rows(column_results, height):
@@ -272,8 +353,11 @@ def detect_rows(column_results, height):
 
 def create_ocr():
     os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(SCRIPT_DIR.parents[1] / ".venv-ocr" / "model_cache"))
-    from paddleocr import PaddleOCR, TextRecognition
+    os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "BOS")
+    os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+    from paddleocr import PaddleOCR, TextRecognition, TextImageUnwarping
 
+    # Dewarp the complete paper in prepare_table, before any columns are cropped.
     ocr = PaddleOCR(device="cpu", enable_mkldnn=False, cpu_threads=4,
                     text_detection_model_name="PP-OCRv6_medium_det",
                     text_recognition_model_name="PP-OCRv6_medium_rec",
@@ -281,7 +365,12 @@ def create_ocr():
                     use_textline_orientation=False, text_rec_score_thresh=0.0)
     numbers = TextRecognition(model_name="PP-OCRv6_medium_rec", device="cpu",
                               enable_mkldnn=False, cpu_threads=4)
-    return ocr, numbers
+    try:
+        unwarper = TextImageUnwarping(model_name="UVDoc", device="cpu", enable_mkldnn=False, cpu_threads=4)
+    except Exception as error:
+        print(f"UVDoc unavailable; using perspective correction: {error}", flush=True)
+        unwarper = None
+    return ocr, numbers, unwarper
 
 
 def read_tokens(image, ocr, scale=1):
@@ -307,10 +396,14 @@ def read_index_tokens(table, layout, recognizer):
     import cv2
     import numpy as np
 
-    left, right = layout["columns"][:2]
+    native = layout.get("native_table", table)
+    left, right = layout.get("native_columns", layout["columns"])[:2]
+    scale_y = (table.height - 1) / (native.height - 1)
+    scale_x = (layout["columns"][1] - layout["columns"][0]) / (right - left)
     crops, boxes = [], []
     for top, bottom in zip(layout["rows"], layout["rows"][1:]):
-        crop = np.asarray(table.crop((left + 3, top, right - 3, bottom)))[:, :, ::-1].copy()
+        top, bottom = round(top / scale_y), min(native.height, round(bottom / scale_y))
+        crop = np.asarray(native.crop((left + 3, top, right - 3, bottom)))[:, :, ::-1].copy()
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         ink = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                     cv2.THRESH_BINARY_INV, 31, 10)
@@ -325,7 +418,8 @@ def read_index_tokens(table, layout, recognizer):
         x1 = min(crop.shape[1], max(b[2] for b in letters) + 1)
         y1 = min(crop.shape[0], max(b[3] for b in letters) + 1)
         crops.append(crop[y0:y1, x0:x1])
-        boxes.append([x0 + 3, y0 + top, x1 + 3, y1 + top])
+        boxes.append([round((x0 + 3) * scale_x), round((y0 + top) * scale_y),
+                      round((x1 + 3) * scale_x), round((y1 + top) * scale_y)])
     tokens = []
     if crops:
         for box, prediction in zip(boxes, recognizer.predict(crops, batch_size=8), strict=True):
@@ -339,22 +433,61 @@ def extract(table, layout, threshold, ocr, number_recognizer):
     column_results = [[]]
     # Read dates first; a full-height narrow index crop can merge many row numbers.
     for column in range(1, len(COLUMNS)):
-        left, right = layout["columns"][column:column + 2]
+        native = column >= 5 and "native_table" in layout
+        source = layout["native_table"] if native else table
+        boundaries = layout["native_columns"] if native else layout["columns"]
+        left, right = boundaries[column:column + 2]
         print(f"Reading column {column + 1}/8: {COLUMNS[column]}...", flush=True)
-        image = table.crop((left + 2, 0, right - 2, table.height))
-        column_results.append(read_tokens(image, ocr, scale=3 if image.width < 60 else 1))
+        image = source.crop((left + 2, 0, right - 2, source.height))
+        tokens = read_tokens(image, ocr, scale=3 if image.width < 60 else 1)
+        if native:
+            scale_x = (layout["columns"][column + 1] - layout["columns"][column]) / (right - left)
+            scale_y = (table.height - 1) / (source.height - 1)
+            for token in tokens:
+                x0, y0, x1, y1 = token["box"]
+                token["box"] = [round(x0 * scale_x), round(y0 * scale_y), round(x1 * scale_x), round(y1 * scale_y)]
+        column_results.append(tokens)
     layout["rows"] = detect_rows(column_results, table.height)
     print(f"Reading {len(layout['rows']) - 1} row-number cells...", flush=True)
     column_results[0] = read_index_tokens(table, layout, number_recognizer)
-    return assemble(column_results, layout["rows"], threshold)
+    result = assemble(column_results, layout["rows"], threshold)
+    for row in range(1, len(result["rows"]) + 1):
+        for column in layout.get("inferred_columns", ()):
+            result["issues"].append({"row": row, "column": COLUMNS[column], "issue": "column_boundary_inferred"})
+    return result
 
 
-def prepare_table(path):
+def prepare_table(path, unwarper=None):
     from PIL import Image, ImageOps
+    import numpy as np
 
     with Image.open(path) as source:
         image = ImageOps.exif_transpose(source).convert("RGB")
-    return detect_table(image)
+    baseline, baseline_error = None, None
+    try:
+        baseline = detect_table(image, COLUMN_FRACTIONS)
+    except ValueError as error:
+        baseline_error = error
+    selected = baseline
+    if unwarper is not None:
+        try:
+            paper = crop_document(image)
+            prediction = next(iter(unwarper.predict(np.asarray(paper)[:, :, ::-1].copy())))
+            flattened = Image.fromarray(np.asarray(prediction["doctr_img"])[:, :, ::-1])
+            corrected = detect_table(flattened, COLUMN_FRACTIONS)
+            # Require a clear improvement: a learned warp can damage an already-flat table.
+            if baseline is None or corrected[1]["geometry_error"] < baseline[1]["geometry_error"] * 0.8:
+                selected = corrected
+                print("Using UVDoc: corrected grid matches the column template.", flush=True)
+            else:
+                print("Keeping perspective correction: UVDoc did not improve the printed grid.", flush=True)
+        except Exception as error:
+            if baseline is None:
+                raise ValueError(f"Perspective correction: {baseline_error}; UVDoc: {error}") from error
+            print(f"Keeping perspective correction: UVDoc grid rejected ({error}).", flush=True)
+    if selected is None:
+        raise baseline_error
+    return normalize_table(*selected)
 
 
 def main():
@@ -382,12 +515,12 @@ def main():
     if not (3, 10) <= sys.version_info[:2] <= (3, 13):
         raise RuntimeError(f"Python {sys.version.split()[0]} cannot run this PaddleOCR setup. Use 64-bit Python 3.12 in a separate virtual environment.")
     results, failures = [], []
-    print("Loading PP-OCRv6 medium (CPU)...", flush=True)
-    ocr, number_recognizer = create_ocr()
+    print("Loading PP-OCRv6 medium and UVDoc (CPU)...", flush=True)
+    ocr, number_recognizer, unwarper = create_ocr()
     for number, path in enumerate(images, 1):
         print(f"[{number}/{len(images)}] {path.name}", flush=True)
         try:
-            table, current = prepare_table(path)
+            table, current = prepare_table(path, unwarper)
             result = extract(table, current, MIN_CONFIDENCE, ocr, number_recognizer)
             result["source"] = path.name
             results.append(result)
