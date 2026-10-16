@@ -14,6 +14,7 @@ const cells = document.querySelector("#cells");
 const aim = document.querySelector(".aim");
 const camera = document.querySelector(".camera");
 const mask = document.querySelector("#mask");
+const barcodeBox = document.querySelector("#barcode-box");
 const canvas = document.createElement("canvas");
 const context = canvas.getContext("2d");
 const fragment = location.hash.slice(1);
@@ -35,6 +36,7 @@ function message(text, error = false) {
 function clearMask() {
   mask.hidden = true;
   mask.removeAttribute("src");
+  barcodeBox.hidden = true;
 }
 
 function stop() {
@@ -126,6 +128,13 @@ function showLookup(found) {
 function receiveFrame(answer) {
   mask.hidden = !filter.checked || !answer.mask;
   if (!mask.hidden) mask.src = answer.mask;
+  barcodeBox.hidden = !answer.box;
+  if (!barcodeBox.hidden) {
+    const [x, y, width, height] = answer.box;
+    Object.assign(barcodeBox.style, {
+      left: `${x * 100}%`, top: `${y * 100}%`, width: `${width * 100}%`, height: `${height * 100}%`,
+    });
+  }
   processed++;
   elapsed += answer.milliseconds;
   const now = performance.now();
@@ -165,7 +174,7 @@ async function sendFrame(current) {
     timer = setTimeout(() => request.abort(), 5000);
     const response = await fetch("/api/frames", {
       method: "POST", headers: { "Content-Type": "image/jpeg", Authorization: `Bearer ${token}`,
-        "X-Enhance": filter.checked ? "1" : "0" }, body: jpeg, signal: request.signal,
+        "X-Enhance": "1", "X-Mask": filter.checked ? "1" : "0" }, body: jpeg, signal: request.signal,
     });
     if (!active || generation !== current) return;
     const answer = await response.json();

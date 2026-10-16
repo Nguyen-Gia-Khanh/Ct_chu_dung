@@ -147,10 +147,16 @@ strip is scaled uniformly to at most 1280 pixels wide and encoded as JPEG at
 92% quality. The phone sends it to authenticated `POST /api/frames` over local
 HTTPS. Processing runs on the laptop, with no phone app to install.
 
-**Mask** starts enabled for testing: the window is white everywhere except
+The default preview is live color, with a faint white horizontal center line
+and a red rectangle around the candidate barcode. The rectangle is an aiming
+hint, not confirmation of a successful read; only valid decoder results are
+accepted. It clears when the candidate disappears, capture fails or scanning
+stops. The compact strip and page layout are unchanged.
+
+**Mask** is optional and starts off: the window is white everywhere except
 thresholded black ink inside a likely barcode region. This is a diagnostic
-image returned as an in-memory PNG, not the image used for decoding. There is
-no red box around the whole tag. OpenCV's built-in `barcode_BarcodeDetector`
+image returned as an in-memory PNG, not the image used for decoding.
+OpenCV's built-in `barcode_BarcodeDetector`
 replaces the hand-written Sobel/contour tag locator. It runs at reduced width
 with white padding for the shallow strip. A successful ZXing position is a
 fallback when OpenCV finds no candidate; a scanline-only position is shown as
@@ -162,11 +168,21 @@ symbols. Rotation and native downscale attempts remain enabled. On a miss,
 an OpenCV horizontal grayscale closing estimates local illumination; division
 by that background compensates for uneven light. A gentle horizontal
 convolution `[-0.25, 1.5, -0.25]` then sharpens across the vertical bars before
-one retry. There are at most **two decoder calls per frame**. An unconfirmed
-candidate never crops the decoder input, since it may contain only part of a
-barcode. The old `red_regions` and `straighten` helpers are inactive here.
+one retry. If both full-strip attempts miss, a final retry straightens the
+native candidate with quiet-zone margins and applies adaptive local thresholding
+before decoding. If no candidate exists, this retry thresholds the full strip.
+The more sensitive local threshold helps low-contrast ink that the native
+scanline contrast threshold can reject. There are at most **three decoder calls
+per frame**. An incomplete candidate cannot prevent a full-strip read, because
+it is used only after the two full-strip attempts fail. The `red_regions`
+helper remains inactive; `straighten` is used by the final retry.
 
-Turning **Mask** off shows the live color strip and decodes the original once.
+**Mask** only changes the preview; lighting/angle retries stay enabled in the
+normal color view. `X-Mask: 1` requests the in-memory PNG; the normal API response
+has `mask: null`, saving encoding and transfer work. Normalized `box` coordinates
+are returned independently of the debug mask. `X-Enhance: 0` is still available
+to API clients for an original-only decode.
+
 The page fits the phone viewport without page scrolling: it keeps the scanned
 barcode, product ID/name, locations and compact controls. Routine status and
 FPS text are hidden; failures and retry controls remain visible when needed.
@@ -175,7 +191,9 @@ in the hidden `#rate` element for browser diagnostics.
 
 This is not a guarantee for folded or reflective packaging. Synthetic shadow,
 partial-glare and mild-curve checks exercise the pipeline; actual tags still
-need camera testing. Saturated glare or a fold can remove required bar detail.
+need camera testing. The geometric retry corrects a candidate's angle; it does
+not estimate or undo arbitrary nonlinear warping of crumpled packaging. Saturated glare
+or a fold can remove required bar detail.
 
 There is at most **one frame in flight per phone** and one concurrent decode
 across phones. Slower capture, Wi-Fi or decoding skips frames rather than
@@ -218,7 +236,7 @@ Each request uses the current session token from the phone-link fragment.
 - `server.py`: certificate generation, two foreground HTTP servers, bounded
   frame/text APIs, local receiver session, JSONL recording and shutdown.
 - `processing.py`: JPEG validation, native barcode localization, binary mask,
-  illumination compensation, directional convolution and single-code decoding.
+  illumination compensation, final geometric/local-threshold retry and single-code decoding.
 - `lookup.py`: read-only SQLite connection, exact/dashless matching, and reuse
   of the desktop persistence lookup for regular and exception locations.
 - `static/scanner.js`: camera lifecycle, JPEG upload, 15 FPS scheduling, one-frame
@@ -252,24 +270,31 @@ and does not access the warehouse database:
 
 ```powershell
 @'
-import base64, cv2, numpy as np
+import base64, cv2, numpy as np, zxingcpp
 from unittest.mock import patch
 from barcode_web import processing as p
-from tests.test_barcode_processing import component_label, packaging, jpeg
-label = component_label()
-label = cv2.cvtColor(cv2.cvtColor(label, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+from tests.test_barcode_processing import packaging, jpeg
+bars = np.asarray(zxingcpp.write_barcode(zxingcpp.BarcodeFormat.Code128, '06410KFL850', 660, 240))
+label = cv2.cvtColor(bars, cv2.COLOR_GRAY2BGR)
 shadow = (label * np.linspace(.25, 1, label.shape[1])[None, :, None]).astype(np.uint8)
-for scene in (label, shadow, packaging(label)[180:540]):
+flare = (235 + bars.astype(np.float32) / 255 * 20).astype(np.uint8)
+tilted = np.full((260, 800), 255, np.uint8)
+tilted[95:165, 70:730] = cv2.resize(bars, (660, 70))
+tilted = cv2.warpAffine(tilted, cv2.getRotationMatrix2D((400, 130), 15, 1), (800, 260), borderValue=255)
+for scene in (label, shadow, packaging(label)[180:540], flare, tilted):
     with patch.object(p, 'read', wraps=p.read) as reader:
-        answer = p.decode_frame(jpeg(scene))
-        assert reader.call_count <= 2
+        answer = p.decode_frame(jpeg(scene), include_mask=True)
+        assert reader.call_count <= 3
     assert answer['results'][0]['text'] == '06410KFL850'
     raw = base64.b64decode(answer['mask'].split(',')[1])
     mask = cv2.imdecode(np.frombuffer(raw, np.uint8), 0)
     y, x = np.where(mask == 0)
     assert set(np.unique(mask)) == {0, 255} and y.max() - y.min() > 10
 assert p.decode_frame(jpeg(shadow))['stage'] == 'local contrast'
-print('Single-code decode budget, shadow fallback and barcode mask passed.')
+assert p.decode_frame(jpeg(flare))['stage'] == 'local threshold'
+assert p.decode_frame(jpeg(tilted))['stage'] == 'angle / local threshold'
+assert p.decode_frame(jpeg(label))['mask'] is None
+print('Decode budget, shadow/flare/angle recovery, mask and default color path passed.')
 '@ | & '.\.venv\Scripts\python.exe' -
 ```
 

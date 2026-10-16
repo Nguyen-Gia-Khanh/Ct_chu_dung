@@ -5,11 +5,11 @@
 <title>Warehouse barcode scanner</title>
 <link rel="stylesheet" href="/style.css">
 <body class="scanner">
-<div class="camera"><video id="video" autoplay muted playsinline></video><img id="mask" alt="Detected barcode bars" hidden><div class="aim" hidden></div></div>
+<div class="camera"><video id="video" autoplay muted playsinline></video><img id="mask" alt="Detected barcode bars" hidden><div class="aim" hidden></div><div id="barcode-box" hidden aria-hidden="true"></div></div>
 <div class="controls">
   <button id="start" class="primary" aria-label="Start camera">Start</button>
   <button id="stop" disabled>Stop</button>
-  <label><input id="filter" type="checkbox" checked> Mask</label>
+  <label><input id="filter" type="checkbox"> Mask</label>
   <label><input id="cell-data" type="checkbox" aria-label="Include cell contents"> Cell contents</label>
 </div>
 <p id="status" role="status" aria-live="polite" hidden></p>

@@ -33,7 +33,8 @@ body.scanner { height: 100vh; height: 100dvh; box-sizing: border-box; overflow: 
 .scanner video { width: 100%; height: 100%; max-height: none; object-fit: cover; }
 .scanner .camera.mask-mode video { visibility: hidden; }
 .scanner #mask { position: absolute; inset: 0; width: 100%; height: 100%; background: white; }
-.scanner .aim { inset: 3px; width: auto; height: auto; border: 1px solid white; outline: none; }
+.scanner .aim { left: 4%; right: 4%; top: 50%; width: auto; height: 0; border: 0; border-top: 1px solid rgba(255, 255, 255, .4); outline: none; }
+.scanner #barcode-box { position: absolute; box-sizing: border-box; border: 2px solid #ff3030; pointer-events: none; }
 .scanner .controls { flex: 0 0 auto; gap: 8px; margin: 0; }
 .scanner button { padding: 6px 12px; }
 .scanner label { font-size: .85rem; display: inline-flex; align-items: center; min-height: 32px; }

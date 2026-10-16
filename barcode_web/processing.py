@@ -135,7 +135,7 @@ def barcode_mask(gray, points):
     return 'data:image/png;base64,' + base64.b64encode(encoded).decode('ascii')
 
 
-def decode_frame(data, *, enhance=True):
+def decode_frame(data, *, enhance=True, include_mask=False):
     started = time.perf_counter()
     if not 0 < len(data) <= MAX_FRAME_BYTES:
         raise ValueError("Camera frame is too large or empty.")
@@ -149,27 +149,38 @@ def decode_frame(data, *, enhance=True):
     box = mask = None
     stage = "original strip"
     results = read(image)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    points = barcode_region(gray)
     if enhance:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         # Keep the original's detail first; flatten uneven illumination only on a miss.
         if not results:
             background = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, np.ones((1, 51), np.uint8))
             contrast = cv2.divide(gray, np.maximum(background, 1), scale=255)
             results = read(cv2.filter2D(contrast, -1, VERTICAL_SHARPEN))
             stage = "local contrast"
-        # Never crop a decoder input to an unconfirmed box: it may contain only part of a code.
-        # Linear readers may report only a single scanline; use the locator for bar height.
-        points = barcode_region(gray)
-        if points is None and results:
-            points = np.float32(results[0]['position'])
-            center, (w, h), angle = cv2.minAreaRect(points)
-            band = max(8, height * .08)
-            points = cv2.boxPoints((center, (max(w, band), max(h, band)), angle))
+        if not results:
+            # Unconfirmed crops are only a final retry; the full strip was already tried twice.
+            corrected = straighten(contrast, points) if points is not None else None
+            retry = corrected if corrected is not None else contrast
+            binary = cv2.adaptiveThreshold(retry, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                           cv2.THRESH_BINARY, 31, 2)
+            results = read(binary)
+            stage = "angle / local threshold" if corrected is not None else "local threshold"
+            if results and corrected is not None:
+                # Retry positions use corrected-image coordinates; keep the source candidate for overlays.
+                results[0]['position'] = points.tolist()
+    # Linear readers may report only a single scanline; use the locator for bar height.
+    if points is None and results:
+        points = np.float32(results[0]['position'])
+        center, (w, h), angle = cv2.minAreaRect(points)
+        band = max(8, height * .08)
+        points = cv2.boxPoints((center, (max(w, band), max(h, band)), angle))
+    if include_mask:
         mask = barcode_mask(gray, points)
-        if points is not None:
-            x, y, w, h = cv2.boundingRect(points)
-            left, top = max(0, x), max(0, y)
-            right, bottom = min(width, x + w), min(height, y + h)
-            box = [left / width, top / height, (right - left) / width, (bottom - top) / height]
+    if points is not None:
+        x, y, w, h = cv2.boundingRect(points)
+        left, top = max(0, x), max(0, y)
+        right, bottom = min(width, x + w), min(height, y + h)
+        box = [left / width, top / height, (right - left) / width, (bottom - top) / height]
     return {"results": results, "milliseconds": round((time.perf_counter() - started) * 1000, 1),
             "stage": stage if results else "no barcode", "box": box, "mask": mask}
