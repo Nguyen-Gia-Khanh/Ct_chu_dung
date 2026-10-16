@@ -27,3 +27,22 @@ small { display: block; }
 #cells td, #cells th { white-space: normal; overflow-wrap: anywhere; padding: 8px; }
 #cells th:last-child { width: 3em; }
 [hidden] { display: none !important; }
+
+body.scanner { height: 100vh; height: 100dvh; box-sizing: border-box; overflow: hidden; padding: max(10px, env(safe-area-inset-top)) 12px max(10px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
+.scanner .camera { flex: 0 0 auto; width: 100%; aspect-ratio: 3.5 / 1; border: 2px solid white; box-sizing: border-box; background: white; }
+.scanner video { width: 100%; height: 100%; max-height: none; object-fit: cover; }
+.scanner .camera.mask-mode video { visibility: hidden; }
+.scanner #mask { position: absolute; inset: 0; width: 100%; height: 100%; background: white; }
+.scanner .aim { left: 4%; right: 4%; top: 50%; width: auto; height: 0; border: 0; border-top: 1px solid rgba(255, 255, 255, .4); outline: none; }
+.scanner #barcode-box { position: absolute; box-sizing: border-box; border: 2px solid #ff3030; pointer-events: none; }
+.scanner .controls { flex: 0 0 auto; gap: 8px; margin: 0; }
+.scanner button { padding: 6px 12px; }
+.scanner label { font-size: .85rem; display: inline-flex; align-items: center; min-height: 32px; }
+.scanner p { margin: 0; }
+.scanner #result { flex: 0 0 auto; padding: 8px; min-height: 1.2em; }
+.scanner #lookup { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; overflow: hidden; }
+.scanner #product { flex: 0 0 auto; overflow-wrap: anywhere; max-height: 4.5em; overflow: auto; }
+.scanner #locations { min-height: 1.5em; max-height: 30dvh; overflow: auto; flex: 0 1 auto; font-size: 1.4rem; padding: 8px; }
+.scanner #cells { flex: 1; min-height: 0; overflow: auto; }
+.scanner #cells table { margin-top: 0; font-size: .85rem; }
+.scanner #status, .scanner #delivery { font-size: .85rem; flex: 0 1 auto; overflow: auto; }

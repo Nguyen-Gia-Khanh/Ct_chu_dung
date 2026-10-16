@@ -140,31 +140,70 @@ results. A database failure keeps the scan pending on the phone for retry.
 
 The phone requests a rear camera preview at 30 FPS, with a 15 FPS minimum.
 Scanning targets **15 selected frames per second**, independently of preview.
-The whole camera view is scaled uniformly to at most 1280 × 720 and encoded
-as JPEG at 92% quality. The phone sends it to authenticated `POST /api/frames`
-over local HTTPS. Image processing and native ZXing decoding run on the laptop;
-the current scanner page loads no Web Worker or WASM decoder.
+The top camera window is a **3.5:1 horizontal strip**, including when the phone
+is held vertically. The video uses a centered cover crop, and capture uses the
+same source coordinates: pixels outside that window are never uploaded. The
+strip is scaled uniformly to at most 1280 pixels wide and encoded as JPEG at
+92% quality. The phone sends it to authenticated `POST /api/frames` over local
+HTTPS. Processing runs on the laptop, with no phone app to install.
 
-The laptop tries the untouched view first. With **Enhance red labels** enabled,
-it locates red ink in HSV and joins disconnected bars in a separate detection
-mask. It tries up to three cropped regions, leaving margins for quiet zones,
-then corrects a four-corner ink outline or deskews its enclosing rectangle.
-It tries the green channel (red ink appears dark against white), a gentle
-3 × 3 sharpening kernel, and Otsu thresholding as successive fallbacks. It also
-processes the full view if red detection misses the label. Sharpening is only
-a fallback because it can damage thin bars. Ink outlines approximate the label
-plane; wrinkled plastic, glare and blurred detail still need a clearer image.
+The default preview is live color, with a faint white horizontal center line
+and a red rectangle around the candidate barcode. The rectangle is an aiming
+hint, not confirmation of a successful read; only valid decoder results are
+accepted. It clears when the candidate disappears, capture fails or scanning
+stops. The compact strip and page layout are unchanged.
+
+**Mask** is optional and starts off: the window is white everywhere except
+thresholded black ink inside a likely barcode region. This is a diagnostic
+image returned as an in-memory PNG, not the image used for decoding.
+OpenCV's built-in `barcode_BarcodeDetector`
+replaces the hand-written Sobel/contour tag locator. It runs at reduced width
+with white padding for the shallow strip. A successful ZXing position is a
+fallback when OpenCV finds no candidate; a scanline-only position is shown as
+a narrow band. Candidate masks can still be incomplete or mistaken.
+
+The decoder tries the original strip first. It calls ZXing-C++'s **single-code
+reader**, stopping at the first valid barcode instead of searching for more
+symbols. Rotation and native downscale attempts remain enabled. On a miss,
+an OpenCV horizontal grayscale closing estimates local illumination; division
+by that background compensates for uneven light. A gentle horizontal
+convolution `[-0.25, 1.5, -0.25]` then sharpens across the vertical bars before
+one retry. If both full-strip attempts miss, a final retry straightens the
+native candidate with quiet-zone margins and applies adaptive local thresholding
+before decoding. If no candidate exists, this retry thresholds the full strip.
+The more sensitive local threshold helps low-contrast ink that the native
+scanline contrast threshold can reject. There are at most **three decoder calls
+per frame**. An incomplete candidate cannot prevent a full-strip read, because
+it is used only after the two full-strip attempts fail. The `red_regions`
+helper remains inactive; `straighten` is used by the final retry.
+
+**Mask** only changes the preview; lighting/angle retries stay enabled in the
+normal color view. `X-Mask: 1` requests the in-memory PNG; the normal API response
+has `mask: null`, saving encoding and transfer work. Normalized `box` coordinates
+are returned independently of the debug mask. `X-Enhance: 0` is still available
+to API clients for an original-only decode.
+
+The page fits the phone viewport without page scrolling: it keeps the scanned
+barcode, product ID/name, locations and compact controls. Routine status and
+FPS text are hidden; failures and retry controls remain visible when needed.
+Optional cell tables scroll inside the remaining space. FPS remains available
+in the hidden `#rate` element for browser diagnostics.
+
+This is not a guarantee for folded or reflective packaging. Synthetic shadow,
+partial-glare and mild-curve checks exercise the pipeline; actual tags still
+need camera testing. The geometric retry corrects a candidate's angle; it does
+not estimate or undo arbitrary nonlinear warping of crumpled packaging. Saturated glare
+or a fold can remove required bar detail.
 
 There is at most **one frame in flight per phone** and one concurrent decode
 across phones. Slower capture, Wi-Fi or decoding skips frames rather than
-building a queue. The measured scan rate and laptop processing time are
-visible; a 15 FPS target is not a hardware guarantee. The preview remains a
-normal video element. The camera stops when the tab becomes hidden and needs
+building a queue. A 15 FPS target is not a hardware guarantee. The camera stops
+when the tab becomes hidden and needs
 an explicit restart when you return.
 
 Supported decoder selection: linear barcodes (including Code 128, Code 39,
 EAN/UPC and ITF), QR and Data Matrix. Keep the whole code plus its blank margins
-inside the box. Hold still and avoid glare. Move a barcode out for about 1.2
+inside the horizontal strip. Move a barcode out for about 1.2
 seconds before deliberately scanning the same value again.
 
 JPEG frames are processed in memory and discarded without logging. Frame byte
@@ -174,12 +213,30 @@ phone and blocks accepting another barcode until retried. Retries reuse the
 same ID; the server suppresses duplicate delivery IDs in its last 2,000 records.
 Each request uses the current session token from the phone-link fragment.
 
+## Scanner framework check (2026-10-16)
+
+- [ZXing-C++](https://github.com/zxing-cpp/zxing-cpp) is the existing native
+  decoder, with Python and WebAssembly bindings; it is already an established
+  scanner engine, not a custom decoder. This change uses its single-code API.
+- [OpenCV's barcode detector](https://docs.opencv.org/4.x/dc/df7/classcv_1_1barcode_1_1BarcodeDetector.html)
+  is already installed and returns candidate quadrangles. Only localization
+  is used; ZXing continues to decode Code 128 and the other supported formats.
+- [Quagga2](https://github.com/ericblade/quagga2) is a browser alternative with
+  localization and configurable sampling. Its documentation recommends a
+  restricted scan area when users can aim through a rectangle. It has not
+  been benchmarked against this pipeline on real packaging, so a speed or
+  accuracy advantage is unproven.
+- [Dynamsoft's browser samples](https://github.com/Dynamsoft/barcode-reader-javascript-samples)
+  demonstrate a commercial browser SDK. Its vendor advertises curved/damaged
+  barcode support, but that is not verified here. Integration requires a
+  license; no trial, paid SDK, or external image-upload service was added.
+
 ## Source navigation and checks
 
 - `server.py`: certificate generation, two foreground HTTP servers, bounded
   frame/text APIs, local receiver session, JSONL recording and shutdown.
-- `processing.py`: JPEG validation, red-region cropping, perspective/angle
-  correction, convolution/threshold fallbacks and native ZXing decoding.
+- `processing.py`: JPEG validation, native barcode localization, binary mask,
+  illumination compensation, final geometric/local-threshold retry and single-code decoding.
 - `lookup.py`: read-only SQLite connection, exact/dashless matching, and reuse
   of the desktop persistence lookup for regular and exception locations.
 - `static/scanner.js`: camera lifecycle, JPEG upload, 15 FPS scheduling, one-frame
@@ -206,6 +263,39 @@ Run from the repository root:
 & '.\.venv\Scripts\python.exe' -m unittest tests.test_barcode_processing tests.test_barcode_web tests.test_barcode_lookup
 node tests/test_barcode_web.js
 & '.\.venv\Scripts\python.exe' -m unittest tests.test_barcode_web_browser
+```
+
+For the temporary mask/lighting path, this focused check uses generated images
+and does not access the warehouse database:
+
+```powershell
+@'
+import base64, cv2, numpy as np, zxingcpp
+from unittest.mock import patch
+from barcode_web import processing as p
+from tests.test_barcode_processing import packaging, jpeg
+bars = np.asarray(zxingcpp.write_barcode(zxingcpp.BarcodeFormat.Code128, '06410KFL850', 660, 240))
+label = cv2.cvtColor(bars, cv2.COLOR_GRAY2BGR)
+shadow = (label * np.linspace(.25, 1, label.shape[1])[None, :, None]).astype(np.uint8)
+flare = (235 + bars.astype(np.float32) / 255 * 20).astype(np.uint8)
+tilted = np.full((260, 800), 255, np.uint8)
+tilted[95:165, 70:730] = cv2.resize(bars, (660, 70))
+tilted = cv2.warpAffine(tilted, cv2.getRotationMatrix2D((400, 130), 15, 1), (800, 260), borderValue=255)
+for scene in (label, shadow, packaging(label)[180:540], flare, tilted):
+    with patch.object(p, 'read', wraps=p.read) as reader:
+        answer = p.decode_frame(jpeg(scene), include_mask=True)
+        assert reader.call_count <= 3
+    assert answer['results'][0]['text'] == '06410KFL850'
+    raw = base64.b64decode(answer['mask'].split(',')[1])
+    mask = cv2.imdecode(np.frombuffer(raw, np.uint8), 0)
+    y, x = np.where(mask == 0)
+    assert set(np.unique(mask)) == {0, 255} and y.max() - y.min() > 10
+assert p.decode_frame(jpeg(shadow))['stage'] == 'local contrast'
+assert p.decode_frame(jpeg(flare))['stage'] == 'local threshold'
+assert p.decode_frame(jpeg(tilted))['stage'] == 'angle / local threshold'
+assert p.decode_frame(jpeg(label))['mask'] is None
+print('Decode budget, shadow/flare/angle recovery, mask and default color path passed.')
+'@ | & '.\.venv\Scripts\python.exe' -
 ```
 
 Browser camera performance and focus must still be tested on real Android and

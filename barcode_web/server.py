@@ -337,7 +337,8 @@ class Handler(BaseHTTPRequestHandler):
             if len(frame) != length:
                 return self.reply(400, {"error": "Incomplete camera frame."})
             try:
-                answer = decode_frame(frame, enhance=self.headers.get("X-Enhance", "1") != "0")
+                answer = decode_frame(frame, enhance=self.headers.get("X-Enhance", "1") != "0",
+                                      include_mask=self.headers.get("X-Mask", "0") == "1")
             except ValueError as error:
                 return self.reply(400, {"error": str(error)})
             self.reply(200, {"ok": True, **answer})
