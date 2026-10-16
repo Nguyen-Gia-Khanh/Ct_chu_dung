@@ -145,15 +145,26 @@ as JPEG at 92% quality. The phone sends it to authenticated `POST /api/frames`
 over local HTTPS. Image processing and native ZXing decoding run on the laptop;
 the current scanner page loads no Web Worker or WASM decoder.
 
-The laptop tries the untouched view first. With **Enhance red labels** enabled,
-it locates red ink in HSV and joins disconnected bars in a separate detection
-mask. It tries up to three cropped regions, leaving margins for quiet zones,
-then corrects a four-corner ink outline or deskews its enclosing rectangle.
-It tries the green channel (red ink appears dark against white), a gentle
-3 × 3 sharpening kernel, and Otsu thresholding as successive fallbacks. It also
-processes the full view if red detection misses the label. Sharpening is only
-a fallback because it can damage thin bars. Ink outlines approximate the label
-plane; wrinkled plastic, glare and blurred detail still need a clearer image.
+The temporary **Black & white / vertical bars** mode starts enabled. The browser
+shows a grayscale, higher-contrast preview using CSS; this preview effect does
+not change the uploaded pixels. The laptop converts the original to grayscale,
+locates likely vertical bars with a horizontal Sobel derivative at reduced
+resolution, and joins the edges in a separate detection mask. A red rectangle
+marks the strongest candidate on the phone, even before it decodes. This is a
+hint for aiming, not proof of a valid barcode; text and other patterns can match.
+
+The laptop corrects a four-corner outline (or deskews its enclosing rectangle)
+with margins for quiet zones, then applies
+one horizontal sharpening convolution `[-0.25, 1.5, -0.25]` across the vertical
+black/white bars. It decodes that crop (or the filtered full view if no candidate
+was found). On failure it tries the untouched full view once, preserving a path
+for QR, rotated barcodes, and missed candidates. There are at most **two native
+decoder calls per frame**, replacing the previous red-region/channel/sharpen/
+threshold retry chain. The old `red_regions` helper is inactive in this mode.
+Turning the checkbox off restores the color preview, hides the red rectangle,
+and decodes the original frame once. The filtered preview is an aiming aid;
+the exact processed crop is not streamed back to the phone. Ink outlines still
+only approximate the label plane: folds, glare, and blur need real-tag testing.
 
 There is at most **one frame in flight per phone** and one concurrent decode
 across phones. Slower capture, Wi-Fi or decoding skips frames rather than
@@ -178,8 +189,8 @@ Each request uses the current session token from the phone-link fragment.
 
 - `server.py`: certificate generation, two foreground HTTP servers, bounded
   frame/text APIs, local receiver session, JSONL recording and shutdown.
-- `processing.py`: JPEG validation, red-region cropping, perspective/angle
-  correction, convolution/threshold fallbacks and native ZXing decoding.
+- `processing.py`: JPEG validation, vertical-bar detection, crop deskewing,
+  directional convolution, normalized candidate box and native ZXing decoding.
 - `lookup.py`: read-only SQLite connection, exact/dashless matching, and reuse
   of the desktop persistence lookup for regular and exception locations.
 - `static/scanner.js`: camera lifecycle, JPEG upload, 15 FPS scheduling, one-frame

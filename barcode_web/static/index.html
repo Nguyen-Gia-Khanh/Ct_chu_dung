@@ -5,15 +5,16 @@
 <title>Warehouse barcode scanner</title>
 <link rel="stylesheet" href="/style.css">
 <h1>Barcode scanner</h1>
-<div class="camera"><video id="video" autoplay muted playsinline></video><div class="aim" hidden></div></div>
+<div class="camera"><video id="video" class="monochrome" autoplay muted playsinline></video><div class="aim" hidden></div><div id="barcode-box" hidden aria-hidden="true"></div></div>
 <div class="controls">
   <button id="start" class="primary">Start camera</button>
   <button id="stop" disabled>Stop</button>
-  <label><input id="filter" type="checkbox" checked> Enhance red labels</label>
+  <label><input id="filter" type="checkbox" checked> Black &amp; white / vertical bars</label>
   <label><input id="cell-data" type="checkbox"> Include cell contents</label>
 </div>
 <p id="status" role="status" aria-live="polite">Open the current phone link from the laptop receiver.</p>
 <p id="rate" class="muted">Laptop processing. Camera preview runs independently.</p>
+<p class="muted">Red box = possible barcode, not a confirmed read. Turn off the filter to compare the original view.</p>
 <output id="result" aria-label="Last barcode">No barcode yet</output>
 <section id="lookup" hidden aria-live="polite">
   <p id="product"></p>

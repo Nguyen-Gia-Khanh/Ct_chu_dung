@@ -12,6 +12,7 @@ const locations = document.querySelector("#locations");
 const cellData = document.querySelector("#cell-data");
 const cells = document.querySelector("#cells");
 const aim = document.querySelector(".aim");
+const barcodeBox = document.querySelector("#barcode-box");
 const canvas = document.createElement("canvas");
 const context = canvas.getContext("2d");
 const fragment = location.hash.slice(1);
@@ -42,6 +43,7 @@ function stop() {
   startButton.disabled = false;
   stopButton.disabled = true;
   aim.hidden = true;
+  barcodeBox.hidden = true;
 }
 
 async function sendPending() {
@@ -113,12 +115,19 @@ function showLookup(found) {
 }
 
 function receiveFrame(answer) {
+  barcodeBox.hidden = !filter.checked || !answer.box;
+  if (!barcodeBox.hidden) {
+    const [x, y, width, height] = answer.box;
+    Object.assign(barcodeBox.style, {
+      left: `${x * 100}%`, top: `${y * 100}%`, width: `${width * 100}%`, height: `${height * 100}%`,
+    });
+  }
   processed++;
   elapsed += answer.milliseconds;
   const now = performance.now();
   if (now - sampleAt >= 1000) {
     document.querySelector("#rate").textContent =
-      `${(processed * 1000 / (now - sampleAt)).toFixed(1)} scans/s · ${(elapsed / processed).toFixed(0)} ms on laptop`;
+      `${(processed * 1000 / (now - sampleAt)).toFixed(1)} processed frames/s · ${(elapsed / processed).toFixed(0)} ms on laptop · ${answer.stage}`;
     processed = 0;
     elapsed = 0;
     sampleAt = now;
@@ -163,6 +172,7 @@ async function sendFrame(current) {
     receiveFrame(answer);
   } catch (error) {
     if (active && generation === current) {
+      barcodeBox.hidden = true;
       message(`Frame not processed: ${error.name === "AbortError" ? "Laptop timed out." : error.message} Retrying…`, true);
       previous = performance.now() + 1000;
     }
@@ -185,7 +195,7 @@ function frame(now) {
   if (!busy && !pending && now >= previous - 2 && video.readyState >= 2) {
     // Carry the deadline forward so video-frame jitter cannot accumulate drift.
     previous = Math.max(previous + 1000 / 15, now + 1);
-    // Send the whole view so the laptop can locate the red label and preserve quiet zones.
+    // Send original pixels; CSS changes only the preview. The laptop filters/crops once.
     const width = video.videoWidth, height = video.videoHeight;
     const scale = Math.min(1, 1280 / width, 720 / height);
     const targetWidth = Math.max(1, Math.round(width * scale));
@@ -253,6 +263,11 @@ async function start() {
 startButton.addEventListener("click", start);
 stopButton.addEventListener("click", () => { stop(); message("Camera stopped."); });
 retry.addEventListener("click", sendPending);
+filter.addEventListener("change", () => {
+  video.classList.toggle("monochrome", filter.checked);
+  barcodeBox.hidden = true;
+});
+video.classList.toggle("monochrome", filter.checked);
 cellData.addEventListener("change", () => {
   cells.replaceChildren();
   cells.hidden = true;

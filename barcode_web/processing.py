@@ -9,7 +9,8 @@ import zxingcpp
 MAX_FRAME_BYTES = 1_000_000
 MAX_FRAME_PIXELS = 1920 * 1080
 FORMATS = (zxingcpp.BarcodeFormat.LinearCodes, zxingcpp.BarcodeFormat.QRCode, zxingcpp.BarcodeFormat.DataMatrix)
-SHARPEN = np.array([[0, -.25, 0], [-.25, 2, -.25], [0, -.25, 0]], dtype=np.float32)
+# Sharpen across vertical bars, without mixing pixels along their length.
+VERTICAL_SHARPEN = np.array([[-.25, 1.5, -.25]], dtype=np.float32)
 
 
 def jpeg_dimensions(data):
@@ -98,6 +99,34 @@ def read(image):
     return [{"text": item.text, "format": str(item.format)} for item in results if item.valid and item.text][:1]
 
 
+def barcode_region(gray):
+    """Find one likely bar group; the edge mask is never sent to the decoder."""
+    scale = min(1, 640 / gray.shape[1])
+    small = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    edges = cv2.convertScaleAbs(cv2.Sobel(small, cv2.CV_32F, 1, 0, ksize=3))
+    # Average across several bars so isolated edges on black packaging fade out.
+    edges = cv2.blur(edges, (21, 9))
+    _, mask = cv2.threshold(edges, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 21), np.uint8))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True):
+        rect = cv2.minAreaRect(contour)
+        w, h = rect[1]
+        if min(w, h) < 12 or max(w, h) / min(w, h) < 1.5 or cv2.contourArea(contour) < 400:
+            continue
+        hull = cv2.convexHull(contour)
+        quad = cv2.approxPolyDP(hull, .03 * cv2.arcLength(hull, True), True)
+        points = (quad.reshape(4, 2) if len(quad) == 4 else cv2.boxPoints(rect)) / scale
+        x, y, width, height = cv2.boundingRect(points.astype(np.float32))
+        # Normalized coordinates align the overlay with either phone orientation.
+        left, top = max(0, x), max(0, y)
+        right, bottom = min(gray.shape[1], x + width), min(gray.shape[0], y + height)
+        box = [left / gray.shape[1], top / gray.shape[0],
+               (right - left) / gray.shape[1], (bottom - top) / gray.shape[0]]
+        return points, box
+    return None, None
+
+
 def decode_frame(data, *, enhance=True):
     started = time.perf_counter()
     if not 0 < len(data) <= MAX_FRAME_BYTES:
@@ -109,25 +138,21 @@ def decode_frame(data, *, enhance=True):
         raise ValueError("Invalid JPEG camera frame.") from error
     if image is None or image.shape[:2] != (height, width):
         raise ValueError("Invalid JPEG camera frame.")
-    results = read(image)
+    box = None
     stage = "original"
-    if not results and enhance:
-        # Green makes red ink dark against white, while luminance washes red ink out.
-        for region in (*red_regions(image), image):
-            green = region[:, :, 1]
-            results = read(green)
-            stage = "red contrast / crop / correction"
-            if results:
-                break
-            filtered = cv2.filter2D(green, -1, SHARPEN)
-            results = read(filtered)
-            stage = "kernel filter"
-            if results:
-                break
-            _, binary = cv2.threshold(filtered, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-            results = read(binary)
-            stage = "threshold"
-            if results:
-                break
+    if enhance:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        points, box = barcode_region(gray)
+        region = straighten(image, points) if points is not None else None
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY) if region is not None else gray
+        filtered = cv2.filter2D(gray, -1, VERTICAL_SHARPEN)
+        results = read(filtered)
+        stage = "vertical bars / correction" if region is not None else "vertical convolution"
+        # At most two decoder calls, including QR/rotated codes missed by the detector.
+        if not results:
+            results = read(image)
+            stage = "original fallback"
+    else:
+        results = read(image)
     return {"results": results, "milliseconds": round((time.perf_counter() - started) * 1000, 1),
-            "stage": stage if results else "no barcode"}
+            "stage": stage if results else "no barcode", "box": box}
