@@ -1,6 +1,7 @@
 """Tab 2 search navigation and Tab 6 catalog-only exception membership."""
 
 import tkinter as tk
+from tkinter import font as tkfont
 from unittest.mock import patch
 
 from mapper.persistence.database import Placement, WarehouseDatabase
@@ -30,6 +31,97 @@ class QuickLocationTests(WorkspaceTestCase):
     def search(self, query):
         self.view.search_var.set(query)
         self.app.refresh_product_lists()
+
+    def address_fields(self, view):
+        return [v.get() for v in (view.floor_var, view.side_var, view.shelf_var,
+                                 view.row_var, view.cell_var)]
+
+    def add_extra_locations(self, product_id="P1"):
+        db = self.app.database
+        db.commit_shelf("3", "CD", [3], {}, set(), side="4")
+        extra = [db.get_slot_address("2", "2", "AB", 1, 1),
+                 db.get_slot_address("3", "4", "CD", 1, 3)]
+        for address in extra:
+            db.assign_exception(product_id, address.slot_id, stock_qty=2)
+        self.app.on_exception_data_changed()
+        return extra
+
+    def test_location_columns_show_full_exception_list_and_fit_its_text(self):
+        self.add_extra_locations()
+        self.search("P1")
+        expected = ", ".join(self.app.database.get_product_locations("P1"))
+        for tree, item in ((self.view.queue_tree, "product::P1"),
+                           (self.view.catalog_tree, "catalog::P1")):
+            self.assertEqual(tree.set(item, "location_id"), expected)
+            font = tkfont.nametofont("TkDefaultFont", root=tree)
+            self.assertGreaterEqual(tree.column("location_id", "width"), font.measure(expected) + 20)
+        self.assertEqual(self.view.search_location_text.get(), f"Already at {expected}")
+
+    def test_multi_location_clicks_cycle_and_load_tab6_only_on_navigation(self):
+        extra = self.add_extra_locations()
+        exceptions = self.app.exceptions_view
+        before_fields = self.address_fields(exceptions)
+        self.search("unique bolts")
+        self.assertEqual(self.address_fields(exceptions), before_fields)
+        before_data = self.app.database.get_all_placement_items()
+        for index, address in enumerate([self.address, *extra, self.address]):
+            self.view.quick_move_button.invoke()
+            expected = [address.floor, address.side, address.shelf_code,
+                        str(address.row_number), str(address.slot_number)]
+            self.assertEqual(self.address_fields(self.view), expected)
+            self.assertEqual(self.address_fields(exceptions), expected)
+            self.assertEqual(self.app.selected_address, address)
+            self.assertEqual(exceptions.selected_address, address)
+            self.assertIn(f"location {index % 3 + 1}/3", self.app.status_text.get())
+        self.assertEqual(self.app.database.get_all_placement_items(), before_data)
+        # Ordinary edits and address loading never keep the two tabs linked.
+        self.view.row_var.set("1")
+        self.view.cell_var.set("2")
+        self.app.load_assignment_address()
+        self.assertEqual(exceptions.selected_address, self.address)
+        self.assertEqual(self.address_fields(exceptions), ["2", "2", "AB", "2", "2"])
+        exceptions.floor_var.set("9")
+        self.assertEqual(self.view.floor_var.get(), "2")
+
+    def test_single_location_navigation_leaves_tab6_independent(self):
+        exceptions = self.app.exceptions_view
+        fields = self.address_fields(exceptions)
+        self.search("P1")
+        self.view.quick_move_button.invoke()
+        self.assertEqual(self.address_fields(exceptions), fields)
+        self.assertIsNone(exceptions.selected_address)
+        self.assertEqual(self.view.queue_tree.set("product::P1", "location_id"), self.address.slot_name)
+
+    def test_cycle_resets_after_search_or_location_list_changes(self):
+        extra = self.add_extra_locations()
+        self.search("P1")
+        self.app.quick_move_search_product()
+        self.app.quick_move_search_product()
+        self.assertEqual(self.app.selected_address, extra[0])
+        self.search("P2")
+        self.search("P1")
+        self.app.quick_move_search_product()
+        self.assertEqual(self.app.selected_address, self.address)
+        self.app.database.remove_exception_from_slot("P1", extra[0].slot_id)
+        self.app.on_exception_data_changed()
+        self.app.quick_move_search_product()
+        self.assertEqual(self.app.selected_address, self.address)
+        self.app.quick_move_search_product()
+        self.assertEqual(self.app.selected_address, extra[1])
+        self.app.database.remove_exception_from_slot("P1", extra[1].slot_id)
+        self.app.on_exception_data_changed()
+        self.assertEqual(self.view.queue_tree.set("product::P1", "location_id"), self.address.slot_name)
+
+    def test_exception_only_product_cycles_without_repeating_duplicate_location(self):
+        extra = self.add_extra_locations("E1")
+        self.app.database.assign_exception("E1", extra[0].slot_id, stock_qty=3)
+        self.app.on_exception_data_changed()
+        self.search("E1")
+        self.assertEqual(self.view.catalog_tree.set("catalog::E1", "location_id"),
+                         ", ".join(address.slot_name for address in extra))
+        for address in [*extra, extra[0]]:
+            self.app.quick_move_search_product()
+            self.assertEqual(self.app.selected_address, address)
 
     def test_unique_name_loads_all_fields_and_saved_contents_without_moving_stock(self):
         before = self.app.database.get_all_placement_items()

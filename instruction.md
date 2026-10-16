@@ -105,10 +105,21 @@ Selecting a preview cell calls `_select_shelf_cell`, fills Row and Col, and call
 
 **Quick move to location** is enabled only for a nonempty search showing one
 distinct product across both lists. `CatalogActions.quick_move_search_product`
-refreshes those results before checking, loads coordinates from
-`get_product_location`, fills the address holders, opens the shelf pane, and
-calls `load_assignment_address`. Multiple locations use the primary placement,
-falling back to the first exception placement. Inventory is unchanged.
+refreshes those results before checking, reads `get_product_locations`, resolves
+the next cell through `get_slot_by_name`, fills the address holders, opens the
+shelf pane, and calls `load_assignment_address`. Repeated clicks cycle through
+all distinct saved locations (direct and exception), wrapping to the first.
+Search edits or a changed saved-location list restart the cycle. The status bar
+shows the position for multiple locations. Only multiple-location navigation
+also fills Floor / Side / Shelf / Row / Col in `exceptions_view` and calls its
+`load_address`; the tabs otherwise keep independent address variables. Inventory
+is unchanged.
+
+The queue and catalog Location ID values already use combined saved placements,
+including Tab 6 exceptions. `LocationAssignmentView.fit_location_column` sizes
+each list's location column to show the full text via the existing horizontal
+scrollbar. `tests/test_quick_location.py` covers full lists, direct-only fallback,
+cycling/reset, and the Tab 6 synchronization boundary.
 
 ### Normal clicks and Shift clicks
 

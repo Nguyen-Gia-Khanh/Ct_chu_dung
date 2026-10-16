@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 import tkinter as tk
-from tkinter import ttk
+from tkinter import font as tkfont, ttk
 
 from mapper.core.common import make_slot_name
 from mapper.persistence.database import Placement
@@ -366,6 +366,16 @@ class LocationAssignmentView(ttk.Frame):
         )
         self.catalog_transfer_button.grid(row=2, column=0, sticky="ew", pady=(5, 0))
         self.catalog_transfer_button.bind("<Button-1>", self._on_catalog_transfer_button_press)
+
+    @staticmethod
+    def fit_location_column(tree: ttk.Treeview) -> None:
+        """Keep every saved location readable with the existing horizontal scroll."""
+        font = tkfont.nametofont("TkDefaultFont", root=tree)
+        width = max(
+            (font.measure(tree.set(item, "location_id")) + 20 for item in tree.get_children()),
+            default=120,
+        )
+        tree.column("location_id", width=max(120, width))
 
     @staticmethod
     def _configure_product_tree(tree: ttk.Treeview) -> None:
