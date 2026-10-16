@@ -149,8 +149,16 @@ with Tab 4; see the [source guide](instruction.md#tab-1-shelf-designer).
 **Quick move to location**, beside **Revert shift transfer**, is available when the
 search matches exactly one distinct product across the queue and full catalog.
 It fills Floor / Side / Shelf / Row / Col, opens the Shelf Selection Pane,
-and loads that product's saved cell without moving inventory. Products with
-multiple locations open their primary saved cell (or first exception cell).
+and loads that product's saved cell without moving inventory. For multiple
+locations, each click visits the next saved cell, including Tab 6 exceptions,
+and wraps back to the first. The status bar shows the current position. Changing
+the search or the saved location list restarts the cycle. Only this multiple-location
+navigation also fills and loads Tab 6's address; ordinary address edits and
+single-location quick moves keep the tabs independent.
+
+Both Tab 2 product lists show the complete saved location list, or the direct
+assignment when there are no exceptions. The Location ID column expands to fit;
+use its horizontal scrollbar to read a long list.
 
 ### Shift shortcuts
 

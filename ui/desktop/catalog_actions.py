@@ -219,6 +219,7 @@ class CatalogActions:
         )
 
     def schedule_queue_refresh(self, *_args: object) -> None:
+        self._quick_move_cycle = None
         if self.search_after_id:
             self.root.after_cancel(self.search_after_id)
         self.search_after_id = self.root.after(180, self.refresh_product_lists)
@@ -273,6 +274,8 @@ class CatalogActions:
                 values = (product_id, product_name, qty_text)
             rows.append((f"product::{product_id}", values, tags))
         sync_tree_rows(self.assignments.queue_tree, rows)
+        if persistent_queue and hasattr(self.assignments, "fit_location_column"):
+            self.assignments.fit_location_column(self.assignments.queue_tree)
 
         shown = min(len(available), MAX_VISIBLE_PRODUCTS)
         suffix = (
@@ -326,6 +329,8 @@ class CatalogActions:
             )
             rows.append((f"catalog::{product_id}", (product_id, product_name, location_id), ()))
         sync_tree_rows(tree, rows)
+        if hasattr(self.assignments, "fit_location_column"):
+            self.assignments.fit_location_column(tree)
 
         shown = min(len(matches), MAX_VISIBLE_PRODUCTS)
         suffix = (
@@ -350,30 +355,51 @@ class CatalogActions:
         return next(iter(product_ids)) if len(product_ids) == 1 else None
 
     def quick_move_search_product(self) -> None:
-        """Navigate to the sole search result's saved cell without moving stock."""
+        """Cycle through the sole search result's saved cells without moving stock."""
         self.refresh_product_lists()
         product_id = self._single_search_product()
         if product_id is None:
             return
-        location = self.database.get_product_location(product_id)
-        if location is None:
+        locations = tuple(self.database.get_product_locations(product_id))
+        cycle = getattr(self, "_quick_move_cycle", None)
+        index = 0
+        if locations and cycle and cycle[:2] == (product_id, locations):
+            index = (cycle[2] + 1) % len(locations)
+        address = self.database.get_slot_by_name(locations[index]) if locations else None
+        if address is None:
+            self._quick_move_cycle = None
             messagebox.showinfo(
                 "No saved location", f"{product_id} has no saved shelf location.",
                 parent=self.root,
             )
             return
-        floor, side, shelf_code, _layout = self.database.get_shelf(location.shelf_id)
         view = self.assignments
         # Fill all shelf fields before rendering their shared preview once.
         view.hand_view.set("queue")
-        view.floor_var.set(floor)
-        view.side_var.set(side)
-        view.shelf_var.set(shelf_code)
+        view.floor_var.set(address.floor)
+        view.side_var.set(address.side)
+        view.shelf_var.set(address.shelf_code)
         view.hand_view.set("shelf")
         view._show_hand_view()
-        view.row_var.set(str(location.row_number))
-        view.cell_var.set(str(location.slot_number))
+        view.row_var.set(str(address.row_number))
+        view.cell_var.set(str(address.slot_number))
         self.load_assignment_address()
+        self._quick_move_cycle = (product_id, locations, index)
+        if len(locations) > 1:
+            exceptions = self.exceptions_view
+            for variable, value in (
+                (exceptions.floor_var, address.floor),
+                (exceptions.side_var, address.side),
+                (exceptions.shelf_var, address.shelf_code),
+                (exceptions.row_var, str(address.row_number)),
+                (exceptions.cell_var, str(address.slot_number)),
+            ):
+                variable.set(value)
+            exceptions.load_address()
+            self.status_text.set(
+                f"Loaded {address.slot_name} · location {index + 1}/{len(locations)} for {product_id}. "
+                "Click Quick move again for the next location."
+            )
 
     def refresh_search_location(self, raw_query: str | None = None) -> None:
         quick_move_button = getattr(self.assignments, "quick_move_button", None)
