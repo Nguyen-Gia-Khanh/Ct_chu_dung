@@ -12,7 +12,8 @@ const locations = document.querySelector("#locations");
 const cellData = document.querySelector("#cell-data");
 const cells = document.querySelector("#cells");
 const aim = document.querySelector(".aim");
-const barcodeBox = document.querySelector("#barcode-box");
+const camera = document.querySelector(".camera");
+const mask = document.querySelector("#mask");
 const canvas = document.createElement("canvas");
 const context = canvas.getContext("2d");
 const fragment = location.hash.slice(1);
@@ -28,6 +29,12 @@ let lastText = null, lastSeen = 0, pending = null, sending = false;
 function message(text, error = false) {
   status.textContent = text;
   status.className = error ? "error" : "";
+  status.hidden = !error;
+}
+
+function clearMask() {
+  mask.hidden = true;
+  mask.removeAttribute("src");
 }
 
 function stop() {
@@ -43,7 +50,7 @@ function stop() {
   startButton.disabled = false;
   stopButton.disabled = true;
   aim.hidden = true;
-  barcodeBox.hidden = true;
+  clearMask();
 }
 
 async function sendPending() {
@@ -51,6 +58,7 @@ async function sendPending() {
   sending = true;
   retry.hidden = true;
   delivery.className = "";
+  delivery.hidden = true;
   delivery.textContent = "Sending to laptop…";
   try {
     const response = await fetch("/api/scans", {
@@ -68,6 +76,7 @@ async function sendPending() {
   } catch (error) {
     delivery.textContent = `Not received: ${error.message} The barcode is kept on this phone; retry before scanning another.`;
     delivery.className = "error";
+    delivery.hidden = false;
     retry.hidden = false;
   } finally {
     sending = false;
@@ -115,13 +124,8 @@ function showLookup(found) {
 }
 
 function receiveFrame(answer) {
-  barcodeBox.hidden = !filter.checked || !answer.box;
-  if (!barcodeBox.hidden) {
-    const [x, y, width, height] = answer.box;
-    Object.assign(barcodeBox.style, {
-      left: `${x * 100}%`, top: `${y * 100}%`, width: `${width * 100}%`, height: `${height * 100}%`,
-    });
-  }
+  mask.hidden = !filter.checked || !answer.mask;
+  if (!mask.hidden) mask.src = answer.mask;
   processed++;
   elapsed += answer.milliseconds;
   const now = performance.now();
@@ -168,11 +172,11 @@ async function sendFrame(current) {
     if (!active || generation !== current) return;
     if (response.status === 429) return;
     if (!response.ok || !answer.ok) throw new Error(answer.error || "Laptop could not process the frame.");
-    message("Scanning on laptop. Keep the whole label inside the box.");
+    message("Scanning barcode strip.");
     receiveFrame(answer);
   } catch (error) {
     if (active && generation === current) {
-      barcodeBox.hidden = true;
+      clearMask();
       message(`Frame not processed: ${error.name === "AbortError" ? "Laptop timed out." : error.message} Retrying…`, true);
       previous = performance.now() + 1000;
     }
@@ -195,16 +199,20 @@ function frame(now) {
   if (!busy && !pending && now >= previous - 2 && video.readyState >= 2) {
     // Carry the deadline forward so video-frame jitter cannot accumulate drift.
     previous = Math.max(previous + 1000 / 15, now + 1);
-    // Send original pixels; CSS changes only the preview. The laptop filters/crops once.
+    // Match object-fit: cover exactly. Nothing outside the horizontal strip is uploaded.
     const width = video.videoWidth, height = video.videoHeight;
-    const scale = Math.min(1, 1280 / width, 720 / height);
-    const targetWidth = Math.max(1, Math.round(width * scale));
-    const targetHeight = Math.max(1, Math.round(height * scale));
+    const ratio = video.clientWidth / video.clientHeight;
+    const cropWidth = Math.min(width, height * ratio);
+    const cropHeight = cropWidth / ratio;
+    const scale = Math.min(1, 1280 / cropWidth);
+    const targetWidth = Math.max(16, Math.round(cropWidth * scale));
+    const targetHeight = Math.max(16, Math.round(cropHeight * scale));
     if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
       canvas.width = targetWidth;
       canvas.height = targetHeight;
     }
-    context.drawImage(video, 0, 0, width, height, 0, 0, canvas.width, canvas.height);
+    context.drawImage(video, (width - cropWidth) / 2, (height - cropHeight) / 2,
+      cropWidth, cropHeight, 0, 0, canvas.width, canvas.height);
     busy = true;
     void sendFrame(generation);
   }
@@ -240,8 +248,6 @@ async function start() {
         await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
       }
     } catch (_) { /* Device's default autofocus remains available. */ }
-    video.style.maxHeight = "none";
-    document.querySelector(".camera").style.maxWidth = `${Math.min(760, innerHeight * .62 * video.videoWidth / video.videoHeight)}px`;
     if (generation !== current) { stop(); return; }
     active = true;
     lastText = null;
@@ -249,7 +255,7 @@ async function start() {
     sampleAt = performance.now();
     stopButton.disabled = false;
     aim.hidden = false;
-    message("Scanning on laptop. Keep the whole label inside the box.");
+    message("Scanning barcode strip.");
     nextFrame(frame);
     if (pending) void sendPending();
   } catch (error) {
@@ -264,10 +270,10 @@ startButton.addEventListener("click", start);
 stopButton.addEventListener("click", () => { stop(); message("Camera stopped."); });
 retry.addEventListener("click", sendPending);
 filter.addEventListener("change", () => {
-  video.classList.toggle("monochrome", filter.checked);
-  barcodeBox.hidden = true;
+  camera.classList.toggle("mask-mode", filter.checked);
+  clearMask();
 });
-video.classList.toggle("monochrome", filter.checked);
+camera.classList.toggle("mask-mode", filter.checked);
 cellData.addEventListener("change", () => {
   cells.replaceChildren();
   cells.hidden = true;
@@ -282,6 +288,7 @@ try {
   if (pending) {
     document.querySelector("#result").textContent = pending.text;
     delivery.textContent = "A barcode is waiting to be sent. Press Retry sending.";
+    delivery.hidden = false;
     retry.hidden = false;
   }
 } catch (_) { sessionStorage.removeItem("pending-scan"); }

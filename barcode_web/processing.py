@@ -1,5 +1,6 @@
 """Laptop-side JPEG processing. Frames stay in memory; only decoded scans are saved."""
 
+import base64
 import time
 
 import cv2
@@ -11,6 +12,7 @@ MAX_FRAME_PIXELS = 1920 * 1080
 FORMATS = (zxingcpp.BarcodeFormat.LinearCodes, zxingcpp.BarcodeFormat.QRCode, zxingcpp.BarcodeFormat.DataMatrix)
 # Sharpen across vertical bars, without mixing pixels along their length.
 VERTICAL_SHARPEN = np.array([[-.25, 1.5, -.25]], dtype=np.float32)
+BARCODE_DETECTOR = cv2.barcode_BarcodeDetector()
 
 
 def jpeg_dimensions(data):
@@ -94,37 +96,43 @@ def red_regions(image):
 
 
 def read(image):
-    results = zxingcpp.read_barcodes(np.ascontiguousarray(image), formats=FORMATS,
-                                   text_mode=zxingcpp.TextMode.Plain, return_errors=False)
-    return [{"text": item.text, "format": str(item.format)} for item in results if item.valid and item.text][:1]
+    # Ask for one symbol so the native reader can stop after the first valid read.
+    item = zxingcpp.read_barcode(np.ascontiguousarray(image), formats=FORMATS, try_invert=False,
+                                text_mode=zxingcpp.TextMode.Plain, return_errors=False)
+    if item is None or not item.valid or not item.text:
+        return []
+    return [{"text": item.text, "format": str(item.format),
+             "position": [[p.x, p.y] for p in (item.position.top_left, item.position.top_right,
+                                               item.position.bottom_right, item.position.bottom_left)]}]
 
 
 def barcode_region(gray):
-    """Find one likely bar group; the edge mask is never sent to the decoder."""
+    """Use OpenCV's native barcode locator, rather than grouping label/text edges."""
+    scale = min(1, 480 / gray.shape[1])
+    small = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    # The native locator's scale scoring needs context around a very shallow strip.
+    padding = max(0, round((small.shape[1] * .75 - small.shape[0]) / 2))
+    padded = cv2.copyMakeBorder(small, padding, padding, 0, 0, cv2.BORDER_CONSTANT, value=255)
+    found, candidates = BARCODE_DETECTOR.detectMulti(padded)
+    if not found:
+        return None
+    return (max(candidates, key=cv2.contourArea) - np.float32([0, padding])) / scale
+
+
+def barcode_mask(gray, points):
+    """Show thresholded ink only inside the native candidate, white everywhere else."""
     scale = min(1, 640 / gray.shape[1])
     small = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-    edges = cv2.convertScaleAbs(cv2.Sobel(small, cv2.CV_32F, 1, 0, ksize=3))
-    # Average across several bars so isolated edges on black packaging fade out.
-    edges = cv2.blur(edges, (21, 9))
-    _, mask = cv2.threshold(edges, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 21), np.uint8))
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for contour in sorted(contours, key=cv2.contourArea, reverse=True):
-        rect = cv2.minAreaRect(contour)
-        w, h = rect[1]
-        if min(w, h) < 12 or max(w, h) / min(w, h) < 1.5 or cv2.contourArea(contour) < 400:
-            continue
-        hull = cv2.convexHull(contour)
-        quad = cv2.approxPolyDP(hull, .03 * cv2.arcLength(hull, True), True)
-        points = (quad.reshape(4, 2) if len(quad) == 4 else cv2.boxPoints(rect)) / scale
-        x, y, width, height = cv2.boundingRect(points.astype(np.float32))
-        # Normalized coordinates align the overlay with either phone orientation.
-        left, top = max(0, x), max(0, y)
-        right, bottom = min(gray.shape[1], x + width), min(gray.shape[0], y + height)
-        box = [left / gray.shape[1], top / gray.shape[0],
-               (right - left) / gray.shape[1], (bottom - top) / gray.shape[0]]
-        return points, box
-    return None, None
+    preview = np.full_like(small, 255)
+    if points is not None:
+        filtered = cv2.filter2D(small, -1, VERTICAL_SHARPEN)
+        binary = cv2.adaptiveThreshold(filtered, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                       cv2.THRESH_BINARY, 31, 9)
+        inside = np.zeros_like(small)
+        cv2.fillConvexPoly(inside, np.round(points * scale).astype(np.int32), 255)
+        preview[inside != 0] = binary[inside != 0]
+    encoded = cv2.imencode('.png', preview)[1]
+    return 'data:image/png;base64,' + base64.b64encode(encoded).decode('ascii')
 
 
 def decode_frame(data, *, enhance=True):
@@ -138,21 +146,30 @@ def decode_frame(data, *, enhance=True):
         raise ValueError("Invalid JPEG camera frame.") from error
     if image is None or image.shape[:2] != (height, width):
         raise ValueError("Invalid JPEG camera frame.")
-    box = None
-    stage = "original"
+    box = mask = None
+    stage = "original strip"
+    results = read(image)
     if enhance:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        points, box = barcode_region(gray)
-        region = straighten(image, points) if points is not None else None
-        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY) if region is not None else gray
-        filtered = cv2.filter2D(gray, -1, VERTICAL_SHARPEN)
-        results = read(filtered)
-        stage = "vertical bars / correction" if region is not None else "vertical convolution"
-        # At most two decoder calls, including QR/rotated codes missed by the detector.
+        # Keep the original's detail first; flatten uneven illumination only on a miss.
         if not results:
-            results = read(image)
-            stage = "original fallback"
-    else:
-        results = read(image)
+            background = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, np.ones((1, 51), np.uint8))
+            contrast = cv2.divide(gray, np.maximum(background, 1), scale=255)
+            results = read(cv2.filter2D(contrast, -1, VERTICAL_SHARPEN))
+            stage = "local contrast"
+        # Never crop a decoder input to an unconfirmed box: it may contain only part of a code.
+        # Linear readers may report only a single scanline; use the locator for bar height.
+        points = barcode_region(gray)
+        if points is None and results:
+            points = np.float32(results[0]['position'])
+            center, (w, h), angle = cv2.minAreaRect(points)
+            band = max(8, height * .08)
+            points = cv2.boxPoints((center, (max(w, band), max(h, band)), angle))
+        mask = barcode_mask(gray, points)
+        if points is not None:
+            x, y, w, h = cv2.boundingRect(points)
+            left, top = max(0, x), max(0, y)
+            right, bottom = min(width, x + w), min(height, y + h)
+            box = [left / width, top / height, (right - left) / width, (bottom - top) / height]
     return {"results": results, "milliseconds": round((time.perf_counter() - started) * 1000, 1),
-            "stage": stage if results else "no barcode", "box": box}
+            "stage": stage if results else "no barcode", "box": box, "mask": mask}
