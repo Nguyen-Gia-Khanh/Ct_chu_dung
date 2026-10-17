@@ -16,9 +16,9 @@ from pathlib import Path
 import sqlite3
 
 from mapper.core.common import clean_product_name, iso_timestamp, normalise_sku
-from mapper.persistence.schema import create_schema
+from mapper.persistence.schema import SCHEMA_VERSION, create_schema
 
-VERSION = 3
+VERSION = SCHEMA_VERSION
 COLLISION = {'H06430-K56-N12', 'H0643-0K5-6N12'}
 
 
@@ -54,6 +54,32 @@ def catalog_only_ids(origins) -> set[str]:
     """Legacy products also held temporary copies that were never hot sellers."""
     return {normalise_sku(row['product_id']) for row in origins
             if json.loads(row['snapshot'])['was_in_products'] is False}
+
+
+def flatten_layout(data: dict) -> dict:
+    """Keep cell IDs and empty rows while removing the row-identity table."""
+    rows_by_shelf, cells_by_row = defaultdict(list), defaultdict(list)
+    for row in data['shelf_rows']:
+        rows_by_shelf[row['shelf_id']].append(row)
+    for cell in data['slots']:
+        cells_by_row[cell['row_id']].append(cell)
+    shelves, slots, processed_rows = [], [], 0
+    for shelf in data['shelves']:
+        rows = sorted(rows_by_shelf[shelf['shelf_id']],key=lambda row:row['row_number'])
+        processed_rows += len(rows)
+        if [row['row_number'] for row in rows] != list(range(1,len(rows)+1)):
+            raise ValueError(f"Shelf {shelf['shelf_id']} has nonconsecutive rows; review its layout first.")
+        shelves.append({**shelf,'row_count':len(rows)})
+        for row in rows:
+            cells = sorted(cells_by_row[row['row_id']],key=lambda cell:cell['slot_number'])
+            if [cell['slot_number'] for cell in cells] != list(range(1,row['slot_count']+1)):
+                raise ValueError(f"Shelf row {row['row_id']} has inconsistent cells; review before migrating.")
+            slots.extend({'slot_id':cell['slot_id'],'shelf_id':shelf['shelf_id'],
+                          'row_number':row['row_number'],'slot_number':cell['slot_number'],
+                          'slot_name':cell['slot_name']} for cell in cells)
+    if len(slots) != len(data['slots']) or processed_rows != len(data['shelf_rows']):
+        raise ValueError('Orphan shelf rows or cells must be reviewed before migrating.')
+    return {'shelves':shelves,'slots':slots}
 
 
 def review(connection: sqlite3.Connection, honda_csv: Path | None = None) -> dict:
@@ -145,22 +171,39 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
             return {'status': 'already_applied', 'after': state}
         if 'schema_migrations' in tables and connection.execute(
                 'SELECT 1 FROM schema_migrations WHERE version=1').fetchone():
-            # Upgrade versions 1/2 without rebuilding inventory or registration data.
+            # Versions 1-3 share the old layout and origin tables.
             before = snapshot(connection)
+            custom = connection.execute("SELECT name FROM sqlite_master WHERE type IN ('view','trigger')").fetchall()
+            if custom:
+                raise RuntimeError(f'Custom views/triggers need review: {[row[0] for row in custom]}')
+            layout = flatten_layout(read_rows(connection))
+            slot_sequence = connection.execute("SELECT seq FROM sqlite_sequence WHERE name='slots'").fetchone()
             removed = connection.execute("DELETE FROM sqlite_sequence WHERE name='exception_placements'").rowcount
             excluded = catalog_only_ids(connection.execute('SELECT * FROM queue_origins'))
             memberships = [dict(row) for row in connection.execute('SELECT * FROM hot_sellers ORDER BY product_id')
                            if row['product_id'] in excluded]
             connection.executemany('DELETE FROM hot_sellers WHERE product_id=?',
                                    [(row['product_id'],) for row in memberships])
-            connection.execute('INSERT OR IGNORE INTO schema_migrations(version) VALUES (2)')
-            connection.execute('INSERT INTO schema_migrations(version) VALUES (?)', (VERSION,))
+            connection.execute('ALTER TABLE shelves ADD COLUMN row_count INTEGER NOT NULL DEFAULT 0 CHECK (row_count >= 0)')
+            connection.executemany('UPDATE shelves SET row_count=? WHERE shelf_id=?',
+                                   [(row['row_count'],row['shelf_id']) for row in layout['shelves']])
+            connection.execute('DROP TABLE slots')
+            connection.execute('DROP TABLE shelf_rows')
+            connection.execute('DROP TABLE queue_origins')
+            create_schema(connection)
+            connection.executemany('INSERT INTO slots(slot_id,shelf_id,row_number,slot_number,slot_name) VALUES (?,?,?,?,?)',
+                                   [tuple(row.values()) for row in layout['slots']])
+            if slot_sequence:
+                connection.execute("INSERT INTO sqlite_sequence(name,seq) SELECT 'slots',? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name='slots')",(slot_sequence[0],))
+                connection.execute("UPDATE sqlite_sequence SET seq=MAX(seq,?) WHERE name='slots'",(slot_sequence[0],))
+            connection.executemany('INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)', [(2,),(3,),(VERSION,)])
             after = snapshot(connection)
             if after['integrity_check'] != ['ok'] or after['foreign_key_check']:
-                raise sqlite3.IntegrityError('Membership cleanup failed SQLite checks.')
+                raise sqlite3.IntegrityError('Schema simplification failed SQLite checks.')
             connection.commit()
-            return {'status': 'applied_membership_cleanup', 'before': before, 'after': after,
+            return {'status': 'applied_simplification', 'before': before, 'after': after,
                     'excluded_catalog_only_hot_sellers': memberships,
+                    'dropped_tables': ['shelf_rows','queue_origins'],
                     'retired_sequence_rows_removed': removed}
         data = read_rows(connection)
         expected = {'products', 'catalog_products', 'placements', 'exception_placements',
@@ -238,7 +281,7 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
             raise ValueError(f'Products are both on-hand and placed: {sorted(hand.keys() & locations.keys())}')
         migrated['on_hand_queue'] = [{'product_id': pid, 'stock_qty': row['stock_qty'],
             'queued_at': iso_timestamp(row['queued_at'], legacy_utc=True)} for pid, row in hand.items()]
-        for table in ('queue_origins', 'stock_modifications', 'wait_to_update_csv', 'shelves', 'shelf_rows', 'slots'):
+        for table in ('stock_modifications', 'wait_to_update_csv', 'shelves', 'shelf_rows', 'slots'):
             rows = []
             for original in data[table]:
                 row = {key: value for key, value in original.items() if key != 'product_name'}
@@ -249,6 +292,8 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
                         row[column] = iso_timestamp(row[column], legacy_utc=True)
                 rows.append(row)
             migrated[table] = rows
+        migrated.update(flatten_layout(migrated))
+        del migrated['shelf_rows']
         # Do not rename referenced legacy tables: their FK targets must stay stable.
         for table in expected:
             connection.execute(f'DROP TABLE "{table}"')
@@ -260,11 +305,11 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
                 connection.executemany(f'INSERT INTO {table} ({columns}) VALUES ({marks})',
                                        [tuple(row.values()) for row in rows])
         for table, value in sequences.items():
-            if table in ('shelves', 'shelf_rows', 'slots', 'wait_to_update_csv'):
+            if table in ('shelves', 'slots', 'wait_to_update_csv'):
                 cursor = connection.execute('UPDATE sqlite_sequence SET seq=MAX(seq, ?) WHERE name=?', (value, table))
                 if cursor.rowcount == 0:
                     connection.execute('INSERT INTO sqlite_sequence(name,seq) VALUES (?,?)', (table,value))
-        connection.executemany('INSERT INTO schema_migrations(version) VALUES (?)', [(1,), (2,), (VERSION,)])
+        connection.executemany('INSERT INTO schema_migrations(version) VALUES (?)', [(1,), (2,), (3,), (VERSION,)])
         after = snapshot(connection)
         if after['integrity_check'] != ['ok'] or after['foreign_key_check']:
             raise sqlite3.IntegrityError(f'Migration checks failed: {after}')
@@ -272,6 +317,7 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
         return {'status': 'applied', 'before': before, 'after': after,
                 'registered_missing_catalog': missing, 'promoted_to_primary': promoted,
                 'excluded_catalog_only_hot_sellers': sorted(excluded & old_products.keys()),
+                'dropped_tables': ['returned_queue_products','shelf_rows','queue_origins'],
                 'returned_queue_moved': len(data['returned_queue_products']), 'returned_queue_conflicts': []}
     except BaseException:
         connection.rollback()
@@ -319,7 +365,7 @@ def main() -> None:
         result['backup'] = str(target.resolve())
         result['backup_sha256'] = hashlib.sha256(target.read_bytes()).hexdigest()
         filename = {'already_applied': 'last-verification.json',
-                    'applied_membership_cleanup': 'hot-seller-membership.json'}.get(result['status'], 'migration.json')
+                    'applied_simplification': 'simplification.json'}.get(result['status'], 'migration.json')
         (args.output / filename).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
         print(result['status'], 'integrity_check:', result['after']['integrity_check'],
               'foreign_key_check:', result['after']['foreign_key_check'])

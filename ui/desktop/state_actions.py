@@ -147,13 +147,7 @@ class StateActions:
         if not states:
             self.refresh_visible_cells(affected_slots)
             return
-        if not hasattr(self, "catalog_only_products"):
-            self.catalog_only_products = set()
         for product_id, state in states.items():
-            if state.get("catalog_only", False):
-                self.catalog_only_products.add(product_id)
-            else:
-                self.catalog_only_products.discard(product_id)
             product = state["product"]
             if product is None:
                 self.products.pop(product_id, None)
@@ -183,7 +177,6 @@ class StateActions:
         self, reload_catalog: bool = False, *, reload_shelves: bool = False
     ) -> None:
         product_rows = self.database.get_product_records()
-        self.catalog_only_products = self.database.get_catalog_only_product_ids()
         self.products = {
             product_id: product_name
             for product_id, product_name, _brand_name in product_rows

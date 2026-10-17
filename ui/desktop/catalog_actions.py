@@ -25,7 +25,6 @@ class CatalogActions:
         return (
             not self.is_queue_product_assigned(product_id)
             and product_id not in getattr(self, "on_hand_products", {})
-            and product_id not in getattr(self, "catalog_only_products", set())
         )
 
     def activate_catalog_product(self, event) -> str | None:
@@ -191,8 +190,6 @@ class CatalogActions:
 
         available = []
         for product_id, product_name in self.products.items():
-            if persistent_queue and product_id in getattr(self, "catalog_only_products", set()):
-                continue
             if not persistent_queue and not self.is_queue_product_available(product_id):
                 continue
             if query and query not in self.product_search[product_id]:

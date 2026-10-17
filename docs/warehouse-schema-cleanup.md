@@ -1,5 +1,9 @@
 # Warehouse schema cleanup - 2026-10-18
 
+This is the historical report for migration versions 1-3. The approved work is
+now on `main`; [version 4](warehouse-schema-simplification.md) subsequently
+removed `shelf_rows` and `queue_origins` and changed the layout columns below.
+
 Implemented on `feature/warehouse-schema-cleanup`, starting from `main` at
 `a89f079`. No merge or push. The unrelated OCR notebook edit is excluded.
 The operational database is `data/warehouse_locations.db`.

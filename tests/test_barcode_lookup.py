@@ -19,12 +19,10 @@ def create_test_warehouse(path: Path) -> Path:
             INSERT INTO catalog_products(product_id,full_name) VALUES
                 ('001234567890','Test part'),('CAT001','Catalog exception'),('NOLOC','Unassigned part'),('STAGE01','Staged exception');
             INSERT INTO hot_sellers(product_id) VALUES ('001234567890');
-            INSERT INTO shelves(shelf_id, floor, side, shelf_code) VALUES
-                (1, 'L1', '1', 'A'), (2, 'L2', '2', 'B');
-            INSERT INTO shelf_rows(row_id, shelf_id, row_number, slot_count) VALUES
-                (1, 1, 2, 3), (2, 2, 4, 5);
-            INSERT INTO slots(slot_id, row_id, slot_number, slot_name) VALUES
-                (1, 1, 3, 'L1-1A2-3'), (2, 2, 5, 'L2-2B4-5'), (3, 2, 4, 'L2-2B4-4');
+            INSERT INTO shelves(shelf_id, floor, side, shelf_code,row_count) VALUES
+                (1, 'L1', '1', 'A',2), (2, 'L2', '2', 'B',4);
+            INSERT INTO slots(slot_id, shelf_id, row_number, slot_number, slot_name) VALUES
+                (1, 1, 2, 3, 'L1-1A2-3'), (2, 2, 4, 5, 'L2-2B4-5'), (3, 2, 4, 4, 'L2-2B4-4');
             INSERT INTO placements(product_id,slot_id,stock_qty) VALUES ('001234567890',1,9),('CAT001',2,3),('STAGE01',3,1);
             INSERT INTO exception_placements(product_id,slot_id) VALUES ('001234567890',2);
             INSERT INTO wait_to_update_csv(product_id,slot_id,slot_name) VALUES ('STAGE01',3,'L2-2B4-4');

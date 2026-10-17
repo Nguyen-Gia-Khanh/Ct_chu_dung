@@ -1,6 +1,7 @@
 > Database cleanup: see [migration instructions](migrations/README.md) and the
-> [schema report](docs/warehouse-schema-cleanup.md). An older checkout cannot read
-> the migrated schema; keep the app on this feature branch until it is merged.
+> [current schema report](docs/warehouse-schema-simplification.md). `main` now
+> contains the cleanup and simplifications. Older checkouts require a matching
+> database backup; they cannot read the current schema.
 
 # Warehouse Shelf Mapper
 

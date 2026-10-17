@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import closing
-import json
 from typing import Any
 from mapper.core.common import iso_timestamp, normalise_sku, clean_product_name
 from .models import OnHandProduct, Placement, ProductLocation, validate_stock_quantity
@@ -15,40 +14,20 @@ LOCATION_SQL = """SELECT p.product_id, p.slot_id, p.stock_qty, p.assigned_at, 0 
 
 
 class InventoryOperations:
-    def get_catalog_only_product_ids(self) -> set[str]:
-        with closing(self.connect()) as c:
-            return {row['product_id'] for row in c.execute('SELECT * FROM queue_origins')
-                    if not json.loads(row['snapshot'])['was_in_products']}
-
-    def _remember_queue_origin(self, connection, product_id):
-        if connection.execute('SELECT 1 FROM queue_origins WHERE product_id=?', (product_id,)).fetchone():
-            return None
-        return {'was_in_products': connection.execute(
-            'SELECT 1 FROM hot_sellers WHERE product_id=?', (product_id,)).fetchone() is not None}
-
-    def _save_queue_origin(self, connection, product_id, snapshot):
-        if snapshot is not None:
-            connection.execute('INSERT OR REPLACE INTO queue_origins VALUES (?, ?)',
-                               (product_id, json.dumps(snapshot)))
-
     def _import_transfer_products(self, connection, records):
         for pid, (name, _brand) in records.items():
-            origin = self._remember_queue_origin(connection, pid)
             connection.execute('INSERT INTO catalog_products(product_id,full_name) VALUES (?,?) ON CONFLICT DO NOTHING',
                                (pid, clean_product_name(name)))
-            self._save_queue_origin(connection, pid, origin)
 
     def get_product_inventory_states(self, product_ids):
         ids = tuple(dict.fromkeys(normalise_sku(pid) for pid in product_ids))
-        states = {pid: {'product': None, 'placement': None, 'on_hand': None, 'catalog_only': False} for pid in ids}
+        states = {pid: {'product': None, 'placement': None, 'on_hand': None} for pid in ids}
         if not ids:
             return states
         with closing(self.connect()) as c:
             for offset in range(0, len(ids), 400):
                 batch = ids[offset:offset+400]
                 marks = ','.join('?' for _ in batch)
-                for row in c.execute(f'SELECT * FROM queue_origins WHERE product_id IN ({marks})', batch):
-                    states[row['product_id']]['catalog_only'] = not json.loads(row['snapshot'])['was_in_products']
                 for row in c.execute(f"""SELECT h.product_id, COALESCE(c.full_name,c.brand_name,h.product_id) AS name,
                                       COALESCE(c.brand_name,'') AS brand FROM hot_sellers h JOIN catalog_products c USING(product_id)
                                       WHERE h.product_id IN ({marks})""", batch):
@@ -85,8 +64,8 @@ class InventoryOperations:
     def get_product_location(self, product_id):
         pid = normalise_sku(product_id)
         with closing(self.connect()) as c:
-            row = c.execute("""SELECT p.*,s.slot_name,s.slot_number,r.row_number,r.shelf_id
-                               FROM placements p JOIN slots s USING(slot_id) JOIN shelf_rows r USING(row_id)
+            row = c.execute("""SELECT p.*,s.slot_name,s.slot_number,s.row_number,s.shelf_id
+                               FROM placements p JOIN slots s USING(slot_id)
                                WHERE p.product_id=?""", (pid,)).fetchone()
         if row is None:
             return None
@@ -230,7 +209,7 @@ class InventoryOperations:
         with closing(self.connect()) as c:
             for pid in dict.fromkeys(normalise_sku(pid) for pid in product_ids):
                 record = {'product_id':pid}
-                for table in ('placements','exception_placements','on_hand_queue','hot_sellers','queue_origins','wait_to_update_csv'):
+                for table in ('placements','exception_placements','on_hand_queue','hot_sellers','wait_to_update_csv'):
                     record[table] = [dict(row) for row in c.execute(f'SELECT * FROM {table} WHERE product_id=?',(pid,))]
                 records.append(record)
         return {'slot_id':slot_id,'products':records}
@@ -244,7 +223,7 @@ class InventoryOperations:
                 current = c.execute('SELECT slot_id FROM placements WHERE product_id=?',(pid,)).fetchone()
                 if current is None or current['slot_id'] != transfer_data['slot_id']:
                     raise ValueError(f'{pid} has moved since the Shift transfer. Nothing was reverted.')
-                for table in ('exception_placements','placements','on_hand_queue','hot_sellers','queue_origins','wait_to_update_csv'):
+                for table in ('exception_placements','placements','on_hand_queue','hot_sellers','wait_to_update_csv'):
                     c.execute(f'DELETE FROM {table} WHERE product_id=?',(pid,))
                     for row in record[table]:
                         c.execute(f'INSERT INTO {table} ('+', '.join(row)+') VALUES ('+', '.join('?' for _ in row)+')',tuple(row.values()))

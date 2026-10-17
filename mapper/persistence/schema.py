@@ -7,6 +7,7 @@ from uuid import uuid4
 from mapper.core.common import UTC_DEFAULT, EXCEL_ERRORS
 from .models import LayoutConflictError
 
+SCHEMA_VERSION = 4
 SKU_CHECK = "CHECK (length(product_id) > 0 AND product_id = upper(trim(product_id)) AND instr(product_id, '-') = 0 AND instr(product_id, ' ') = 0)"
 NAME_ERRORS = ', '.join("'" + value + "'" for value in sorted(EXCEL_ERRORS))
 SCHEMA_SQL = f"""
@@ -27,21 +28,16 @@ CREATE TABLE IF NOT EXISTS shelves (
     shelf_code TEXT NOT NULL COLLATE NOCASE,
     created_at TEXT NOT NULL DEFAULT {UTC_DEFAULT},
     updated_at TEXT NOT NULL DEFAULT {UTC_DEFAULT},
+    row_count INTEGER NOT NULL DEFAULT 0 CHECK (row_count >= 0),
     UNIQUE (floor, side, shelf_code)
-);
-CREATE TABLE IF NOT EXISTS shelf_rows (
-    row_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    shelf_id INTEGER NOT NULL REFERENCES shelves(shelf_id) ON DELETE CASCADE,
-    row_number INTEGER NOT NULL,
-    slot_count INTEGER NOT NULL CHECK (slot_count >= 0),
-    UNIQUE (shelf_id, row_number)
 );
 CREATE TABLE IF NOT EXISTS slots (
     slot_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    row_id INTEGER NOT NULL REFERENCES shelf_rows(row_id) ON DELETE CASCADE,
+    shelf_id INTEGER NOT NULL REFERENCES shelves(shelf_id) ON DELETE CASCADE,
+    row_number INTEGER NOT NULL CHECK (row_number > 0),
     slot_number INTEGER NOT NULL CHECK (slot_number > 0),
     slot_name TEXT NOT NULL UNIQUE,
-    UNIQUE (row_id, slot_number)
+    UNIQUE (shelf_id, row_number, slot_number)
 );
 CREATE TABLE IF NOT EXISTS placements (
     product_id TEXT NOT NULL PRIMARY KEY REFERENCES catalog_products(product_id) ON DELETE CASCADE {SKU_CHECK},
@@ -61,10 +57,6 @@ CREATE TABLE IF NOT EXISTS on_hand_queue (
     product_id TEXT NOT NULL PRIMARY KEY REFERENCES catalog_products(product_id) ON DELETE CASCADE {SKU_CHECK},
     stock_qty INTEGER CHECK (stock_qty IS NULL OR (stock_qty >= 0 AND typeof(stock_qty) = 'integer')),
     queued_at TEXT NOT NULL DEFAULT {UTC_DEFAULT}
-);
-CREATE TABLE IF NOT EXISTS queue_origins (
-    product_id TEXT NOT NULL PRIMARY KEY REFERENCES catalog_products(product_id) ON DELETE CASCADE {SKU_CHECK},
-    snapshot TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS stock_modifications (
     product_id TEXT NOT NULL PRIMARY KEY REFERENCES catalog_products(product_id) ON DELETE CASCADE {SKU_CHECK},
@@ -105,12 +97,13 @@ class SchemaOperations:
         with closing(self.connect()) as connection, connection:
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             catalog_columns = {row[1] for row in connection.execute('PRAGMA table_info(catalog_products)')}
-            if 'products' in tables or (catalog_columns and 'full_name' not in catalog_columns):
+            if tables & {'products', 'shelf_rows', 'queue_origins'} or (catalog_columns and 'full_name' not in catalog_columns):
                 raise RuntimeError(
                     'This database needs the backed-up warehouse cleanup migration. '
                     'Run python -m migrations.warehouse_cleanup --help using the repo .venv.'
                 )
             create_schema(connection)
+            connection.execute('INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)',(SCHEMA_VERSION,))
 
     @staticmethod
     def _rename_slots(connection: sqlite3.Connection, names: dict[int, str]) -> None:

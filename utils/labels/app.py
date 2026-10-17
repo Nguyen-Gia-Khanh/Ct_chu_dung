@@ -154,8 +154,7 @@ class LabelDatabase:
                 SELECT s.shelf_id, s.floor, s.side, s.shelf_code,
                        COUNT(DISTINCT sl.slot_id) AS cell_count
                 FROM shelves s
-                LEFT JOIN shelf_rows r ON r.shelf_id = s.shelf_id
-                LEFT JOIN slots sl ON sl.row_id = r.row_id
+                LEFT JOIN slots sl ON sl.shelf_id = s.shelf_id
                 GROUP BY s.shelf_id
                 ORDER BY s.floor COLLATE NOCASE, s.side COLLATE NOCASE, s.shelf_code COLLATE NOCASE
             """).fetchall()
@@ -174,22 +173,23 @@ class LabelDatabase:
             connection.execute("BEGIN")
             for shelf_id in dict.fromkeys(shelf_ids):
                 info = connection.execute(
-                    "SELECT shelf_id, floor, side, shelf_code FROM shelves WHERE shelf_id = ?", (shelf_id,),
+                    "SELECT shelf_id, floor, side, shelf_code, row_count FROM shelves WHERE shelf_id = ?", (shelf_id,),
                 ).fetchone()
                 if info is None:
                     raise ValueError("A selected shelf was removed. Refresh the database list.")
                 rows = connection.execute(
-                    "SELECT row_number, slot_count FROM shelf_rows WHERE shelf_id = ? ORDER BY row_number", (shelf_id,),
+                    "SELECT row_number, COUNT(*) AS slot_count FROM slots WHERE shelf_id = ? GROUP BY row_number", (shelf_id,),
                 ).fetchall()
+                counts = {row['row_number']:row['slot_count'] for row in rows}
                 label_name = "COALESCE(p.full_name,p.brand_name,p.product_id)"
                 records = connection.execute(f"""
-                    SELECT sl.slot_id, sl.slot_name, r.row_number, sl.slot_number,
+                    SELECT sl.slot_id, sl.slot_name, sl.row_number, sl.slot_number,
                            p.product_id, {label_name} AS label_name
-                    FROM shelf_rows r JOIN slots sl ON sl.row_id = r.row_id
+                    FROM slots sl
                     LEFT JOIN (SELECT product_id,slot_id FROM placements UNION SELECT product_id,slot_id FROM exception_placements) pl ON pl.slot_id = sl.slot_id
                     LEFT JOIN catalog_products p ON p.product_id = pl.product_id
-                    WHERE r.shelf_id = ?
-                    ORDER BY r.row_number, sl.slot_number, p.product_id COLLATE NOCASE
+                    WHERE sl.shelf_id = ?
+                    ORDER BY sl.row_number, sl.slot_number, p.product_id COLLATE NOCASE
                 """, (shelf_id,)).fetchall()
                 metadata, products = {}, defaultdict(list)
                 for record in records:
@@ -203,7 +203,7 @@ class LabelDatabase:
                 ) for slot_id, record in metadata.items())
                 result.append(Shelf(
                     shelf_id, info["floor"], info["side"], info["shelf_code"],
-                    tuple((row["row_number"], row["slot_count"]) for row in rows), cells,
+                    tuple((number,counts.get(number,0)) for number in range(1,info['row_count']+1)), cells,
                 ))
         return tuple(result)
 

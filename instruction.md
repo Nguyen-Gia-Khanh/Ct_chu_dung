@@ -1,7 +1,8 @@
 # Warehouse schema update
 
 The current schema and migration are documented in
-[docs/warehouse-schema-cleanup.md](docs/warehouse-schema-cleanup.md) and
+[docs/warehouse-schema-simplification.md](docs/warehouse-schema-simplification.md),
+[the earlier cleanup report](docs/warehouse-schema-cleanup.md), and
 [migrations/README.md](migrations/README.md). `hot_sellers` replaces `products`;
 only `catalog_products` stores names (`full_name`, `brand_name`). Only explicit
 working-product imports add hot-seller membership; assigning a catalog-only or
@@ -12,6 +13,9 @@ registration are separate exception states, independent of hot-seller membership
 `mapper.core.common.normalise_sku`; all stored times use UTC ISO 8601 offsets,
 and `vietnam_time` formats displayed times. Old databases require the explicit
 backed-up migration before starting this version.
+`slots` references `shelves` directly and stores `row_number`; `shelves.row_count`
+preserves empty rows. Cell counts come from `slots`. `shelf_rows` and
+`queue_origins` are retired; hot-seller membership comes only from `hot_sellers`.
 
 # Desktop source and behavior guide
 

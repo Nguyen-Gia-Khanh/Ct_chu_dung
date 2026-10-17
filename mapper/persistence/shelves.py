@@ -41,25 +41,26 @@ class ShelfOperations:
     def get_shelf(self, shelf_id: int) -> tuple[str, str, str, list[int]]:
         with closing(self.connect()) as connection, connection:
             shelf = connection.execute(
-                "SELECT floor, side, shelf_code FROM shelves WHERE shelf_id = ?",
+                "SELECT floor, side, shelf_code, row_count FROM shelves WHERE shelf_id = ?",
                 (shelf_id,),
             ).fetchone()
             if shelf is None:
                 raise KeyError(f"Shelf {shelf_id} does not exist.")
             rows = connection.execute(
                 """
-                SELECT slot_count
-                FROM shelf_rows
+                SELECT row_number, COUNT(*) AS slot_count
+                FROM slots
                 WHERE shelf_id = ?
-                ORDER BY row_number
+                GROUP BY row_number
                 """,
                 (shelf_id,),
             ).fetchall()
+        counts = {row['row_number']:row['slot_count'] for row in rows}
         return (
             shelf["floor"],
             shelf["side"],
             shelf["shelf_code"],
-            [row["slot_count"] for row in rows],
+            [counts.get(number,0) for number in range(1,shelf['row_count']+1)],
         )
 
     def get_slot_address(
@@ -77,15 +78,14 @@ class ShelfOperations:
             row = connection.execute(
                 """
                 SELECT slots.slot_id, shelves.shelf_id, shelves.floor, shelves.side,
-                       shelves.shelf_code, shelf_rows.row_number,
+                       shelves.shelf_code, slots.row_number,
                        slots.slot_number, slots.slot_name
                 FROM slots
-                JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
-                JOIN shelves ON shelves.shelf_id = shelf_rows.shelf_id
+                JOIN shelves ON shelves.shelf_id = slots.shelf_id
                 WHERE shelves.floor = ? COLLATE NOCASE
                   AND shelves.side = ? COLLATE NOCASE
                   AND shelves.shelf_code = ? COLLATE NOCASE
-                  AND shelf_rows.row_number = ?
+                  AND slots.row_number = ?
                   AND slots.slot_number = ?
                 """,
                 (floor, side, shelf_code, row_number, slot_number),
@@ -109,11 +109,10 @@ class ShelfOperations:
             row = connection.execute(
                 """
                 SELECT slots.slot_id, shelves.shelf_id, shelves.floor, shelves.side,
-                       shelves.shelf_code, shelf_rows.row_number,
+                       shelves.shelf_code, slots.row_number,
                        slots.slot_number, slots.slot_name
                 FROM slots
-                JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
-                JOIN shelves ON shelves.shelf_id = shelf_rows.shelf_id
+                JOIN shelves ON shelves.shelf_id = slots.shelf_id
                 WHERE slots.slot_name = ? COLLATE NOCASE
                 """,
                 (slot_name.strip(),),
@@ -136,11 +135,10 @@ class ShelfOperations:
             row = connection.execute(
                 """
                 SELECT slots.slot_id, shelves.shelf_id, shelves.floor, shelves.side,
-                       shelves.shelf_code, shelf_rows.row_number,
+                       shelves.shelf_code, slots.row_number,
                        slots.slot_number, slots.slot_name
                 FROM slots
-                JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
-                JOIN shelves ON shelves.shelf_id = shelf_rows.shelf_id
+                JOIN shelves ON shelves.shelf_id = slots.shelf_id
                 WHERE slots.slot_id = ?
                 """,
                 (slot_id,),
@@ -164,8 +162,8 @@ class ShelfOperations:
                 SELECT l.product_id, COALESCE(c.full_name,c.brand_name,l.product_id) AS product_name,
                        s.slot_name,l.stock_qty,l.assigned_at
                 FROM ({LOCATION_SQL}) l JOIN catalog_products c USING(product_id)
-                JOIN slots s USING(slot_id) JOIN shelf_rows r USING(row_id)
-                WHERE {where} ORDER BY r.row_number,s.slot_number,l.product_id COLLATE NOCASE
+                JOIN slots s USING(slot_id)
+                WHERE {where} ORDER BY s.row_number,s.slot_number,l.product_id COLLATE NOCASE
             """, (parameter,)).fetchall()
         return [(r['product_id'],r['product_name'],Placement(r['slot_name'],r['stock_qty'],r['assigned_at'])) for r in rows]
 
@@ -173,7 +171,7 @@ class ShelfOperations:
         return self._read_contents('l.slot_id=?',slot_id)
 
     def get_shelf_contents(self, shelf_id):
-        return self._read_contents('r.shelf_id=?',shelf_id)
+        return self._read_contents('s.shelf_id=?',shelf_id)
 
     @classmethod
     def _sync_layout(
@@ -196,10 +194,7 @@ class ShelfOperations:
             (row["row_number"], row["slot_number"]): row
             for row in connection.execute(
                 """
-                SELECT slots.*, shelf_rows.row_number
-                FROM slots
-                JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
-                WHERE shelf_rows.shelf_id = ?
+                SELECT * FROM slots WHERE shelf_id = ?
                 """,
                 (shelf_id,),
             )
@@ -207,7 +202,8 @@ class ShelfOperations:
         removed = [row for key, row in existing_slots.items() if key not in desired]
         for row in removed:
             if connection.execute(
-                "SELECT 1 FROM placements WHERE slot_id = ? LIMIT 1", (row["slot_id"],)
+                "SELECT 1 FROM placements WHERE slot_id = ? UNION ALL SELECT 1 FROM exception_placements WHERE slot_id = ? LIMIT 1",
+                (row["slot_id"],row["slot_id"])
             ).fetchone():
                 raise LayoutConflictError(
                     f"{row['slot_name']} still contains committed products. "
@@ -230,38 +226,14 @@ class ShelfOperations:
             },
         )
 
-        existing_rows = {
-            row["row_number"]: row["row_id"]
-            for row in connection.execute(
-                "SELECT row_id, row_number FROM shelf_rows WHERE shelf_id = ?",
-                (shelf_id,),
-            )
-        }
         # Ascending storage order means new rows extend the top of the shelf.
         for row_number, count in enumerate(layout, start=1):
-            row_id = existing_rows.get(row_number)
-            if row_id is None:
-                cursor = connection.execute(
-                    """
-                    INSERT INTO shelf_rows (shelf_id, row_number, slot_count)
-                    VALUES (?, ?, ?)
-                    """,
-                    (shelf_id, row_number, count),
-                )
-                row_id = cursor.lastrowid
-            else:
-                connection.execute(
-                    """
-                    UPDATE shelf_rows SET slot_count = ?
-                    WHERE row_id = ?
-                    """,
-                    (count, row_id),
-                )
             connection.executemany(
-                "INSERT INTO slots (row_id, slot_number, slot_name) VALUES (?, ?, ?)",
+                "INSERT INTO slots (shelf_id, row_number, slot_number, slot_name) VALUES (?, ?, ?, ?)",
                 (
                     (
-                        row_id,
+                        shelf_id,
+                        row_number,
                         cell,
                         make_slot_name(floor, shelf_code, row_number, cell, side=side),
                     )
@@ -270,8 +242,8 @@ class ShelfOperations:
                 ),
             )
         connection.execute(
-            "DELETE FROM shelf_rows WHERE shelf_id = ? AND row_number > ?",
-            (shelf_id, len(layout)),
+            "UPDATE shelves SET row_count = ? WHERE shelf_id = ?",
+            (len(layout), shelf_id),
         )
 
     def commit_shelf(
@@ -285,6 +257,8 @@ class ShelfOperations:
         side: str = "1",
         shelf_id: int | None = None,
     ) -> int:
+        if any(type(count) is not int or count < 0 for count in layout):
+            raise ValueError('Each shelf row needs a nonnegative whole-number cell count.')
         if any(not p.assigned_at for p in staged_assignments.values()):
             raise ValueError('Each assignment must include a timezone-aware assignment time.')
         staged_assignments = {normalise_sku(pid): Placement(p.slot_name,p.stock_qty,iso_timestamp(p.assigned_at))
@@ -368,8 +342,7 @@ class ShelfOperations:
                     """
                     SELECT slots.slot_id, slots.slot_name
                     FROM slots
-                    JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
-                    WHERE shelf_rows.shelf_id = ?
+                    WHERE slots.shelf_id = ?
                     """,
                     (shelf_id,),
                 )
@@ -437,8 +410,7 @@ class ShelfOperations:
                 """
                 SELECT COUNT(*) as count FROM placements p
                 JOIN slots s ON p.slot_id = s.slot_id
-                JOIN shelf_rows r ON s.row_id = r.row_id
-                WHERE r.shelf_id = ?
+                WHERE s.shelf_id = ?
                 """,
                 (shelf_id,),
             ).fetchone()["count"]
@@ -446,8 +418,7 @@ class ShelfOperations:
                 """
                 SELECT COUNT(*) as count FROM exception_placements ep
                 JOIN slots s ON ep.slot_id = s.slot_id
-                JOIN shelf_rows r ON s.row_id = r.row_id
-                WHERE r.shelf_id = ?
+                WHERE s.shelf_id = ?
                 """,
                 (shelf_id,),
             ).fetchone()["count"]

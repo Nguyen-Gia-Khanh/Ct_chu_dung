@@ -91,13 +91,11 @@ class ExceptionOperations:
             if slot is None:
                 raise ValueError('The selected cell no longer exists.')
             catalog = c.execute('SELECT * FROM catalog_products WHERE product_id=?',(pid,)).fetchone()
-            origin = self._remember_queue_origin(c,pid)
             c.execute('INSERT INTO catalog_products(product_id,full_name) VALUES (?,?) ON CONFLICT DO NOTHING',(pid,name))
             changed = catalog and name and name != (catalog['full_name'] or catalog['brand_name'] or pid)
             if changed:
                 c.execute('UPDATE catalog_products SET full_name=? WHERE product_id=?',(name,pid))
                 c.execute('UPDATE wait_to_update_csv SET csv_updated=0,catalog_updated=0 WHERE product_id=?',(pid,))
-            self._save_queue_origin(c,pid,origin)
             primary = c.execute('SELECT * FROM placements WHERE product_id=?',(pid,)).fetchone()
             if primary is None:
                 hand = c.execute('SELECT stock_qty FROM on_hand_queue WHERE product_id=?',(pid,)).fetchone()

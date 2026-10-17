@@ -42,7 +42,7 @@ class ExceptionCellTransferTests(WorkspaceTestCase):
             return {
                 table: [dict(row) for row in connection.execute(f"SELECT * FROM {table} ORDER BY rowid")]
                 for table in ("placements", "exception_placements", "wait_to_update_csv",
-                              "hot_sellers", "catalog_products", "queue_origins")
+                              "hot_sellers", "catalog_products")
             }
 
     def assert_moved_records(self, before, destinations):

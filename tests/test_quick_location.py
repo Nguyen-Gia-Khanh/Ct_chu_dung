@@ -165,7 +165,7 @@ class QuickLocationTests(WorkspaceTestCase):
     def test_existing_queue_product_keeps_membership_when_exception_added(self):
         db = self.app.database
         db.assign_exception("P1", self.address.slot_id, stock_qty=2)
-        self.assertNotIn("P1", db.get_catalog_only_product_ids())
+        self.assertIn("P1", dict(db.get_products()))
         self.app.on_exception_data_changed()
         self.search("P1")
         self.assertEqual(self.view.queue_tree.get_children(), ("product::P1",))

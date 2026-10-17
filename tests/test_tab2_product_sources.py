@@ -48,7 +48,6 @@ class ProductSourceTests(WorkspaceTestCase):
         app.product_search = {"P1": "p1 bolts", "P2": "p2 washers"}
         app.product_brand_names = {"P1": "Bolts", "P2": "Washers"}
         app.catalog_products = {"C1": ("Catalog part", "Part")}
-        app.catalog_only_products = set()
         app.selected_address = self.first
         app.committed_locations = {}
         app.committed_placements = {}
@@ -130,7 +129,7 @@ class ProductSourceTests(WorkspaceTestCase):
         self.assertEqual(self.db.get_on_hand_products(), {})
         self.assertEqual(self.db.get_placement_details()["P1"].stock_qty, 7)
         self.assertEqual(self.db.get_placement_details()["P2"].stock_qty, 11)
-        self.assertEqual(self.db.get_catalog_only_product_ids(), set())
+        self.assertEqual(set(dict(self.db.get_products())), {"P1", "P2"})
 
     def test_cancel_normal_catalog_assignment_has_no_inventory_changes(self):
         app = self.make_actions()
@@ -165,7 +164,7 @@ class ProductSourceTests(WorkspaceTestCase):
         app.remember_imported_products = lambda records: StateActions.remember_imported_products(app, records)
         app.apply_inventory_changes = Mock()
         StateActions.reconcile_inventory_products(app, ["C1"])
-        self.assertIn("C1", app.catalog_only_products)
+        self.assertNotIn("C1", app.products)
         app.refresh_product_queue()
         self.assertNotIn("product::C1", app.assignments.queue_tree.get_children())
 
@@ -181,5 +180,4 @@ class ProductSourceTests(WorkspaceTestCase):
         app.assignments.catalog_tree.selection.return_value = ("catalog::C1",)
         app.assign_catalog_selection_to_address(to_shelf=True)
         self.assertEqual(self.db.get_placement_details()["C1"].stock_qty, 999)
-        self.assertEqual(self.db.get_catalog_only_product_ids(), {"C1"})
         self.assertNotIn("C1", dict(self.db.get_products()))

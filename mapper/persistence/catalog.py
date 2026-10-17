@@ -19,8 +19,6 @@ class CatalogOperations:
                 connection.execute(
                     f"""INSERT INTO hot_sellers(product_id) VALUES (?) ON CONFLICT(product_id)
                         DO UPDATE SET imported_at={UTC_DEFAULT}""", (pid,))
-                connection.execute('INSERT OR REPLACE INTO queue_origins(product_id,snapshot) VALUES (?, ?)',
-                                   (pid, '{"was_in_products": true}'))
         return len(records) - len(existing), len(existing)
 
     @staticmethod
