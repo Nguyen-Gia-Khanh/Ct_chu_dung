@@ -18,11 +18,14 @@ const barcodeBox = document.querySelector("#barcode-box");
 const canvas = document.createElement("canvas");
 const context = canvas.getContext("2d");
 const fragment = location.hash.slice(1);
-if (fragment) {
-  sessionStorage.setItem("scanner-token", fragment);
-  history.replaceState(null, "", location.pathname);
-}
-const token = sessionStorage.getItem("scanner-token");
+// Restored phone tabs can lose sessionStorage after the browser is suspended.
+const token = fragment || localStorage.getItem("scanner-token") || sessionStorage.getItem("scanner-token");
+if (token) localStorage.setItem("scanner-token", token);
+sessionStorage.removeItem("scanner-token");
+if (fragment) history.replaceState(null, "", location.pathname);
+addEventListener("hashchange", () => {
+  if (location.hash.slice(1)) location.reload();
+});
 let stream, frameRequest, frameHandle, active = false, starting = false, busy = false;
 let previous = 0, processed = 0, elapsed = 0, sampleAt = 0, generation = 0;
 let lastText = null, lastSeen = 0, pending = null, sending = false;
@@ -241,7 +244,8 @@ async function start() {
   try {
     // Verify the session before asking permission; old links must not silently lose scans.
     const check = await fetch("/api/scans", { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5000) });
-    if (!check.ok) throw new Error("Phone link expired. Open the new link from the laptop receiver.");
+    if (check.status === 403) throw new Error("Phone link expired. Open the new link from the laptop receiver.");
+    if (!check.ok) throw new Error("Laptop is unavailable. Check the server, then press Start camera again.");
     if (generation !== current) return;
     stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: {
       facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 },

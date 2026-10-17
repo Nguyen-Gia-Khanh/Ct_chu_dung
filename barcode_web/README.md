@@ -89,9 +89,15 @@ written to `data/barcode_web/network-setup.json`. It never installs certificates
 If the laptop's LAN IP changes, restart the launcher: it regenerates the server
 certificate using the same local CA. The phone does not need to reinstall that
 CA. The phone link stays the same across server restarts while the laptop's LAN
-IP and ports stay the same. After updating to this version, open the receiver's
-phone link once; on later restarts, refresh that phone tab and press **Start
-camera**. Pending scans survive a reload in the same tab; use **Retry sending**.
+IP and ports stay the same. The phone remembers its access key in this browser's
+local storage, so restoring a tab or reopening its address after a browser restart
+does not require pasting the full phone link again. Existing tabs migrate their
+old temporary key when refreshed. If a tab has already lost that key, open the
+receiver's full phone link once to save it. On later server restarts, refresh the
+phone tab and press **Start camera**. If the camera is still running, frame
+uploads retry automatically. Pending scans survive a reload in the same tab;
+use **Retry sending**. Clearing this site's browser data or using a new private
+browsing session requires opening the full phone link again.
 
 The random access token is created once and saved in
 `data/barcode_web/session-token.txt`, which is ignored by Git and is not served
