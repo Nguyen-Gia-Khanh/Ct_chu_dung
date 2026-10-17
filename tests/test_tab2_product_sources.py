@@ -182,3 +182,4 @@ class ProductSourceTests(WorkspaceTestCase):
         app.assign_catalog_selection_to_address(to_shelf=True)
         self.assertEqual(self.db.get_placement_details()["C1"].stock_qty, 999)
         self.assertEqual(self.db.get_catalog_only_product_ids(), {"C1"})
+        self.assertNotIn("C1", dict(self.db.get_products()))

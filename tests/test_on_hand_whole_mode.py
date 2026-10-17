@@ -48,10 +48,11 @@ class DatabaseDirectCatalogToShelfTests(unittest.TestCase):
                 "CAT2": Placement(self.address.slot_name, 999, FIRST_TIME),
             },
         )
-        # Products should also be present in products table
+        # Catalog assignment must not turn a product into a hot seller.
         products = dict(self.database.get_products())
-        self.assertIn("CAT1", products)
-        self.assertIn("CAT2", products)
+        self.assertNotIn("CAT1", products)
+        self.assertNotIn("CAT2", products)
+        self.assertEqual({row[0] for row in self.database.get_catalog_products()}, {"CAT1", "CAT2"})
 
     def test_assign_catalog_direct_clears_previous_placements_and_queues(self) -> None:
         self.database.import_products({"CAT1": "Product One"})

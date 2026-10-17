@@ -97,7 +97,6 @@ class ExceptionOperations:
             if changed:
                 c.execute('UPDATE catalog_products SET full_name=? WHERE product_id=?',(name,pid))
                 c.execute('UPDATE wait_to_update_csv SET csv_updated=0,catalog_updated=0 WHERE product_id=?',(pid,))
-            c.execute('INSERT INTO hot_sellers(product_id) VALUES (?) ON CONFLICT DO NOTHING',(pid,))
             self._save_queue_origin(c,pid,origin)
             primary = c.execute('SELECT * FROM placements WHERE product_id=?',(pid,)).fetchone()
             if primary is None:

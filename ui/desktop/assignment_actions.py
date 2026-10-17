@@ -215,7 +215,7 @@ class AssignmentActions:
                 f"hand::{product_id}",
                 (
                     product_id,
-                    self.products.get(product_id, ""),
+                    self.catalog_products.get(product_id, (product_id, ""))[0],
                     item.stock_qty if item.stock_qty is not None else "Unknown",
                 ),
                 (),

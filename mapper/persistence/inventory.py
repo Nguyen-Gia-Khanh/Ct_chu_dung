@@ -36,7 +36,6 @@ class InventoryOperations:
             origin = self._remember_queue_origin(connection, pid)
             connection.execute('INSERT INTO catalog_products(product_id,full_name) VALUES (?,?) ON CONFLICT DO NOTHING',
                                (pid, clean_product_name(name)))
-            connection.execute('INSERT INTO hot_sellers(product_id) VALUES (?) ON CONFLICT DO NOTHING', (pid,))
             self._save_queue_origin(connection, pid, origin)
 
     def get_product_inventory_states(self, product_ids):

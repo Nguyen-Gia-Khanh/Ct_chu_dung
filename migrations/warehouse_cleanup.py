@@ -18,7 +18,7 @@ import sqlite3
 from mapper.core.common import clean_product_name, iso_timestamp, normalise_sku
 from mapper.persistence.schema import create_schema
 
-VERSION = 2
+VERSION = 3
 COLLISION = {'H06430-K56-N12', 'H0643-0K5-6N12'}
 
 
@@ -48,6 +48,12 @@ def snapshot(connection: sqlite3.Connection) -> dict:
 def read_rows(connection: sqlite3.Connection) -> dict[str, list[dict]]:
     return {name: [dict(row) for row in connection.execute(f'SELECT * FROM "{name}"')]
             for name in snapshot(connection)['tables']}
+
+
+def catalog_only_ids(origins) -> set[str]:
+    """Legacy products also held temporary copies that were never hot sellers."""
+    return {normalise_sku(row['product_id']) for row in origins
+            if json.loads(row['snapshot'])['was_in_products'] is False}
 
 
 def review(connection: sqlite3.Connection, honda_csv: Path | None = None) -> dict:
@@ -139,16 +145,22 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
             return {'status': 'already_applied', 'after': state}
         if 'schema_migrations' in tables and connection.execute(
                 'SELECT 1 FROM schema_migrations WHERE version=1').fetchone():
-            # Version 1 could retain the retired exception ID high-water mark.
-            # The table now has a natural composite key and no sequence owner.
+            # Upgrade versions 1/2 without rebuilding inventory or registration data.
             before = snapshot(connection)
             removed = connection.execute("DELETE FROM sqlite_sequence WHERE name='exception_placements'").rowcount
+            excluded = catalog_only_ids(connection.execute('SELECT * FROM queue_origins'))
+            memberships = [dict(row) for row in connection.execute('SELECT * FROM hot_sellers ORDER BY product_id')
+                           if row['product_id'] in excluded]
+            connection.executemany('DELETE FROM hot_sellers WHERE product_id=?',
+                                   [(row['product_id'],) for row in memberships])
+            connection.execute('INSERT OR IGNORE INTO schema_migrations(version) VALUES (2)')
             connection.execute('INSERT INTO schema_migrations(version) VALUES (?)', (VERSION,))
             after = snapshot(connection)
             if after['integrity_check'] != ['ok'] or after['foreign_key_check']:
-                raise sqlite3.IntegrityError('Sequence cleanup failed SQLite checks.')
+                raise sqlite3.IntegrityError('Membership cleanup failed SQLite checks.')
             connection.commit()
-            return {'status': 'applied_metadata_cleanup', 'before': before, 'after': after,
+            return {'status': 'applied_membership_cleanup', 'before': before, 'after': after,
+                    'excluded_catalog_only_hot_sellers': memberships,
                     'retired_sequence_rows_removed': removed}
         data = read_rows(connection)
         expected = {'products', 'catalog_products', 'placements', 'exception_placements',
@@ -186,9 +198,11 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
             catalog.append({'product_id': pid, 'full_name': full,
                 'brand_name': clean_product_name(original['product_name']) if original else None,
                 'imported_at': iso_timestamp((original or product or staged).get('imported_at') or staged.get('created_at'), legacy_utc=True)})
+        excluded = catalog_only_ids(data['queue_origins'])
         migrated = {
             'catalog_products': catalog,
-            'hot_sellers': [{'product_id': pid, 'imported_at': iso_timestamp(row['imported_at'], legacy_utc=True)} for pid, row in old_products.items()],
+            'hot_sellers': [{'product_id': pid, 'imported_at': iso_timestamp(row['imported_at'], legacy_utc=True)}
+                            for pid, row in old_products.items() if pid not in excluded],
         }
         promoted, main, extra = [], [], []
         locations = defaultdict(list)
@@ -250,13 +264,14 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
                 cursor = connection.execute('UPDATE sqlite_sequence SET seq=MAX(seq, ?) WHERE name=?', (value, table))
                 if cursor.rowcount == 0:
                     connection.execute('INSERT INTO sqlite_sequence(name,seq) VALUES (?,?)', (table,value))
-        connection.executemany('INSERT INTO schema_migrations(version) VALUES (?)', [(1,), (VERSION,)])
+        connection.executemany('INSERT INTO schema_migrations(version) VALUES (?)', [(1,), (2,), (VERSION,)])
         after = snapshot(connection)
         if after['integrity_check'] != ['ok'] or after['foreign_key_check']:
             raise sqlite3.IntegrityError(f'Migration checks failed: {after}')
         connection.commit()
         return {'status': 'applied', 'before': before, 'after': after,
                 'registered_missing_catalog': missing, 'promoted_to_primary': promoted,
+                'excluded_catalog_only_hot_sellers': sorted(excluded & old_products.keys()),
                 'returned_queue_moved': len(data['returned_queue_products']), 'returned_queue_conflicts': []}
     except BaseException:
         connection.rollback()
@@ -304,7 +319,7 @@ def main() -> None:
         result['backup'] = str(target.resolve())
         result['backup_sha256'] = hashlib.sha256(target.read_bytes()).hexdigest()
         filename = {'already_applied': 'last-verification.json',
-                    'applied_metadata_cleanup': 'metadata-cleanup.json'}.get(result['status'], 'migration.json')
+                    'applied_membership_cleanup': 'hot-seller-membership.json'}.get(result['status'], 'migration.json')
         (args.output / filename).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
         print(result['status'], 'integrity_check:', result['after']['integrity_check'],
               'foreign_key_check:', result['after']['foreign_key_check'])

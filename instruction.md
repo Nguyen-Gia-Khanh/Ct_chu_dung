@@ -3,7 +3,10 @@
 The current schema and migration are documented in
 [docs/warehouse-schema-cleanup.md](docs/warehouse-schema-cleanup.md) and
 [migrations/README.md](migrations/README.md). `hot_sellers` replaces `products`;
-only `catalog_products` stores names (`full_name`, `brand_name`).
+only `catalog_products` stores names (`full_name`, `brand_name`). Only explicit
+working-product imports add hot-seller membership; assigning a catalog-only or
+unregistered product never adds it. Multiple locations and awaiting CSV/catalog
+registration are separate exception states, independent of hot-seller membership.
 `placements` owns the shared stock and one primary location;
 `exception_placements` has only extra locations. All SKU input uses
 `mapper.core.common.normalise_sku`; all stored times use UTC ISO 8601 offsets,

@@ -28,12 +28,55 @@ database versions together; do not open an original backup directly with an app.
 | `on_hand_queue` | Persistent holding area after removal of the last location. Kept; original returned rows were moved here. |
 | `returned_queue_products` | Second holding state after Dequeue. Removed along with its actions, model, reads, writes, UI button, and indexes. |
 | `wait_to_update_csv` | Live Tab 6 CSV export and catalog-confirmation work, not abandoned web-upload storage. Kept with all registration flags; names now join the catalog. |
-| `queue_origins` | Still distinguishes working-queue membership from catalog-only transfers. Its 303 `was_in_products=false` records prevent catalog-only transfers appearing as hot sellers; 1,001 true records are retained too. Assignment does not make a membership record stale. |
+| `queue_origins` | Retained as membership provenance and for the existing UI/Shift readback. Its 303 `was_in_products=false` records identify catalog-only transfers; 1,001 true records are retained too. Version 3 removes false-marked placeholder rows from `hot_sellers` itself. |
 | `stock_modifications` | Drives the manual Modify Stock timestamp in Tab 2. Kept with its empty history; assignment/import/moves do not fabricate edits. |
 | Catalog Shift+click | Previously supplied 999 after deleting the previous placement/queue rows. Now reads known stock first, preserves zero, and uses 999 only for unknown counts. |
 
 Before migration, 1,257 queue-origin rows had a primary placement.
 No origin rows were deleted based on that condition.
+
+## Hot-seller membership correction
+
+There are two independent exception cases: a SKU with multiple saved locations,
+and an unregistered SKU awaiting CSV/catalog registration. Neither condition
+creates hot-seller membership. A genuine hot seller may also have multiple
+locations and retains its existing membership.
+
+The original `products` table overloaded membership with temporary catalog-only
+copies. Version 1 renamed all of it to `hot_sellers`, including 303 hidden
+placeholders. This was misleading even though the UI excluded them. Comparing
+normalized IDs against the original backup proves that version 1 added no new
+memberships. All 91 original exception SKUs were already in `products`: 52 were
+genuine working products and 39 were catalog-only placeholders.
+
+Version 3 excludes all 303 placeholders from `hot_sellers`, leaving 10,125
+genuine members, exactly the original logical membership. It deletes only
+membership rows; every catalog name, location, stock count, queue-origin record,
+on-hand record, and CSV-staging row remains unchanged. All 95 staged rows still
+await CSV export. The earlier approved catalog registration of 126 missing SKUs
+is separate and remains in place; it did not mark their CSV work complete.
+Runtime catalog/exception assignment no longer inserts hot-seller membership.
+Explicit working-product import remains the action that adds membership.
+
+The four "primary placements missing from catalog" were these existing shelf
+assignments in the original backup, not new locations created by this work:
+
+| Normalized SKU | Existing name | Existing slot | Stock |
+| --- | --- | --- | ---: |
+| `33450K12V81` | bộ xi nhan trước trái lead 2019 | `L1-5B1-3` | 999 |
+| `50400KTL740` | quai yên rs,wa,ws | `L1-4E4-3` | 999 |
+| `51400KZR701` | phuộc trước phải vision 2014 ( bạc ) | `L1-4B2-5` | 999 |
+| `64650KWY860ZA` | Bộ ốp sườn trái Wave RS 100 (2008-2009) đỏ tươi-R263* | `L1-6D6-4` | 999 |
+
+"Primary" means the location stored in `placements`, as opposed to an extra
+location in `exception_placements`; it does not refer to a separate feature.
+`data/schema-review/live/membership-audit.json` records the original membership
+comparison, these four rows, and the rehearsal evidence. Version 3 was backed up
+at `data/backups/warehouse_locations-before-cleanup-20261017T184802332257Z.db`.
+Its applied report is `data/schema-review/live/hot-seller-membership.json`.
+The backup SHA-256 is `004053dfc04ed24ceaab78960a76ad53cedfea5d212371c2359af6d411ae0787`.
+Version 3 changes `hot_sellers` from 10,428 to 10,125 rows and
+`schema_migrations` from 2 to 3 rows. No table or column is dropped in this step.
 
 ## Migration script and choices
 
@@ -50,6 +93,8 @@ transaction. The script now preserves high-water marks only for surviving
 AUTOINCREMENT tables. No inventory rows changed in version 2. Both steps are
 repeatable, and a final live rerun was a checked no-op with foreign keys enabled.
 The version-2 evidence is in `data/schema-review/live/metadata-cleanup.json`.
+Version 3 performs the membership correction described above, with another
+backup and checked transaction; it also runs during a fresh legacy upgrade.
 
 Approved choices recorded in this session:
 
@@ -75,7 +120,7 @@ There were 69 exception rows missing catalog entries but only 68 distinct SKUs.
 | `exception_placements` | 95 | 26 |
 | `on_hand_queue` | 0 | 34 |
 | `placements` | 2,945 | 3,014 |
-| `products` to `hot_sellers` | 10,429 | 10,428 |
+| `products` to `hot_sellers` | 10,429 | 10,125 |
 | `queue_origins` | 1,304 | 1,304 |
 | `returned_queue_products` | 34 | dropped |
 | `shelf_rows` | 246 | 246 |
@@ -83,7 +128,7 @@ There were 69 exception rows missing catalog entries but only 68 distinct SKUs.
 | `slots` | 1,807 | 1,807 |
 | `stock_modifications` | 0 | 0 |
 | `wait_to_update_csv` | 95 | 95 |
-| `schema_migrations` | absent | 2 |
+| `schema_migrations` | absent | 3 |
 | `sqlite_sequence` (SQLite internal) | 5 | 4 |
 
 69 products without a primary placement were promoted. 68 now have just one
@@ -95,6 +140,10 @@ The 34 returned rows retained their stock and the same timestamp instant as
 The initial supplied CSV status count was inaccurate: the actual before/after
 flags are 93 rows `(csv_updated=0,catalog_updated=0)` and 2 rows `(0,1)`.
 Thus all 95 rows await CSV export. Every flag was preserved.
+The final hot-seller count excludes one merged alias and 303 catalog-only
+placeholders. Immediately before version 3 there were 10,428 physical rows;
+the logical hot-seller count was already 10,125. No other table's data changed
+in version 3, apart from adding its migration version row.
 
 ## Columns before and after
 
@@ -169,7 +218,8 @@ These local operational exports are ignored by Git and include original and
 canonical SKUs, names, and slots. They capture missing catalog membership before
 the approved registrations; there are no remaining catalog-orphan references.
 
-- [126 hot-seller codes](../data/schema-review/live/missing_catalog_products.csv)
+- [126 original products-table codes](../data/schema-review/live/missing_catalog_products.csv)
+  (88 genuine hot sellers and 38 catalog-only placeholders)
 - [4 primary-placement codes](../data/schema-review/live/missing_catalog_placements.csv)
 - [69 exception rows / 68 codes](../data/schema-review/live/missing_catalog_exception_placements.csv)
 - [Original review and schema definitions](../data/schema-review/live/review.json)
@@ -182,6 +232,13 @@ The four original primary-placement codes were `50400-KTL-740`, `51400-KZR-701`,
 
 ## Verification and remaining limits
 
+- The membership correction passed 99 focused migration, assignment/Shift,
+  exception/CSV staging, persistent on-hand, and desktop regression checks,
+  including catalog-only names after reopening. A full operational-data copy
+  was checked before live application. Comparing the fresh pre-version-3 backup
+  with the live database confirms every other table's rows are identical.
+  Both the rehearsal and live version-3 reruns were checked no-ops; fresh
+  database readback reports 10,125 hot sellers, 3,014 placed SKUs, and 34 on-hand.
 - 143 active migration, persistence, import, assignment/Shift, desktop, scanner,
   and Playwright-adapter regression checks passed. Explicit rollback tests cover
   collision decisions, missing-catalog approval, disagreeing counts, and queue

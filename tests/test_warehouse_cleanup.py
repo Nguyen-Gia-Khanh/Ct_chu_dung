@@ -8,7 +8,7 @@ from unittest.mock import patch
 from barcode_web.lookup import WarehouseLookup
 from mapper.core.common import iso_timestamp, normalise_sku, vietnam_time
 from mapper.persistence.database import WarehouseDatabase
-from migrations.warehouse_cleanup import connect, migrate, snapshot
+from migrations.warehouse_cleanup import connect, migrate, read_rows, snapshot
 from tests.support import WorkspaceTestCase
 from ui.desktop.app import WarehouseMapperApp
 from utils.labels.app import LabelDatabase
@@ -39,6 +39,8 @@ class WarehouseCleanupTests(WorkspaceTestCase):
                 c.execute('INSERT INTO exception_placements(product_id,slot_id,stock_qty,assigned_at) VALUES (?,?,?,?)',(pid,slot,qty,FIRST))
             c.execute('INSERT INTO returned_queue_products VALUES (?,?,?)',('R-1',7,FIRST))
             c.execute("INSERT INTO wait_to_update_csv(product_id,product_name,slot_id,slot_name) VALUES ('O-1','Full O-1',1,'L1-1A1-1')")
+            c.execute("INSERT INTO queue_origins VALUES ('O-1', '{\"was_in_products\": false}')")
+            c.execute("INSERT INTO queue_origins VALUES ('P-1', '{\"was_in_products\": true}')")
         return path
 
     def apply(self, path):
@@ -61,6 +63,8 @@ class WarehouseCleanupTests(WorkspaceTestCase):
         self.assertEqual(db.get_placement_details()['U1'].stock_qty,999)
         self.assertEqual(db.get_on_hand_products()['R1'].stock_qty,7)
         self.assertEqual(db.get_on_hand_products()['R1'].queued_at,UTC)
+        self.assertNotIn('O1',dict(db.get_products()))
+        self.assertIn('P1',dict(db.get_products()))
         with closing(db.connect()) as c:
             names = dict(c.execute('SELECT product_id,full_name FROM catalog_products'))
             self.assertIsNone(names['U1'])
@@ -86,13 +90,32 @@ class WarehouseCleanupTests(WorkspaceTestCase):
         self.apply(path)
         with closing(connect(path)) as c,c:
             self.assertIsNone(c.execute("SELECT 1 FROM sqlite_sequence WHERE name='exception_placements'").fetchone())
-            c.execute('DELETE FROM schema_migrations WHERE version=2')
+            c.execute('DELETE FROM schema_migrations WHERE version>=2')
             c.execute("INSERT INTO sqlite_sequence(name,seq) VALUES ('exception_placements',900)")
         with closing(connect(path)) as c:
             result=migrate(c)
-            self.assertEqual(result['status'],'applied_metadata_cleanup')
+            self.assertEqual(result['status'],'applied_membership_cleanup')
             self.assertEqual(result['retired_sequence_rows_removed'],1)
             self.assertEqual(migrate(c)['status'],'already_applied')
+            self.assertEqual(c.execute('PRAGMA foreign_keys').fetchone()[0],1)
+
+    def test_version_2_upgrade_removes_only_placeholder_membership_and_is_repeatable(self):
+        path = self.legacy()
+        self.apply(path)
+        with closing(connect(path)) as c,c:
+            c.execute('DELETE FROM schema_migrations WHERE version=3')
+            c.execute("INSERT INTO hot_sellers(product_id) VALUES ('O1')")
+        with closing(connect(path)) as c:
+            before = read_rows(c)
+            result = migrate(c)
+            self.assertEqual(result['status'],'applied_membership_cleanup')
+            self.assertEqual([row['product_id'] for row in result['excluded_catalog_only_hot_sellers']],['O1'])
+            after = read_rows(c)
+            self.assertEqual(after['hot_sellers'],[row for row in before['hot_sellers'] if row['product_id']!='O1'])
+            for table in before.keys()-{'hot_sellers','schema_migrations'}:
+                self.assertEqual(after[table],before[table],table)
+            self.assertEqual(migrate(c)['status'],'already_applied')
+            self.assertEqual(read_rows(c),after)
             self.assertEqual(c.execute('PRAGMA foreign_keys').fetchone()[0],1)
 
     def test_returned_overlap_and_disagreeing_counts_never_overwrite(self):
@@ -158,6 +181,40 @@ class WarehouseCleanupTests(WorkspaceTestCase):
         db.import_catalog_products({'NEW':('Honda','')})
         db.assign_catalog_direct_to_slot(3,FIRST,{'NEW':('Honda','')})
         self.assertEqual(db.get_placement_details()['NEW'].stock_qty,999)
+
+    def test_exception_and_catalog_assignment_do_not_create_hot_seller_membership(self):
+        db=self.fresh()
+        original=dict(db.get_products())
+        db.import_catalog_products({'CAT':('Honda catalog part','')})
+        db.assign_catalog_direct_to_slot(1,FIRST,{'CAT':('Honda catalog part','')})
+        db.assign_exception('CAT',2,FIRST)
+        db.assign_exception('UNREGISTERED',3,FIRST,4,'Waiting for CSV')
+        db.assign_exception('ZERO',1,FIRST,2)
+        db.assign_exception('ZERO',2,FIRST)
+        self.assertEqual(dict(db.get_products()),original)
+        self.assertEqual(db.get_product_locations('CAT'),['L1-1A1-1','L1-1A1-2'])
+        staged=next(row for row in db.get_exception_staging() if row['product_id']=='UNREGISTERED')
+        self.assertEqual((staged['csv_updated'],staged['catalog_updated']),(0,0))
+        self.assertEqual(dict(WarehouseDatabase(db.path).get_products()),original)
+        db.import_products({'UNREGISTERED':('Waiting for CSV','')})
+        self.assertIn('UNREGISTERED',dict(db.get_products()))
+
+    def test_catalog_only_on_hand_keeps_name_and_stock_after_reopening_desktop(self):
+        db=self.fresh()
+        db.import_catalog_products({'CAT':('Honda catalog part','')})
+        db.assign_catalog_direct_to_slot(1,FIRST,{'CAT':('Honda catalog part','')},quantities={'CAT':5})
+        db.move_slot_to_on_hand(1,FIRST,['CAT'])
+        root=tk.Tk()
+        root.withdraw()
+        self.addCleanup(root.destroy)
+        app=WarehouseMapperApp(root,db.path)
+        self.assertNotIn('CAT',app.products)
+        self.assertEqual(app.assignments.on_hand_tree.set('hand::CAT','product_name'),'Honda catalog part')
+        self.assertEqual(app.on_hand_products['CAT'].stock_qty,5)
+        app.database.assign_on_hand_to_slot(2,FIRST,['CAT'])
+        app.reconcile_inventory_products(['CAT'])
+        self.assertNotIn('CAT',app.products)
+        self.assertEqual(app.database.get_product_locations('CAT'),['L1-1A1-2'])
 
     def test_cell_combine_does_not_add_shared_stock_or_lose_registration_flags(self):
         db=self.fresh()
