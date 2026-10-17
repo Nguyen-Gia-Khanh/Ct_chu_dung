@@ -13,7 +13,6 @@ from .models import (
     OnHandProduct,
     Placement,
     ProductLocation,
-    ReturnedQueueProduct,
     SlotAddress,
     validate_stock_quantity,
 )

@@ -39,13 +39,6 @@ class OnHandProduct:
 
 
 @dataclass(frozen=True)
-class ReturnedQueueProduct:
-    product_id: str
-    stock_qty: int | None
-    returned_at: str
-
-
-@dataclass(frozen=True)
 class SlotAddress:
     slot_id: int
     shelf_id: int

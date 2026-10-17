@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from mapper.core.common import vietnam_time
+
 from datetime import datetime
 from tkinter import messagebox, simpledialog
 
@@ -30,13 +32,12 @@ class AssignmentActions:
                 self.staged_assignments.get(pid)
                 or getattr(self, "on_hand_products", {}).get(pid)
                 or self.committed_placements.get(pid)
-                or getattr(self, "returned_queue_products", {}).get(pid)
             )
             if item is not None:
                 initial_quantities[pid] = item.stock_qty
         dialog = StockQuantityDialog(
             self.root, address.slot_name,
-            [(pid, name) for pid, (name, _short_name) in records.items()],
+            [(pid, name) for pid, (name, _brand_name) in records.items()],
             initial_quantities=initial_quantities,
             footer_text="Assignment is saved immediately to the loaded shelf address.",
         )
@@ -102,7 +103,7 @@ class AssignmentActions:
                 return
 
             self.assign_product_records_to_address({
-                pid: (self.products[pid], self.product_shortened_names.get(pid, ""))
+                pid: (self.products[pid], self.product_brand_names.get(pid, ""))
                 for pid in product_ids
             })
             return
@@ -171,27 +172,7 @@ class AssignmentActions:
                 name = self.catalog_products[pid][0]
             records[pid] = (name, "")
 
-        products_state = []
-        for pid in queue_pids:
-            prev_p = self.committed_placements.get(pid)
-            prev_oh = getattr(self, "on_hand_products", {}).get(pid)
-            prev_ret = getattr(self, "returned_queue_products", {}).get(pid)
-            products_state.append({
-                "product_id": pid,
-                "prev_placement": (prev_p.slot_name, prev_p.stock_qty, prev_p.assigned_at) if prev_p else None,
-                "prev_on_hand": prev_oh.stock_qty if prev_oh else None,
-                "was_in_on_hand": prev_oh is not None,
-                "prev_returned": prev_ret.stock_qty if prev_ret else None,
-                "was_in_returned": prev_ret is not None,
-                "was_in_products": pid in self.products,
-                "prev_transferred_stock": self.transferred_stock.get(pid),
-            })
-
-        transfer_data = {
-            "type": "queue",
-            "slot_id": self.selected_address.slot_id,
-            "products": products_state,
-        }
+        transfer_data = self.database.capture_shift_transfer(queue_pids,self.selected_address.slot_id)
 
         assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
         try:
@@ -218,7 +199,7 @@ class AssignmentActions:
             queue_pids, affected_slots=(self.selected_address.slot_name,)
         )
         self.status_text.set(
-            f"Transferred {moved} queue product(s) to {self.selected_address.slot_name} with stock 999. Saved immediately."
+            f"Transferred {moved} queue product(s) to {self.selected_address.slot_name} with retained stock (999 when uncounted). Saved immediately."
         )
 
     def refresh_on_hand_queue(self) -> None:
@@ -234,7 +215,7 @@ class AssignmentActions:
                 f"hand::{product_id}",
                 (
                     product_id,
-                    self.products.get(product_id, ""),
+                    self.catalog_products.get(product_id, (product_id, ""))[0],
                     item.stock_qty if item.stock_qty is not None else "Unknown",
                 ),
                 (),
@@ -410,10 +391,10 @@ class AssignmentActions:
                     placement.stock_qty
                     if placement.stock_qty is not None
                     else "Unknown",
-                    placement.assigned_at.replace("T", " ")
+                    vietnam_time(placement.assigned_at)
                     if placement.assigned_at
                     else "Unknown",
-                    stock_modifications.get(product_id, "").replace("T", " "),
+                    vietnam_time(stock_modifications.get(product_id)),
                 ),
                 (),
             ))
@@ -440,22 +421,7 @@ class AssignmentActions:
                 return
             product_ids = None
             affected_pids = list(self.on_hand_products.keys())
-            products_state = []
-            for pid in affected_pids:
-                prev_p = self.committed_placements.get(pid)
-                item = self.on_hand_products[pid]
-                products_state.append({
-                    "product_id": pid,
-                    "prev_placement": (prev_p.slot_name, prev_p.stock_qty, prev_p.assigned_at) if prev_p else None,
-                    "prev_on_hand": item.stock_qty,
-                    "was_in_on_hand": True,
-                    "was_in_products": pid in self.products,
-                })
-            transfer_data = {
-                "type": "on_hand",
-                "slot_id": self.selected_address.slot_id,
-                "products": products_state,
-            }
+            transfer_data = self.database.capture_shift_transfer(affected_pids,self.selected_address.slot_id)
         else:
             selected_items = self.assignments.on_hand_tree.selection()
             product_ids = [
@@ -533,35 +499,6 @@ class AssignmentActions:
         self.reconcile_inventory_products(item["product_id"] for item in products)
         self.status_text.set("Successfully reverted the latest shift transfer.")
 
-    def dequeue_selected_on_hand(self) -> None:
-        selected_items = self.assignments.on_hand_tree.selection()
-        product_ids = [
-            item_id.removeprefix("hand::")
-            for item_id in selected_items
-            if item_id.startswith("hand::")
-            and item_id.removeprefix("hand::") in self.on_hand_products
-        ]
-        if not product_ids:
-            messagebox.showinfo(
-                "Choose on-hand products",
-                "Select one or more on-hand products with Ctrl-click first.",
-                parent=self.root,
-            )
-            return
-        returned_at = datetime.now().astimezone().isoformat(timespec="seconds")
-        try:
-            moved = self.database.dequeue_on_hand(product_ids, returned_at, restore_origin=True)
-        except Exception as error:
-            messagebox.showerror(
-                "Could not dequeue products", str(error), parent=self.root
-            )
-            return
-        for pid in product_ids:
-            self.transferred_stock.pop(pid, None)
-        self.reconcile_inventory_products(product_ids)
-        self.status_text.set(
-            f"Dequeued {moved} selected product(s) to the total queue or full catalog. Saved immediately."
-        )
 
     def move_address_to_on_hand(self) -> None:
         if self.selected_address is None:
@@ -729,7 +666,7 @@ class AssignmentActions:
                     placement.stock_qty
                     if placement.stock_qty is not None
                     else "Unknown",
-                    placement.assigned_at.replace("T", " ")
+                    vietnam_time(placement.assigned_at)
                     if placement.assigned_at
                     else "Unknown",
                     state,

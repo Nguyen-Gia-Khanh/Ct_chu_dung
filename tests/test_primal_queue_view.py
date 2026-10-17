@@ -34,21 +34,21 @@ class PrimalQueueViewTests(unittest.TestCase):
 
         # Import working products (primal queue / hot sellers)
         self.database.import_products({
-            "HOT-1": ("Hot Seller One", "H1"),
-            "HOT-2": ("Hot Seller Two", "H2"),
+            "HOT1": ("Hot Seller One", "H1"),
+            "HOT2": ("Hot Seller Two", "H2"),
         })
 
         # Import full catalog products (including non-hot sellers)
         self.database.import_catalog_products({
-            "HOT-1": ("Hot Seller One", "H1"),
-            "HOT-2": ("Hot Seller Two", "H2"),
-            "CAT-ONLY": ("Catalog Only Item", "CO"),
+            "HOT1": ("Hot Seller One", ''),
+            "HOT2": ("Hot Seller Two", ''),
+            "CATONLY": ("Catalog Only Item", ''),
         })
 
-        # Commit a shelf with HOT-1 placed on it
+        # Commit a shelf with HOT1 placed on it
         self.shelf_id = self.database.commit_shelf(
             "1", "A", [2],
-            {"HOT-1": Placement("L1-1A1-1", 10, FIRST_TIME)},
+            {"HOT1": Placement("L1-1A1-1", 10, FIRST_TIME)},
             set(),
             side="1",
         )
@@ -63,18 +63,18 @@ class PrimalQueueViewTests(unittest.TestCase):
         self.view.destroy()
 
     def test_primal_queue_includes_assigned_hot_seller(self) -> None:
-        # HOT-1 is committed to a shelf, but must STILL be in the primal queue tree
+        # HOT1 is committed to a shelf, but must STILL be in the primal queue tree
         primal_items = [
             self.view.primal_tree.item(iid, "values")[0]
             for iid in self.view.primal_tree.get_children()
         ]
-        self.assertIn("HOT-1", primal_items)
-        self.assertIn("HOT-2", primal_items)
-        self.assertNotIn("CAT-ONLY", primal_items)
+        self.assertIn("HOT1", primal_items)
+        self.assertIn("HOT2", primal_items)
+        self.assertNotIn("CATONLY", primal_items)
 
-        # Check location and stock display for HOT-1
-        hot1_values = self.view.primal_tree.item("primal::HOT-1", "values")
-        self.assertEqual(hot1_values[0], "HOT-1")
+        # Check location and stock display for HOT1
+        hot1_values = self.view.primal_tree.item("primal::HOT1", "values")
+        self.assertEqual(hot1_values[0], "HOT1")
         self.assertEqual(hot1_values[2], "L1-1A1-1")
         self.assertEqual(hot1_values[3], "10")
 
@@ -83,12 +83,12 @@ class PrimalQueueViewTests(unittest.TestCase):
             self.view.catalog_tree.item(iid, "values")[0]
             for iid in self.view.catalog_tree.get_children()
         ]
-        self.assertIn("HOT-1", cat_items)
-        self.assertIn("HOT-2", cat_items)
-        self.assertIn("CAT-ONLY", cat_items)
+        self.assertIn("HOT1", cat_items)
+        self.assertIn("HOT2", cat_items)
+        self.assertIn("CATONLY", cat_items)
 
     def test_search_filters_both_trees_and_identifies_hot_seller(self) -> None:
-        self.view.search_var.set("HOT-1")
+        self.view.search_var.set("HOT1")
         self.view.refresh_results()
 
         primal_items = [
@@ -99,15 +99,15 @@ class PrimalQueueViewTests(unittest.TestCase):
             self.view.catalog_tree.item(iid, "values")[0]
             for iid in self.view.catalog_tree.get_children()
         ]
-        self.assertEqual(primal_items, ["HOT-1"])
-        self.assertEqual(cat_items, ["HOT-1"])
+        self.assertEqual(primal_items, ["HOT1"])
+        self.assertEqual(cat_items, ["HOT1"])
 
         status = self.view.search_status_text.get()
         self.assertIn("HOT SELLER", status)
         self.assertIn("L1-1A1-1", status)
 
     def test_search_identifies_non_hot_seller(self) -> None:
-        self.view.search_var.set("CAT-ONLY")
+        self.view.search_var.set("CATONLY")
         self.view.refresh_results()
 
         primal_items = [
@@ -119,31 +119,31 @@ class PrimalQueueViewTests(unittest.TestCase):
             for iid in self.view.catalog_tree.get_children()
         ]
         self.assertEqual(primal_items, [])
-        self.assertEqual(cat_items, ["CAT-ONLY"])
+        self.assertEqual(cat_items, ["CATONLY"])
 
         status = self.view.search_status_text.get()
         self.assertIn("NOT a hot seller", status)
 
     def test_double_click_primal_tree_fills_search_bar(self) -> None:
         event = SimpleNamespace(y=5)
-        # Mock identify_row to return primal::HOT-2
+        # Mock identify_row to return primal::HOT2
         original_identify = self.view.primal_tree.identify_row
-        self.view.primal_tree.identify_row = lambda _y: "primal::HOT-2"
+        self.view.primal_tree.identify_row = lambda _y: "primal::HOT2"
         try:
             res = self.view._on_primal_double_click(event)
             self.assertEqual(res, "break")
-            self.assertEqual(self.view.search_var.get(), "HOT-2")
+            self.assertEqual(self.view.search_var.get(), "HOT2")
         finally:
             self.view.primal_tree.identify_row = original_identify
 
     def test_double_click_catalog_tree_fills_search_bar(self) -> None:
         event = SimpleNamespace(y=5)
         original_identify = self.view.catalog_tree.identify_row
-        self.view.catalog_tree.identify_row = lambda _y: "catalog::CAT-ONLY"
+        self.view.catalog_tree.identify_row = lambda _y: "catalog::CATONLY"
         try:
             res = self.view._on_catalog_double_click(event)
             self.assertEqual(res, "break")
-            self.assertEqual(self.view.search_var.get(), "CAT-ONLY")
+            self.assertEqual(self.view.search_var.get(), "CATONLY")
         finally:
             self.view.catalog_tree.identify_row = original_identify
 
@@ -151,18 +151,18 @@ class PrimalQueueViewTests(unittest.TestCase):
         event = SimpleNamespace(y=5)
         original_identify = self.view.contents_tree.identify_row
         original_item = self.view.contents_tree.item
-        self.view.contents_tree.identify_row = lambda _y: "content::HOT-1"
-        self.view.contents_tree.item = lambda _row, _val: ("HOT-1", "Hot Seller One", "10")
+        self.view.contents_tree.identify_row = lambda _y: "content::HOT1"
+        self.view.contents_tree.item = lambda _row, _val: ("HOT1", "Hot Seller One", "10")
         try:
             res = self.view._on_contents_double_click(event)
             self.assertEqual(res, "break")
-            self.assertEqual(self.view.search_var.get(), "HOT-1")
+            self.assertEqual(self.view.search_var.get(), "HOT1")
         finally:
             self.view.contents_tree.identify_row = original_identify
             self.view.contents_tree.item = original_item
 
     def test_selecting_assigned_product_loads_shelf_and_highlights_cell(self) -> None:
-        self.view._highlight_product_location("HOT-1")
+        self.view._highlight_product_location("HOT1")
         self.assertEqual(self.view.current_shelf_id, self.shelf_id)
         self.assertEqual(self.view.selected_slot_name, "L1-1A1-1")
         self.assertIn("L1-1A1-1", self.view.slot_header_text.get())
@@ -171,23 +171,24 @@ class PrimalQueueViewTests(unittest.TestCase):
             self.view.contents_tree.item(iid, "values")[0]
             for iid in self.view.contents_tree.get_children()
         ]
-        self.assertIn("HOT-1", content_ids)
+        self.assertIn("HOT1", content_ids)
 
     def test_app_mounts_primal_queue_view_as_tab_3(self) -> None:
         from ui.desktop.app import WarehouseMapperApp
         app = WarehouseMapperApp(self.root, self.path)
         try:
             tabs = [app.notebook.tab(i, "text") for i in range(app.notebook.index("end"))]
-            self.assertEqual(len(tabs), 7)
+            self.assertEqual(len(tabs), 8)
             self.assertEqual(tabs[0], "1. Shelf Designer")
             self.assertEqual(tabs[1], "2. Assign Locations")
-            self.assertEqual(tabs[2], "3. Primal Queue / Shelves")
-            self.assertEqual(tabs[3], "4. Browse Shelves")
-            self.assertEqual(tabs[4], "5. Switch / Combine Cells")
-            self.assertEqual(tabs[5], "6. Special Exceptions")
-            self.assertEqual(tabs[6], "7. Web Location Sync")
+            self.assertEqual(tabs[2], "Connect Chrome")
+            self.assertEqual(tabs[3], "3. Primal Queue / Shelves")
+            self.assertEqual(tabs[4], "4. Browse Shelves")
+            self.assertEqual(tabs[5], "5. Switch / Combine Cells")
+            self.assertEqual(tabs[6], "6. Special Exceptions")
+            self.assertEqual(tabs[7], "7. Web Location Sync")
             self.assertIs(app.primal_view, app.lookup)
-            self.assertEqual(str(app.primal_view), app.notebook.tabs()[2])
+            self.assertEqual(str(app.primal_view), app.notebook.tabs()[3])
         finally:
             if hasattr(app, "chrome_connect_after_id") and app.chrome_connect_after_id:
                 app.root.after_cancel(app.chrome_connect_after_id)

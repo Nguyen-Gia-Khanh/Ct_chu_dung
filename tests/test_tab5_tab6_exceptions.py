@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 from unittest.mock import patch
 
+from mapper.core.common import iso_timestamp
 from mapper.persistence.database import Placement, WarehouseDatabase
 from tests.support import WorkspaceTestCase
 from ui.desktop.cell_transfer_view import CellTransferView
@@ -41,7 +42,7 @@ class ExceptionCellTransferTests(WorkspaceTestCase):
             return {
                 table: [dict(row) for row in connection.execute(f"SELECT * FROM {table} ORDER BY rowid")]
                 for table in ("placements", "exception_placements", "wait_to_update_csv",
-                              "products", "catalog_products", "queue_origins")
+                              "hot_sellers", "catalog_products", "queue_origins")
             }
 
     def assert_moved_records(self, before, destinations):
@@ -128,7 +129,7 @@ class ExceptionCellTransferTests(WorkspaceTestCase):
                     operation(self.left.slot_id, self.right.slot_id)
                 self.assertEqual(self.snapshot(), before)
 
-    def test_confirmed_merge_sums_exception_quantities_and_preserves_registration(self):
+    def test_confirmed_merge_keeps_shared_stock_and_preserves_registration(self):
         self.db.assign_exception("E1", self.right.slot_id, SECOND, 11)
         self.db.assign_exception("P1", self.right.slot_id, SECOND, 3)
         with closing(self.db.connect()) as connection, connection:
@@ -139,8 +140,8 @@ class ExceptionCellTransferTests(WorkspaceTestCase):
         self.assertEqual(self.db.get_slot_contents(self.left.slot_id), [])
         contents = {pid: placement for pid, _name, placement in self.db.get_slot_contents(self.right.slot_id)}
         self.assertEqual(len(contents), 4)
-        self.assertEqual(contents["E1"], Placement(self.right.slot_name, 16, SECOND))
-        self.assertEqual(contents["P1"], Placement(self.right.slot_name, 15, FIRST))
+        self.assertEqual(contents["E1"], Placement(self.right.slot_name, 5, iso_timestamp(SECOND)))
+        self.assertEqual(contents["P1"], Placement(self.right.slot_name, 12, iso_timestamp(SECOND)))
         stages = [row for row in self.db.get_exception_staging()
                   if row["product_id"] == "E1" and row["slot_id"] == self.right.slot_id]
         self.assertEqual(len(stages), 1)
@@ -155,14 +156,12 @@ class ExceptionCellTransferTests(WorkspaceTestCase):
         self.db.combine_slot_contents(self.left.slot_id, self.right.slot_id, merge_duplicates=True)
         contents = [placement for pid, _name, placement in self.db.get_slot_contents(self.right.slot_id)
                     if pid == "P2"]
-        self.assertEqual(contents, [Placement(self.right.slot_name, None, SECOND)])
+        self.assertEqual(contents, [Placement(self.right.slot_name, 4, iso_timestamp(SECOND))])
 
-    def test_merge_overflow_rolls_back_all_changes(self):
+    def test_merge_never_adds_counts_or_overflows(self):
         self.db.assign_exception("E1", self.right.slot_id, SECOND, 9_223_372_036_854_775_807)
-        before = self.snapshot()
-        with self.assertRaisesRegex(ValueError, "Stock quantity"):
-            self.db.combine_slot_contents(self.left.slot_id, self.right.slot_id, merge_duplicates=True)
-        self.assertEqual(self.snapshot(), before)
+        self.db.combine_slot_contents(self.left.slot_id, self.right.slot_id, merge_duplicates=True)
+        self.assertEqual(self.db.get_placement_details()['E1'].stock_qty,5)
 
 
 class ExceptionTransferViewTests(WorkspaceTestCase):
@@ -236,7 +235,7 @@ class ExceptionTransferViewTests(WorkspaceTestCase):
         self.assertEqual(self.view.qty_var.get(), "19")
         self.assertEqual(transfer.right.selected_product_count, 1)
         self.assertEqual(self.db.get_slot_contents(self.second.slot_id)[0][2],
-                         Placement(self.second.slot_name, 5, FIRST))
+                         Placement(self.second.slot_name, 5, iso_timestamp(FIRST)))
 
     def test_duplicate_popup_discard_and_merge_buttons(self):
         self.db.assign_exception("E1", self.second.slot_id, SECOND, 7)
@@ -269,10 +268,10 @@ class ExceptionTransferViewTests(WorkspaceTestCase):
         self.assertEqual(self.db.get_all_placement_items(), before)
         self.assertIn("Both cells are unchanged", transfer.status_text.get())
 
-        self.root.after(200, lambda: click_popup_button("Merge quantities"))
+        self.root.after(200, lambda: click_popup_button("Combine locations"))
         with patch("ui.desktop.cell_transfer_view.messagebox.askyesno") as confirmation:
             transfer.combine_cells(transfer.left, transfer.right)
             confirmation.assert_not_called()
         self.assertEqual(self.db.get_slot_contents(self.first.slot_id), [])
         self.assertEqual(self.db.get_slot_contents(self.second.slot_id)[0][2],
-                         Placement(self.second.slot_name, 12, SECOND))
+                         Placement(self.second.slot_name, 5, iso_timestamp(SECOND)))

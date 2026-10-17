@@ -6,6 +6,7 @@ from datetime import datetime
 from unittest.mock import patch
 
 from mapper.persistence.database import WarehouseDatabase
+from mapper.core.common import iso_timestamp
 from tests.support import WorkspaceTestCase
 from ui.desktop.app import WarehouseMapperApp
 
@@ -60,13 +61,12 @@ class StockModificationTests(WorkspaceTestCase):
             self.assertEqual(self.displayed_time(), SECOND.replace("T", " "))
 
         db = WarehouseDatabase(self.path)
-        self.assertEqual(db.get_slot_stock_modifications(self.first.slot_id), {"P1": SECOND})
+        self.assertEqual(db.get_slot_stock_modifications(self.first.slot_id), {"P1": iso_timestamp(SECOND)})
         # Other stock writes and ordinary moves must preserve the button's timestamp.
         db.update_placement_stock("P1", 18, expected_slot_id=self.first.slot_id)
         db.import_products({"P1": "Renamed bolts"})
         db.swap_slot_contents(self.first.slot_id, self.second.slot_id)
         db.move_slot_to_on_hand(self.second.slot_id, SECOND, ["P1"])
-        db.dequeue_on_hand(["P1"], SECOND)
         db.add_to_on_hand({"P1": 18}, SECOND)
         db.assign_on_hand_to_slot(self.first.slot_id, SECOND, ["P1"])
         self.app.refresh_address_contents()

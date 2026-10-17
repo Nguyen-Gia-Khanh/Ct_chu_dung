@@ -174,7 +174,7 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 self.assertTrue(uploaded_frames)
                 self.assertTrue(all(frame.startswith(b"\xff\xd8") for frame in uploaded_frames))
                 self.assertFalse(requested_workers, "the phone must not load its old WASM decoding worker")
-                self.assertIn("00123-456-7890", page.locator("#product").inner_text())
+                self.assertIn("001234567890", page.locator("#product").inner_text())
                 self.assertEqual(page.locator("#locations").inner_text(), "L1-1A2-3\nL2-2B4-5")
                 if width == 393:
                     self.assertTrue(attempts[0]["include_cell_contents"])

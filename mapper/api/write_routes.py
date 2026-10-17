@@ -134,10 +134,10 @@ class WriteRoutes:
                 return
 
             try:
-                # Pull to queue then assign
-                db.force_pull_to_queue([prod_id], now_iso)
-                db.add_to_on_hand({prod_id: 1}, now_iso)
-                db.assign_on_hand_to_slot(slot_obj.slot_id, now_iso, [prod_id])
+                found = db.find_product_locations(prod_id)
+                if found is None:
+                    raise ValueError(f'Unknown product: {prod_id}')
+                db.assign_catalog_direct_to_slot(slot_obj.slot_id, now_iso, {prod_id: (found[0], '')})
                 self._send_json({"success": True, "message": f"Moved {prod_id} to {slot_obj.slot_name}"})
             except Exception as e:
                 self._send_error_json(str(e))
@@ -203,7 +203,7 @@ class WriteRoutes:
         if path == "/api/assignments/remove":
             prod_id = format_product_id(payload.get("product_id", ""))
             try:
-                db.force_pull_to_queue([prod_id], now_iso)
+                db.move_product_to_on_hand(prod_id, now_iso)
                 self._send_json({"success": True, "message": f"Removed {prod_id}"})
             except Exception as e:
                 self._send_error_json(str(e))
@@ -222,7 +222,7 @@ class WriteRoutes:
                 code = format_product_id(r.get(code_col, ""))
                 name = str(r.get(name_col, "") or "").strip()
                 if code and name:
-                    records[code] = (name, name)
+                    records[code] = (name, '')
 
             if not records:
                 self._send_error_json("No valid product ID/name rows were found in the CSV.")

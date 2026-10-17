@@ -20,6 +20,8 @@ from time import monotonic, sleep
 from typing import Callable
 from urllib.parse import urlsplit
 
+from mapper.core.common import normalise_sku
+
 from .kiotviet_settings import validate_store_url, validate_tab_count
 
 
@@ -70,6 +72,7 @@ class UploadProduct:
     location_ids: tuple[str, ...] = field(init=False)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, 'product_id', normalise_sku(self.product_id))
         ids = _location_ids(self.location_id)
         object.__setattr__(self, "location_ids", ids)
         object.__setattr__(self, "location_id", ", ".join(ids))
@@ -86,6 +89,7 @@ class LocationUpdate:
     location_ids: tuple[str, ...] = field(init=False)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, 'product_id', normalise_sku(self.product_id))
         if isinstance(self.location_id, str) and self.location_id and not self.location_id.strip():
             raise ValueError("Use an empty location ID to clear the website location.")
         ids = _location_ids(self.location_id)
@@ -300,13 +304,13 @@ const lookupProduct = async (skuValue, auth) => {
 
     if (!products) throw Error('KiotViet returned an unexpected product-search response.');
 
-    const wanted = skuValue.toLowerCase();
-    const product = products.find(item =>
-        String(item && item.Code || '').trim().toLowerCase() === wanted
+    const wanted = skuValue.replace(/[- ]/g, '').toUpperCase();
+    const matches = products.filter(item =>
+        String(item && item.Code || '').trim().replace(/[- ]/g, '').toUpperCase() === wanted
     );
 
-    if (!product) throw Error('Exact SKU not found: ' + skuValue);
-    return product;
+    if (matches.length !== 1) throw Error('Exact unique SKU not found: ' + skuValue);
+    return matches[0];
 };
 
 (async () => {
@@ -657,7 +661,7 @@ const executeAction = () => {
         return targetClick(e);
     }
     if (action === 'identity') {
-        if (paths.id) { const e = one(paths.id); return !!e && clean(e.value || e.textContent) === value; }
+        if (paths.id) { const e = one(paths.id); return !!e && clean(e.value || e.textContent).replace(/[- ]/g, '').toUpperCase() === value; }
         const form = one(paths.form);
         if (!form) return false;
         const candidates = Array.from(form.querySelectorAll('input')).filter(e => {
@@ -665,7 +669,7 @@ const executeAction = () => {
                 e.getAttribute('placeholder'), e.getAttribute('aria-label')].join(' ');
             return visible(e) && /code|sku|product.?id|ma.?hang|ma.?san.?pham/.test(fold(attrs));
         });
-        return candidates.some(e => clean(e.value) === value);
+        return candidates.some(e => clean(e.value).replace(/[- ]/g, '').toUpperCase() === value);
     }
     if (action === 'quantity') {
         const e = one(paths);
@@ -1220,7 +1224,7 @@ class WebsiteUploader:
             if (not isinstance(saved, dict) or not self._kiotviet_id
                     or str(saved.get("Id")) != self._kiotviet_id
                     or (saved.get("Code") is not None and
-                        str(saved["Code"]).strip().casefold() != product.product_id.strip().casefold())):
+                        normalise_sku(saved["Code"]) != product.product_id)):
                 raise UploadError("KiotViet Save did not confirm the expected product ID and SKU.")
             self._wait(
                 "waiting for Save to finish",

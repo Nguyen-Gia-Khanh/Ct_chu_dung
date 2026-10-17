@@ -6,6 +6,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from mapper.core.common import normalise_sku
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,7 @@ def read_web_locations(
                 continue
             if isinstance(product, float) and product.is_integer():
                 product = int(product)
-            product_id = str(product).strip()
+            product_id = normalise_sku(product)
             value = row[location_column] if location_column < len(row) else None
             location = str(value).strip() if value is not None else ""
             if product_id in locations and set(
@@ -134,6 +135,8 @@ def compare_locations(
     """Return mismatches and local assigned IDs missing from the export."""
     differences: list[LocationDifference] = []
     missing: list[str] = []
+    local_locations = {normalise_sku(pid): locations for pid, locations in local_locations.items()}
+    web_locations = {normalise_sku(pid): locations for pid, locations in web_locations.items()}
     for product_id in sorted(
         set(local_locations) | set(web_locations), key=str.casefold
     ):

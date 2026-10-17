@@ -31,14 +31,14 @@ class DuplicateCellMergeDialog(simpledialog.Dialog):
     def body(self, master):
         ttk.Label(
             master, text=f"{len(self.product_ids)} product(s) are already in both cells.\n"
-            f"Merge their quantities into {self.target_name} and move the other products?",
+            f"Keep their shared stock and combine locations in {self.target_name} and move the other products?",
             wraplength=460,
         ).pack(anchor="w", padx=8, pady=8)
         products = tk.Text(master, width=55, height=min(8, len(self.product_ids)), wrap="word")
         products.insert("1.0", ", ".join(self.product_ids))
         products.configure(state="disabled")
         products.pack(fill="x", padx=8)
-        ttk.Label(master, text="An unknown quantity stays unknown.\n"
+        ttk.Label(master, text="Each SKU keeps its single stock count.\n"
                   "Discard move keeps both cells unchanged.", wraplength=460).pack(
                       anchor="w", padx=8, pady=8)
 
@@ -46,7 +46,7 @@ class DuplicateCellMergeDialog(simpledialog.Dialog):
         buttons = ttk.Frame(self)
         discard = ttk.Button(buttons, text="Discard move", command=self.cancel)
         discard.pack(side="left", padx=5)
-        ttk.Button(buttons, text="Merge quantities", command=self.ok).pack(side="left", padx=5)
+        ttk.Button(buttons, text="Combine locations", command=self.ok).pack(side="left", padx=5)
         buttons.pack(pady=8)
         discard.focus_set()
         self.bind("<Escape>", self.cancel)

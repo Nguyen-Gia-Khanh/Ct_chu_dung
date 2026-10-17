@@ -9,24 +9,14 @@ from pathlib import Path
 from statistics import median
 from timeit import timeit
 
-from mapper.core.common import normalize_search, product_search_text
+from mapper.core.common import normalize_search, product_search_text, normalise_sku
 
 
 def benchmark(path: Path) -> None:
     # Do not instantiate WarehouseDatabase: benchmarking must never migrate live data.
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as connection:
-        records = connection.execute("""
-            SELECT catalog.product_id,
-                   COALESCE(queue.product_name, catalog.product_name),
-                   COALESCE(queue.shortened_name, catalog.shortened_name)
-            FROM catalog_products AS catalog
-            LEFT JOIN products AS queue ON queue.product_id = catalog.product_id
-            UNION ALL
-            SELECT queue.product_id, queue.product_name, queue.shortened_name
-            FROM products AS queue
-            LEFT JOIN catalog_products AS catalog ON catalog.product_id = queue.product_id
-            WHERE catalog.product_id IS NULL
-        """).fetchall()
+        connection.execute('PRAGMA foreign_keys=ON')
+        records = connection.execute("SELECT product_id,COALESCE(full_name,brand_name,product_id),COALESCE(brand_name,'') FROM catalog_products").fetchall()
     if not records:
         print("No products to benchmark.")
         return
@@ -42,7 +32,7 @@ def benchmark(path: Path) -> None:
     print(f"{len(records):,} products; cached filtering only (excludes sorting/rendering).")
     print("Query             Before ms  After ms  Ratio  Matches before/after")
     for label, query in queries.items():
-        term = normalize_search(query)
+        term = normalize_search(normalise_sku(query))
         times = [[], []]
         for repeat in range(11):
             # Alternate order to reduce warm-up and scheduling bias.

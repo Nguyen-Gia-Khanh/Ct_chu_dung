@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from mapper.core.common import vietnam_time
+
 from collections import Counter
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -211,7 +213,7 @@ class ShelfBrowserView(ttk.Frame):
                     placement.stock_qty
                     if placement.stock_qty is not None
                     else "Unknown",
-                    placement.assigned_at.replace("T", " ")
+                    vietnam_time(placement.assigned_at)
                     if placement.assigned_at
                     else "Unknown",
                     "Saved",

@@ -52,14 +52,14 @@ class PersistenceTests(WorkspaceTestCase):
 
         states = self.db.get_product_inventory_states(["P1", "P2", "MISSING"])
         self.assertEqual(states["P1"]["placement"], self.db.get_placement_details()["P1"])
-        self.assertEqual(states["P1"]["placement"].stock_qty, 14)
-        self.assertEqual(states["P2"]["product"], ("Washers", "Washers"))
+        self.assertEqual(states["P1"]["placement"].stock_qty, 12)
+        self.assertEqual(states["P2"]["product"], ("Washers", ""))
         self.assertIsNone(states["MISSING"]["product"])
 
         self.db.move_slot_to_on_hand(self.first.slot_id, FIRST, ["P1"])
         states = self.db.get_product_inventory_states(["P1"])
         self.assertEqual(states["P1"]["placement"].slot_name, self.second.slot_name)
-        self.assertEqual(states["P1"]["on_hand"].stock_qty, 12)
+        self.assertIsNone(states["P1"]["on_hand"])
 
     def test_exception_registration_remains_separate_from_catalog(self) -> None:
         self.db.assign_exception("E1", self.first.slot_id, product_name="Exception")
@@ -76,8 +76,8 @@ class PersistenceTests(WorkspaceTestCase):
         self.db.assign_exception("P1", third.slot_id, stock_qty=4)
         self.db.add_staged_to_catalog(["P1"])
 
-        with self.assertRaisesRegex(ValueError, "no exception"):
-            self.db.remove_exception_from_slot("P1", self.first.slot_id)
+        with self.assertRaisesRegex(ValueError, "no longer"):
+            self.db.remove_exception_from_slot("P1", 999999)
         self.assertEqual(len(self.db.get_exception_staging()), 2)
 
         self.db.remove_exception_from_slot("P1", self.second.slot_id)
@@ -92,8 +92,8 @@ class PersistenceTests(WorkspaceTestCase):
 
     def test_csv_reimports_keep_locations_and_overlay_queue_names(self) -> None:
         self.db.import_catalog_products({
-            "P1": ("Temporary warehouse name", "Temporary"),
-            "W1": ("Warehouse name", "Warehouse"),
+            "P1": ("Temporary warehouse name", ''),
+            "W1": ("Warehouse name", ''),
         })
         self.db.add_to_on_hand({"P1": 12}, FIRST)
         self.db.assign_on_hand_to_slot(self.first.slot_id, SECOND, ["P1"])
@@ -114,7 +114,7 @@ class PersistenceTests(WorkspaceTestCase):
             self.assertTrue(replies[-1]["success"])
             self.assertEqual(self.db.get_placement_details()["P1"], Placement(self.first.slot_name, 12, SECOND))
             self.assertEqual(dict((pid, name) for pid, name, _ in self.db.get_catalog_products()), {
-                "P1": "Temporary warehouse name", "W1": "Warehouse name",
+                "P1": "Formatted queue name", "P2": "Washers", "P3": "New queue name", "W1": "Warehouse name",
             })
             self.assertEqual(dict((pid, name) for pid, name, _ in self.db.get_display_catalog_products()), {
                 "P1": "Formatted queue name", "P2": "Washers",

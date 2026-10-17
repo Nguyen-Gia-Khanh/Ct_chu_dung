@@ -19,7 +19,6 @@ from mapper.features.web_upload import WebsiteUploader
 from mapper.persistence.database import (
     OnHandProduct,
     Placement,
-    ReturnedQueueProduct,
     SlotAddress,
     WarehouseDatabase,
 )
@@ -46,14 +45,13 @@ class WarehouseMapperApp(
         self.root = root
         self.database = WarehouseDatabase(database_path or default_database_path())
         self.products: dict[str, str] = {}
-        self.product_shortened_names: dict[str, str] = {}
+        self.product_brand_names: dict[str, str] = {}
         self.product_search: dict[str, str] = {}
         self.catalog_products: dict[str, tuple[str, str]] = {}
         self.catalog_search: dict[str, str] = {}
         self.committed_locations: dict[str, str] = {}
         self.committed_placements: dict[str, Placement] = {}
         self.on_hand_products: dict[str, OnHandProduct] = {}
-        self.returned_queue_products: dict[str, ReturnedQueueProduct] = {}
         self.selected_address: SlotAddress | None = None
         self.staged_assignments: dict[str, Placement] = {}
         self.pending_unassignments: set[str] = set()
@@ -207,7 +205,6 @@ class WarehouseMapperApp(
             on_catalog_activate=self.activate_catalog_product,
             on_load_address=self.load_assignment_address,
             on_assign_address=self.assign_on_hand_to_address,
-            on_dequeue_hand=self.dequeue_selected_on_hand,
             on_selected_to_hand=self.move_selected_address_to_on_hand,
             on_slot_to_hand=self.move_address_to_on_hand,
             on_modify_hand_stock=self.modify_on_hand_stock,

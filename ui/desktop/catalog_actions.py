@@ -7,7 +7,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 from .assignment_view import StockQuantityDialog
-from mapper.core.common import MAX_VISIBLE_PRODUCTS, exact_product_search_id, normalize_search
+from mapper.core.common import MAX_VISIBLE_PRODUCTS, exact_product_search_id, normalize_search, normalise_sku, clean_product_name
 from mapper.features.csv_import import read_csv
 from .csv_dialog import ColumnMappingDialog
 from .widgets import sync_tree_rows
@@ -97,26 +97,7 @@ class CatalogActions:
             records = {
                 product_id: self.catalog_products[product_id] for product_id in product_ids
             }
-            pid = product_ids[0]
-            prev_p = self.committed_placements.get(pid)
-            prev_oh = getattr(self, "on_hand_products", {}).get(pid)
-            prev_ret = getattr(self, "returned_queue_products", {}).get(pid)
-            transfer_data = {
-                "type": "catalog",
-                "slot_id": self.selected_address.slot_id,
-                "products": [
-                    {
-                        "product_id": pid,
-                        "prev_placement": (prev_p.slot_name, prev_p.stock_qty, prev_p.assigned_at) if prev_p else None,
-                        "prev_on_hand": prev_oh.stock_qty if prev_oh else None,
-                        "was_in_on_hand": prev_oh is not None,
-                        "prev_returned": prev_ret.stock_qty if prev_ret else None,
-                        "was_in_returned": prev_ret is not None,
-                        "was_in_products": pid in self.products,
-                        "prev_transferred_stock": self.transferred_stock.get(pid),
-                    }
-                ],
-            }
+            transfer_data = self.database.capture_shift_transfer(product_ids,self.selected_address.slot_id)
             assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
             try:
                 moved = self.database.assign_catalog_direct_to_slot(
@@ -139,7 +120,7 @@ class CatalogActions:
                 product_ids, affected_slots=(self.selected_address.slot_name,)
             )
             self.status_text.set(
-                f"Assigned {moved} catalog product(s) directly to {self.selected_address.slot_name} with stock 999. Saved immediately."
+                f"Assigned {moved} catalog product(s) directly to {self.selected_address.slot_name} with retained stock (999 when uncounted). Saved immediately."
             )
             return
 
@@ -186,37 +167,6 @@ class CatalogActions:
             f"Pre-assigned stock for {len(dialog.result)} product(s) in queue."
         )
 
-    def return_selected_to_queue(self) -> None:
-        selected_items = self.assignments.contents_tree.selection()
-        if not selected_items:
-            messagebox.showinfo(
-                "Choose products", "Select products from the slot contents first."
-            )
-            return
-
-        for item_id in selected_items:
-            state, separator, product_id = item_id.partition("::")
-            if not separator or state not in {"staged", "saved"}:
-                continue
-            placements = (
-                self.staged_assignments
-                if state == "staged"
-                else self.committed_placements
-            )
-            placement = placements.get(product_id)
-            if placement is not None:
-                self.transferred_stock[product_id] = placement.stock_qty
-            elif state == "staged":
-                self.transferred_stock.pop(product_id, None)
-            if state == "staged":
-                self.staged_assignments.pop(product_id, None)
-            if product_id in self.committed_placements:
-                self.pending_unassignments.add(product_id)
-        self.refresh_working_changes()
-        self.status_text.set(
-            "Products returned to the working queue with stock retained. "
-            "Load another shelf and assign them when ready."
-        )
 
     def schedule_queue_refresh(self, *_args: object) -> None:
         self._quick_move_cycle = None
@@ -236,7 +186,7 @@ class CatalogActions:
         if getattr(self, "queue_shift_clicks", 0) > 0:
             self._reset_queue_shift_clicks()
         raw_query = self.assignments.search_var.get().strip()
-        query = normalize_search(raw_query)
+        query = normalize_search(normalise_sku(raw_query))
         persistent_queue = hasattr(self.assignments, "on_hand_tree")
 
         available = []
@@ -294,12 +244,12 @@ class CatalogActions:
             return
 
         raw_query = self.assignments.search_var.get().strip()
-        query = normalize_search(raw_query)
+        query = normalize_search(normalise_sku(raw_query))
         matches = [
-            (product_id, product_name, shortened_name)
+            (product_id, product_name, brand_name)
             for product_id, (
                 product_name,
-                shortened_name,
+                brand_name,
             ) in self.catalog_products.items()
             if not query
             or query in self.catalog_search[product_id]
@@ -317,7 +267,7 @@ class CatalogActions:
 
         tree = self.assignments.catalog_tree
         rows = []
-        for product_id, product_name, _shortened_name in matches[:MAX_VISIBLE_PRODUCTS]:
+        for product_id, product_name, _brand_name in matches[:MAX_VISIBLE_PRODUCTS]:
             placement = (
                 getattr(self, "staged_assignments", {}).get(product_id)
                 or getattr(self, "committed_placements", {}).get(product_id)
@@ -419,7 +369,7 @@ class CatalogActions:
         )
         product_id = None
         if raw_query:
-            product_id = self.product_id_lookup.get(raw_query.casefold())
+            product_id = self.product_id_lookup.get(normalise_sku(raw_query).casefold())
             if product_id is None:
                 product_id = exact_product_search_id(
                     raw_query,
@@ -436,9 +386,6 @@ class CatalogActions:
             staged = self.staged_assignments.get(product_id)
             saved = self.committed_placements.get(product_id)
             on_hand_item = getattr(self, "on_hand_products", {}).get(product_id)
-            returned_item = getattr(self, "returned_queue_products", {}).get(
-                product_id
-            )
             if on_hand_item is not None:
                 quantity = (
                     on_hand_item.stock_qty
@@ -459,13 +406,6 @@ class CatalogActions:
                 )
                 message = f"Already at {saved.slot_name}{suffix}"
                 location_exists = True
-            elif returned_item is not None:
-                quantity = (
-                    returned_item.stock_qty
-                    if returned_item.stock_qty is not None
-                    else "Unknown"
-                )
-                message = f"In total queue · returned stock {quantity}"
             else:
                 message = "Not in"
 
@@ -498,29 +438,34 @@ class CatalogActions:
             messagebox.showerror("CSV could not be read", str(error))
             return
 
-        mapping_dialog = ColumnMappingDialog(self.root, csv_data.headers)
+        mapping_dialog = ColumnMappingDialog(self.root, csv_data.headers, catalog=catalog)
         self.root.wait_window(mapping_dialog)
         if mapping_dialog.result is None:
             return
-        id_index, name_index, short_name_index = mapping_dialog.result
+        id_index, name_index, brand_name_index = mapping_dialog.result
 
         records: dict[str, tuple[str, str]] = {}
         skipped = 0
         duplicates = 0
-        required_index = max(id_index, name_index, short_name_index)
+        source_codes = {}
+        required_index = max(id_index, name_index, brand_name_index)
         for row in csv_data.rows:
             if len(row) <= required_index:
                 skipped += 1
                 continue
-            product_id = row[id_index].strip()
-            product_name = row[name_index].strip()
-            shortened_name = row[short_name_index].strip()
-            if not product_id or not product_name:
+            product_id = normalise_sku(row[id_index])
+            product_name = clean_product_name(row[name_index])
+            brand_name = clean_product_name(row[brand_name_index]) if brand_name_index >= 0 else None
+            if not product_id or not row[name_index].strip():
                 skipped += 1
                 continue
             if product_id in records:
                 duplicates += 1
-            records[product_id] = (product_name, shortened_name)
+                if source_codes[product_id] != row[id_index].strip() and records[product_id] != (product_name, brand_name):
+                    messagebox.showerror('Conflicting SKUs',f'CSV rows normalize to {product_id} with different names.')
+                    return
+            records[product_id] = (product_name, brand_name)
+            source_codes[product_id] = row[id_index].strip()
 
         if not records:
             messagebox.showerror(
