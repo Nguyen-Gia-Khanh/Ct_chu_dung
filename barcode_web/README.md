@@ -89,9 +89,15 @@ written to `data/barcode_web/network-setup.json`. It never installs certificates
 If the laptop's LAN IP changes, restart the launcher: it regenerates the server
 certificate using the same local CA. The phone does not need to reinstall that
 CA. The phone link stays the same across server restarts while the laptop's LAN
-IP and ports stay the same. After updating to this version, open the receiver's
-phone link once; on later restarts, refresh that phone tab and press **Start
-camera**. Pending scans survive a reload in the same tab; use **Retry sending**.
+IP and ports stay the same. The phone remembers its access key in this browser's
+local storage, so restoring a tab or reopening its address after a browser restart
+does not require pasting the full phone link again. Existing tabs migrate their
+old temporary key when refreshed. If a tab has already lost that key, open the
+receiver's full phone link once to save it. On later server restarts, refresh the
+phone tab and press **Start camera**. If the camera is still running, frame
+uploads retry automatically. Pending scans survive a reload in the same tab;
+use **Retry sending**. Clearing this site's browser data or using a new private
+browsing session requires opening the full phone link again.
 
 The random access token is created once and saved in
 `data/barcode_web/session-token.txt`, which is ignored by Git and is not served
@@ -168,14 +174,24 @@ symbols. Rotation and native downscale attempts remain enabled. On a miss,
 an OpenCV horizontal grayscale closing estimates local illumination; division
 by that background compensates for uneven light. A gentle horizontal
 convolution `[-0.25, 1.5, -0.25]` then sharpens across the vertical bars before
-one retry. If both full-strip attempts miss, a final retry straightens the
-native candidate with quiet-zone margins and applies adaptive local thresholding
-before decoding. If no candidate exists, this retry thresholds the full strip.
+one retry. If both full-strip attempts miss, a final retry uses the native
+candidate's angle to rotate the **entire strip** on an expanded white canvas,
+then applies adaptive local thresholding. It preserves both barcode ends and
+the clear rows above/below a glare patch, even when glare splits the locator's
+candidate into fragments. If no candidate exists, this retry thresholds the
+unrotated full strip. Expanded rotations obey the camera pixel-allocation cap.
 The more sensitive local threshold helps low-contrast ink that the native
 scanline contrast threshold can reject. There are at most **three decoder calls
-per frame**. An incomplete candidate cannot prevent a full-strip read, because
-it is used only after the two full-strip attempts fail. The `red_regions`
-helper remains inactive; `straighten` is used by the final retry.
+per frame**. No decoder attempt is cropped to an unconfirmed candidate. Retry
+positions are mapped back into source coordinates. The old `red_regions` and
+`straighten` helpers remain inactive.
+
+A localized reflection does not have to prevent reading if a complete bar
+sequence remains visible on other rows. A generated 3.5:1 scan-strip regression
+reproduced a failure at 8/12 degrees of tilt with a small central glare patch:
+the old final retry cropped to a partial candidate. Full-strip rotation recovers
+all 12 tested angle/patch combinations, including six previously missed cases.
+This verifies the reproduced failure, not every reflection on real packaging.
 
 **Mask** only changes the preview; lighting/angle retries stay enabled in the
 normal color view. `X-Mask: 1` requests the in-memory PNG; the normal API response
@@ -295,6 +311,20 @@ assert p.decode_frame(jpeg(flare))['stage'] == 'local threshold'
 assert p.decode_frame(jpeg(tilted))['stage'] == 'angle / local threshold'
 assert p.decode_frame(jpeg(label))['mask'] is None
 print('Decode budget, shadow/flare/angle recovery, mask and default color path passed.')
+for angle in (0, 8, 12):
+    for glare in (0, 12, 24, 36):
+        scene = np.full((228, 800), 255, np.uint8)
+        scene[69:159, 70:730] = cv2.resize(bars, (660, 90))
+        if glare:
+            cv2.ellipse(scene, (400, 114), (90, glare // 2), 0, 0, 360, 255, -1)
+        scene = cv2.warpAffine(scene, cv2.getRotationMatrix2D((400, 114), angle, 1), (800, 228), borderValue=255)
+        with patch.object(p, 'read', wraps=p.read) as reader:
+            answer = p.decode_frame(jpeg(scene))
+            assert reader.call_count <= 3
+        assert answer['results'][0]['text'] == '06410KFL850', (angle, glare)
+wide = np.full((16, p.MAX_FRAME_PIXELS // 16), 255, np.uint8)
+assert p.deskew_strip(wide, np.float32([[0, 0], [10, 10], [9, 11], [-1, 1]])) == (None, None)
+print('Partial central glare at 0/8/12 degrees and rotated-allocation guard passed.')
 '@ | & '.\.venv\Scripts\python.exe' -
 ```
 

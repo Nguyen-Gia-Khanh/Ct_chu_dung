@@ -119,6 +119,23 @@ def barcode_region(gray):
     return (max(candidates, key=cv2.contourArea) - np.float32([0, padding])) / scale
 
 
+def deskew_strip(gray, points):
+    """Use the candidate's angle but retain every source row and both code ends."""
+    edges = np.roll(points, -1, axis=0) - points
+    edge = max(edges, key=np.linalg.norm)
+    angle = (np.degrees(np.arctan2(edge[1], edge[0])) + 90) % 180 - 90
+    height, width = gray.shape
+    matrix = cv2.getRotationMatrix2D((width / 2, height / 2), float(angle), 1)
+    cosine, sine = abs(matrix[0, 0]), abs(matrix[0, 1])
+    target_width = int(np.ceil(width * cosine + height * sine))
+    target_height = int(np.ceil(height * cosine + width * sine))
+    if target_width * target_height > MAX_FRAME_PIXELS:
+        return None, None
+    matrix[0, 2] += (target_width - width) / 2
+    matrix[1, 2] += (target_height - height) / 2
+    return cv2.warpAffine(gray, matrix, (target_width, target_height), borderValue=255), matrix
+
+
 def barcode_mask(gray, points):
     """Show thresholded ink only inside the native candidate, white everywhere else."""
     scale = min(1, 640 / gray.shape[1])
@@ -159,16 +176,16 @@ def decode_frame(data, *, enhance=True, include_mask=False):
             results = read(cv2.filter2D(contrast, -1, VERTICAL_SHARPEN))
             stage = "local contrast"
         if not results:
-            # Unconfirmed crops are only a final retry; the full strip was already tried twice.
-            corrected = straighten(contrast, points) if points is not None else None
+            # A glare patch can split the candidate in half. Never crop decoding to that fragment.
+            corrected, matrix = deskew_strip(contrast, points) if points is not None else (None, None)
             retry = corrected if corrected is not None else contrast
             binary = cv2.adaptiveThreshold(retry, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                            cv2.THRESH_BINARY, 31, 2)
             results = read(binary)
             stage = "angle / local threshold" if corrected is not None else "local threshold"
             if results and corrected is not None:
-                # Retry positions use corrected-image coordinates; keep the source candidate for overlays.
-                results[0]['position'] = points.tolist()
+                position = np.float32(results[0]['position']).reshape(-1, 1, 2)
+                results[0]['position'] = cv2.transform(position, cv2.invertAffineTransform(matrix)).reshape(-1, 2).tolist()
     # Linear readers may report only a single scanline; use the locator for bar height.
     if points is None and results:
         points = np.float32(results[0]['position'])

@@ -7,13 +7,89 @@ import threading
 
 from playwright.sync_api import sync_playwright
 
-from barcode_web.server import ScanStore, ScannerServer
+from barcode_web.server import ScanStore, ScannerServer, load_token
 from barcode_web.lookup import WarehouseLookup
 from tests.test_barcode_lookup import create_test_warehouse
 from tests.support import WorkspaceTestCase
 
 
 class BarcodeBrowserTest(WorkspaceTestCase):
+    def test_phone_access_survives_server_restart_and_restored_tab(self):
+        token = load_token(self.folder)
+        info = {"phone_urls": [], "setup_urls": []}
+        server = ScannerServer(("127.0.0.1", 0), ScanStore(self.folder), token, info)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def close_server():
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.addCleanup(close_server)
+        address = server.server_address
+        url = f"http://127.0.0.1:{server.server_port}/scan"
+        pending = {"id": "restored-tab", "text": "001234567890", "format": "Code128"}
+        with sync_playwright() as playwright:
+            with playwright.chromium.launch(channel="chrome", headless=True) as browser:
+                context = browser.new_context()
+                page = context.new_page()
+                page.goto(f"{url}#{token}")
+                page.evaluate("scan => sessionStorage.setItem('pending-scan', JSON.stringify(scan))", pending)
+                page.reload()
+                self.assertEqual(page.url, url, "access key stays out of the displayed URL")
+                close_server()
+                page.get_by_role("button", name="Retry sending").click()
+                page.wait_for_function("document.querySelector('#delivery').textContent.startsWith('Not received:')")
+                server = ScannerServer(address, ScanStore(self.folder), load_token(self.folder), info)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                page.get_by_role("button", name="Retry sending").click()
+                page.wait_for_function("document.querySelector('#delivery').textContent === 'Received by laptop.'")
+                page.reload()
+                self.assertEqual(page.evaluate("token"), token)
+
+                # A restored mobile tab can retain its URL/local storage but lose session storage.
+                saved_state = context.storage_state()
+                context.close()
+                context = browser.new_context(storage_state=saved_state)
+                page = context.new_page()
+                page.goto(url)
+                self.assertIsNone(page.evaluate("sessionStorage.getItem('scanner-token')"))
+                self.assertEqual(page.evaluate("token"), token)
+                self.assertEqual(page.evaluate("""async () => (await fetch('/api/scans', {
+                    headers: {Authorization: `Bearer ${token}`}
+                })).status"""), 200)
+                page.evaluate("scan => sessionStorage.setItem('pending-scan', JSON.stringify(scan))", pending)
+                page.reload()
+                page.get_by_role("button", name="Retry sending").click()
+                page.wait_for_function("document.querySelector('#delivery').textContent === 'Received by laptop.'")
+                self.assertEqual(len(server.store.recent()), 1, "retry must not duplicate the scan")
+
+                # Upgrade an old page whose access key exists only in session storage.
+                page.evaluate("""key => {
+                    localStorage.removeItem('scanner-token');
+                    sessionStorage.setItem('scanner-token', key);
+                }""", token)
+                page.reload()
+                self.assertEqual(page.evaluate("localStorage.getItem('scanner-token')"), token)
+
+                # Temporary server failures must not tell the phone to replace its link.
+                page.route("**/api/scans", lambda route: route.fulfill(status=503, body="Unavailable"))
+                page.get_by_role("button", name="Start camera").click()
+                page.wait_for_function("document.querySelector('#status').textContent.startsWith('Laptop is unavailable.')")
+                page.unroute("**/api/scans")
+
+                # Explicitly opening a replacement link overrides any remembered key.
+                page.goto(url + "#replacement-token")
+                page.wait_for_function("token === 'replacement-token'")
+                self.assertEqual(page.evaluate("token"), "replacement-token")
+                self.assertEqual(page.evaluate("localStorage.getItem('scanner-token')"), "replacement-token")
+                self.assertEqual(page.url, url)
+                page.get_by_role("button", name="Start camera").click()
+                page.wait_for_function("document.querySelector('#status').textContent.startsWith('Phone link expired.')")
+                context.close()
+
     def test_fake_camera_decodes_sends_and_stops_at_phone_sizes(self):
         fixtures = subprocess.check_output([
             "node", "-e",
