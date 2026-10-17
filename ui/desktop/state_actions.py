@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from mapper.core.common import make_slot_name, normalize_search, product_search_text
+from mapper.core.common import normalise_sku, make_slot_name, normalize_search, product_search_text
 from mapper.persistence.database import Placement
 
 
@@ -80,7 +80,6 @@ class StateActions:
         *,
         placements: dict[str, Placement | None] | None = None,
         on_hand: dict | None = None,
-        returned: dict | None = None,
         affected_slots=(),
         queue_changed: bool = True,
         catalog_changed: bool = True,
@@ -100,7 +99,7 @@ class StateActions:
                 else:
                     self.committed_placements[product_id] = placement
                     self.committed_locations[product_id] = placement.slot_name
-                    self.location_search[product_id] = normalize_search(placement.slot_name)
+                    self.location_search[product_id] = normalize_search(normalise_sku(placement.slot_name))
                     slots.update(placement.slot_name.split(", "))
         if on_hand is not None:
             for product_id, item in on_hand.items():
@@ -108,13 +107,7 @@ class StateActions:
                     self.on_hand_products.pop(product_id, None)
                 else:
                     self.on_hand_products[product_id] = item
-        if returned is not None:
-            for product_id, item in returned.items():
-                if item is None:
-                    self.returned_queue_products.pop(product_id, None)
-                else:
-                    self.returned_queue_products[product_id] = item
-        if queue_changed and (placements is not None or on_hand is not None or returned is not None):
+        if queue_changed and (placements is not None or on_hand is not None):
             self.refresh_product_queue()
         if catalog_changed and placements is not None:
             self.refresh_catalog()
@@ -138,11 +131,11 @@ class StateActions:
 
     def remember_imported_products(self, records: dict[str, tuple[str, str]]) -> None:
         """Mirror a successful product upsert in the search caches."""
-        for product_id, (name, short_name) in records.items():
-            short_name = short_name or name
+        for product_id, (name, brand_name) in records.items():
+            brand_name = brand_name or name
             self.products[product_id] = name
-            self.product_shortened_names[product_id] = short_name
-            self.product_search[product_id] = product_search_text(product_id, name, short_name)
+            self.product_brand_names[product_id] = brand_name
+            self.product_search[product_id] = product_search_text(product_id, name, brand_name)
             self.product_id_lookup[product_id.casefold()] = product_id
 
     def reconcile_inventory_products(
@@ -164,7 +157,7 @@ class StateActions:
             product = state["product"]
             if product is None:
                 self.products.pop(product_id, None)
-                self.product_shortened_names.pop(product_id, None)
+                self.product_brand_names.pop(product_id, None)
                 self.product_search.pop(product_id, None)
                 if product_id not in self.catalog_products:
                     self.product_id_lookup.pop(product_id.casefold(), None)
@@ -176,7 +169,6 @@ class StateActions:
         self.apply_inventory_changes(
             placements={pid: state["placement"] for pid, state in states.items()},
             on_hand={pid: state["on_hand"] for pid, state in states.items()},
-            returned={pid: state["returned"] for pid, state in states.items()},
             affected_slots=affected_slots,
             queue_changed=queue_changed,
             catalog_changed=catalog_changed,
@@ -190,15 +182,15 @@ class StateActions:
     def reload_database_state(
         self, reload_catalog: bool = False, *, reload_shelves: bool = False
     ) -> None:
-        product_rows = self.database.get_product_records(include_search_id=True)
+        product_rows = self.database.get_product_records()
         self.catalog_only_products = self.database.get_catalog_only_product_ids()
         self.products = {
             product_id: product_name
-            for product_id, product_name, _shortened_name, _search_id in product_rows
+            for product_id, product_name, _brand_name in product_rows
         }
-        self.product_shortened_names = {
-            product_id: shortened_name
-            for product_id, _product_name, shortened_name, _search_id in product_rows
+        self.product_brand_names = {
+            product_id: brand_name
+            for product_id, _product_name, brand_name in product_rows
         }
         self.product_search = {
             row[0]: product_search_text(*row) for row in product_rows
@@ -207,10 +199,10 @@ class StateActions:
             product_id.casefold(): product_id for product_id in self.products
         }
         if reload_catalog or not hasattr(self, "catalog_products") or not self.catalog_products:
-            catalog_rows = self.database.get_display_catalog_products(include_search_id=True)
+            catalog_rows = self.database.get_display_catalog_products()
             self.catalog_products = {
-                product_id: (product_name, shortened_name)
-                for product_id, product_name, shortened_name, _search_id in catalog_rows
+                product_id: (product_name, brand_name)
+                for product_id, product_name, brand_name in catalog_rows
             }
             self.catalog_search = {
                 row[0]: product_search_text(*row) for row in catalog_rows
@@ -220,7 +212,6 @@ class StateActions:
         )
         self.committed_placements = self.database.get_placement_details()
         self.on_hand_products = self.database.get_on_hand_products()
-        self.returned_queue_products = self.database.get_returned_queue_products()
         if self.current_shelf_id is not None and self.preview_key:
             saved_floor, saved_side, saved_code, saved_layout = self.database.get_shelf(
                 self.current_shelf_id
@@ -247,7 +238,7 @@ class StateActions:
             for product_id, placement in self.committed_placements.items()
         }
         self.location_search = {
-            product_id: normalize_search(location)
+            product_id: normalize_search(normalise_sku(location))
             for product_id, location in self.committed_locations.items()
         }
         if hasattr(self, "transferred_stock"):

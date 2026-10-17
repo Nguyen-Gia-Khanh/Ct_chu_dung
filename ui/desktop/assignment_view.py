@@ -209,7 +209,7 @@ class AssignmentView(ttk.Frame):
             queue_section,
             text="Search ID or product name"
             if read_only
-            else "Search code, full name, or shortened name",
+            else "Search code, full name, or brand name",
         ).grid(row=0, column=0, sticky="w")
 
         self.search_var = tk.StringVar()
@@ -237,7 +237,7 @@ class AssignmentView(ttk.Frame):
         queue_body.rowconfigure(0, weight=1)
         queue_body.columnconfigure(0, weight=1)
 
-        queue_third_column = "shortened_name" if read_only else "stock_qty"
+        queue_third_column = "brand_name" if read_only else "stock_qty"
         self.queue_tree = ttk.Treeview(
             queue_body,
             columns=("product_id", "product_name", queue_third_column),
@@ -250,8 +250,8 @@ class AssignmentView(ttk.Frame):
         self.queue_tree.column("product_id", width=105, minwidth=75, stretch=False)
         self.queue_tree.column("product_name", width=195, minwidth=110)
         if read_only:
-            self.queue_tree.heading("shortened_name", text="Shortened name")
-            self.queue_tree.column("shortened_name", width=150, minwidth=100)
+            self.queue_tree.heading("brand_name", text="Brand name")
+            self.queue_tree.column("brand_name", width=150, minwidth=100)
         else:
             self.queue_tree.heading("stock_qty", text="Stock")
             self.queue_tree.column(

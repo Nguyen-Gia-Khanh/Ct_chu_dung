@@ -161,31 +161,6 @@ class QuickLocationTests(WorkspaceTestCase):
         info.assert_called_once()
         self.assertEqual(self.app.selected_address, self.address)
 
-    def test_exception_is_catalog_only_after_reopen_and_dequeue(self):
-        db = self.app.database
-        db.assign_exception("E1", self.address.slot_id, stock_qty=5, product_name="Exception part")
-        self.app.on_exception_data_changed()
-        self.search("E1")
-        self.assertEqual(self.view.queue_tree.get_children(), ())
-        self.assertEqual(self.view.catalog_tree.get_children(), ("catalog::E1",))
-        self.app.primal_view.refresh()
-        self.assertNotIn("E1", self.app.primal_view.products)
-        self.assertIn("E1", self.app.primal_view.catalog_products)
-        self.app.quick_move_search_product()
-        self.assertEqual(self.app.selected_address, self.address)
-        db = WarehouseDatabase(self.path)
-        self.assertIn("E1", db.get_catalog_only_product_ids())
-        db.add_staged_to_catalog(["E1"])
-        db.remove_exception_from_slot("E1", self.address.slot_id)
-        db.assign_catalog_direct_to_slot(
-            self.address.slot_id, "2026-10-05T10:00:00+07:00",
-            {"E1": ("Exception part", "Exception part")}, default_stock=5,
-        )
-        db.move_slot_to_on_hand(self.address.slot_id, "2026-10-05T11:00:00+07:00", ["E1"])
-        db.dequeue_on_hand(["E1"], "2026-10-05T12:00:00+07:00", restore_origin=True)
-        self.assertNotIn("E1", dict(db.get_products()))
-        self.assertNotIn("E1", db.get_returned_queue_products())
-        self.assertIn("E1", {row[0] for row in db.get_catalog_products()})
 
     def test_existing_queue_product_keeps_membership_when_exception_added(self):
         db = self.app.database

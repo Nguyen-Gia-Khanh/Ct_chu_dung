@@ -34,7 +34,7 @@ class ExceptionStagingViewTest(unittest.TestCase):
                     self.assertIn(label, labels)
 
                 view.selected_address = slot
-                view.product_id_var.set("99999-ZZZ-999")
+                view.product_id_var.set("99999ZZZ999")
                 view.product_name_var.set("Sample name")
                 view.assign_exception()
                 iid = view.pending_tree.get_children()[0]
@@ -49,15 +49,15 @@ class ExceptionStagingViewTest(unittest.TestCase):
                         view.append_to_csv()
                 self.assertEqual(view.pending_tree.item(iid, "values")[3], "Updated")
 
-                view.product_id_var.set("99999-ZZZ-999")
+                view.product_id_var.set("99999ZZZ999")
                 view.product_name_var.set("Edited name")
                 view.save_name()
                 self.assertEqual(view.pending_tree.item(iid, "values")[3], "Hasn't Add to: CSV + catalog")
                 with patch("ui.desktop.exceptions_view.messagebox.askyesno", return_value=True):
                     view.wipe_selected()
                 self.assertEqual(view.pending_tree.get_children(), ())
-                self.assertEqual(database.get_product_locations("99999-ZZZ-999"), [])
-                self.assertNotIn("99999-ZZZ-999", {item[0] for item in database.get_catalog_products()})
+                self.assertEqual(database.get_product_locations("99999ZZZ999"), [])
+                self.assertNotIn("99999ZZZ999", {item[0] for item in database.get_catalog_products()})
             finally:
                 root.destroy()
 

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from mapper.core.common import vietnam_time
+
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from mapper.core.common import (
+    normalise_sku,
     clean_location_segment, make_slot_name, normalize_search, product_search_text,
 )
 from mapper.persistence.database import SlotAddress, WarehouseDatabase
@@ -125,7 +128,7 @@ class ExceptionsView(ttk.Frame):
 
         name_frame = ttk.Frame(assign_box)
         name_frame.pack(fill="x", pady=(0, 6))
-        ttk.Label(name_frame, text="Name:").pack(side="left", padx=(0, 6))
+        ttk.Label(name_frame, text="Full name:").pack(side="left", padx=(0, 6))
         ttk.Entry(name_frame, textvariable=self.product_name_var, width=32).pack(
             side="left", fill="x", expand=True, padx=(0, 6)
         )
@@ -161,7 +164,7 @@ class ExceptionsView(ttk.Frame):
         action_frame = ttk.Frame(assign_box)
         action_frame.pack(fill="x")
 
-        ttk.Label(action_frame, text="Stock Qty (optional):").pack(side="left", padx=(0, 4))
+        ttk.Label(action_frame, text="Initial shared stock (optional):").pack(side="left", padx=(0, 4))
         ttk.Entry(action_frame, textvariable=self.qty_var, width=8).pack(side="left", padx=(0, 12))
 
         ttk.Button(
@@ -178,7 +181,7 @@ class ExceptionsView(ttk.Frame):
         product_tabs.add(catalog_box, text="Full catalog")
         product_tabs.add(multi_box, text="Multiple locations")
 
-        ttk.Label(catalog_box, text="Search code, full name, or shortened name").pack(anchor="w")
+        ttk.Label(catalog_box, text="Search code, full name, or brand name").pack(anchor="w")
         catalog_search_entry = ttk.Entry(catalog_box, textvariable=self.catalog_search_var)
         catalog_search_entry.pack(fill="x", pady=(3, 6))
         bind_auto_highlight(catalog_search_entry)
@@ -467,7 +470,7 @@ class ExceptionsView(ttk.Frame):
 
         contents = self.database.get_slot_contents(self.selected_address.slot_id)
         for pid, pname, pl in contents:
-            assigned = pl.assigned_at.replace("T", " ") if pl.assigned_at else "Unknown"
+            assigned = vietnam_time(pl.assigned_at) if pl.assigned_at else "Unknown"
             qty_display = "" if pl.stock_qty is None else str(pl.stock_qty)
             self.cell_contents_tree.insert(
                 "",
@@ -619,7 +622,7 @@ class ExceptionsView(ttk.Frame):
         confirmed = messagebox.askyesno(
             "Wipe staged product",
             f"Remove {product_id} from this tree and the full catalog, and delete all its saved shelf placements?\n\n"
-            "The working product record and CSV file will remain.",
+            "Its hot-seller membership and on-hand stock will also be deleted. The CSV file will remain.",
             parent=self,
         )
         if not confirmed:
@@ -654,7 +657,7 @@ class ExceptionsView(ttk.Frame):
             if product_id in saved_locations and slot_name not in saved_locations[product_id]:
                 saved_locations[product_id].append(slot_name)
         for item in grouped.values():
-            created = item["created_at"].replace("T", " ") if item["created_at"] else ""
+            created = vietnam_time(item["created_at"]) if item["created_at"] else ""
             missing = []
             if not item["csv_updated"]:
                 missing.append("CSV")
@@ -686,7 +689,7 @@ class ExceptionsView(ttk.Frame):
                 self.multi_location_tree.selection_add(product_id)
 
     def refresh_catalog_tree(self) -> None:
-        rows = self.database.get_display_catalog_products(include_search_id=True)
+        rows = self.database.get_display_catalog_products()
         self.catalog_records = [row[:3] for row in rows]
         self.catalog_search = {row[0]: product_search_text(*row) for row in rows}
         self._filter_catalog_tree()
@@ -694,9 +697,9 @@ class ExceptionsView(ttk.Frame):
     def _filter_catalog_tree(self, *_args) -> None:
         selected = set(self.catalog_tree.selection())
         self.catalog_tree.delete(*self.catalog_tree.get_children())
-        query = normalize_search(self.catalog_search_var.get())
+        query = normalize_search(normalise_sku(self.catalog_search_var.get()))
         shown = 0
-        for product_id, name, shortened_name in self.catalog_records:
+        for product_id, name, brand_name in self.catalog_records:
             if query and query not in self.catalog_search[product_id]:
                 continue
             self.catalog_tree.insert("", "end", iid=product_id, values=(product_id, name))

@@ -29,8 +29,8 @@ class DatabaseDirectCatalogToShelfTests(unittest.TestCase):
 
     def test_assign_catalog_direct_to_slot_sets_default_stock_999(self) -> None:
         catalog_products = {
-            "CAT-1": ("Product One", "P1"),
-            "CAT-2": ("Product Two", "P2"),
+            "CAT1": ("Product One", "P1"),
+            "CAT2": ("Product Two", "P2"),
         }
         moved = self.database.assign_catalog_direct_to_slot(
             self.address.slot_id,
@@ -44,31 +44,31 @@ class DatabaseDirectCatalogToShelfTests(unittest.TestCase):
         self.assertEqual(
             placements,
             {
-                "CAT-1": Placement(self.address.slot_name, 999, FIRST_TIME),
-                "CAT-2": Placement(self.address.slot_name, 999, FIRST_TIME),
+                "CAT1": Placement(self.address.slot_name, 999, FIRST_TIME),
+                "CAT2": Placement(self.address.slot_name, 999, FIRST_TIME),
             },
         )
         # Products should also be present in products table
         products = dict(self.database.get_products())
-        self.assertIn("CAT-1", products)
-        self.assertIn("CAT-2", products)
+        self.assertIn("CAT1", products)
+        self.assertIn("CAT2", products)
 
     def test_assign_catalog_direct_clears_previous_placements_and_queues(self) -> None:
-        self.database.import_products({"CAT-1": "Product One"})
-        self.database.add_to_on_hand({"CAT-1": 15}, FIRST_TIME)
-        self.assertIn("CAT-1", self.database.get_on_hand_products())
+        self.database.import_products({"CAT1": "Product One"})
+        self.database.add_to_on_hand({"CAT1": 15}, FIRST_TIME)
+        self.assertIn("CAT1", self.database.get_on_hand_products())
 
         moved = self.database.assign_catalog_direct_to_slot(
             self.address.slot_id,
             SECOND_TIME,
-            {"CAT-1": ("Product One", "P1")},
+            {"CAT1": ("Product One", "P1")},
             default_stock=999,
         )
         self.assertEqual(moved, 1)
-        self.assertNotIn("CAT-1", self.database.get_on_hand_products())
+        self.assertNotIn("CAT1", self.database.get_on_hand_products())
         self.assertEqual(
-            self.database.get_placement_details()["CAT-1"],
-            Placement(self.address.slot_name, 999, SECOND_TIME),
+            self.database.get_placement_details()["CAT1"],
+            Placement(self.address.slot_name, 15, SECOND_TIME),
         )
 
 
@@ -87,13 +87,13 @@ class Tab2WholeModeViewTests(unittest.TestCase):
             on_catalog_activate=lambda _e: None,
             on_load_address=lambda: None,
             on_assign_address=lambda: None,
-            on_dequeue_hand=lambda: None,
             on_selected_to_hand=lambda: None,
             on_slot_to_hand=lambda: None,
             on_modify_hand_stock=lambda: None,
             on_modify_stock=lambda: None,
             on_upload=lambda: None,
             on_modify_location=lambda: None,
+            on_preview_shelf=lambda: None,
         )
         view.pack()
 
@@ -121,7 +121,7 @@ class Tab2WholeModeViewTests(unittest.TestCase):
         )
         self.assertEqual(
             view.catalog_transfer_button.cget("text"),
-            "Transfer selected → shelf (stock 999)",
+            "Transfer selected → shelf (keep stock)",
         )
         self.assertEqual(
             view.catalog_transfer_button.cget("style"),
@@ -157,7 +157,7 @@ class Tab2WholeModeAppWorkflowTests(unittest.TestCase):
         database = WarehouseDatabase(self.db_path)
         database.commit_shelf("1", "A", [3], {}, set(), side="1")
         database.import_products({"P1": "Item 1", "P2": "Item 2"})
-        database.import_catalog_products({"C1": ("Cat Item 1", ""), "C2": ("Cat Item 2", "")})
+        database.import_catalog_products({"C1": ("Cat Item 1", ''), "C2": ("Cat Item 2", '')})
         database.add_to_on_hand({"P1": 10, "P2": 20}, FIRST_TIME)
 
         self.root = tk.Tk()
@@ -200,13 +200,13 @@ class Tab2WholeModeAppWorkflowTests(unittest.TestCase):
         self.app.assignments.catalog_tree.selection_set("catalog::C1")
 
         # Execute catalog transfer with to_shelf = True
-        self.app.assign_catalog_selection_to_address(whole_mode=True)
+        self.app.assign_catalog_selection_to_address(to_shelf=True)
 
         placements = self.app.database.get_placement_details()
         self.assertIn("C1", placements)
         self.assertEqual(placements["C1"].slot_name, "L1-1A1-1")
         self.assertEqual(placements["C1"].stock_qty, 999)
-        self.assertIn("Assigned 1 catalog product(s) directly to L1-1A1-1 with stock 999", self.app.status_text.get())
+        self.assertIn("Assigned 1 catalog product(s) directly to L1-1A1-1 with retained stock", self.app.status_text.get())
 
     def test_assign_button_shift_click_triggers_whole_mode(self) -> None:
         # Generate Button-1 with state=1 (Shift held)
@@ -241,7 +241,7 @@ class Tab2WholeModeAppWorkflowTests(unittest.TestCase):
     def test_catalog_shift_transfer_one_id_constraint(self) -> None:
         # Select both C1 and C2
         self.app.assignments.catalog_tree.selection_set("catalog::C1", "catalog::C2")
-        self.app.assign_catalog_selection_to_address(whole_mode=True)
+        self.app.assign_catalog_selection_to_address(to_shelf=True)
 
         # Execution denied: neither in placements
         placements = self.app.database.get_placement_details()
@@ -252,7 +252,7 @@ class Tab2WholeModeAppWorkflowTests(unittest.TestCase):
 
         # Select only C1
         self.app.assignments.catalog_tree.selection_set("catalog::C1")
-        self.app.assign_catalog_selection_to_address(whole_mode=True)
+        self.app.assign_catalog_selection_to_address(to_shelf=True)
 
         placements = self.app.database.get_placement_details()
         self.assertIn("C1", placements)
@@ -280,36 +280,36 @@ class Tab2WholeModeAppWorkflowTests(unittest.TestCase):
     def test_queue_shift_transfer_prefix_constraint(self) -> None:
         # Add products with different first 5 chars to queue
         self.app.database.import_products({
-            "12251-K97-T01": "Part 1",
-            "12252-K97-T01": "Part 2",
+            "12251K97T01": "Part 1",
+            "12252K97T01": "Part 2",
         })
         self.app.reload_database_state()
         self.app.refresh_all_views()
 
         # In queue tree, we have products with different prefixes (12251 vs 12252)
-        self.app.assign_queue_selection_to_address(whole_mode=True)
+        self.app.assign_queue_selection_to_address(to_shelf=True)
 
         placements = self.app.database.get_placement_details()
-        self.assertNotIn("12251-K97-T01", placements)
-        self.assertNotIn("12252-K97-T01", placements)
+        self.assertNotIn("12251K97T01", placements)
+        self.assertNotIn("12252K97T01", placements)
         self.assertIn("must share the same first 5 characters", self.app.assignments.search_location_text.get())
         self.assertEqual(str(self.app.assignments.search_location_label.cget("foreground")), "#c62828")
         self.assertEqual(self.app.queue_shift_clicks, 0)
 
     def test_queue_shift_transfer_single_item_bypasses_triple_click(self) -> None:
         self.app.database.import_products({
-            "12251-K97-T01": "Part 1",
+            "12251K97T01": "Part 1",
         })
         self.app.reload_database_state()
-        self.app.assignments.search_var.set("12251-K97-T01")
+        self.app.assignments.search_var.set("12251K97T01")
         self.app.refresh_product_queue()
 
         # Single item in queue -> immediate transfer without triple-click
-        self.app.assign_queue_selection_to_address(whole_mode=True)
+        self.app.assign_queue_selection_to_address(to_shelf=True)
 
         placements = self.app.database.get_placement_details()
-        self.assertIn("12251-K97-T01", placements)
-        self.assertEqual(placements["12251-K97-T01"].stock_qty, 999)
+        self.assertIn("12251K97T01", placements)
+        self.assertEqual(placements["12251K97T01"].stock_qty, 999)
         self.assertEqual(str(self.app.assignments.revert_button.cget("state")), "normal")
 
         # Must NOT be in queue_tree
@@ -317,19 +317,19 @@ class Tab2WholeModeAppWorkflowTests(unittest.TestCase):
             item.removeprefix("product::")
             for item in self.app.assignments.queue_tree.get_children()
         ]
-        self.assertNotIn("12251-K97-T01", queue_ids)
+        self.assertIn("12251K97T01", queue_ids)
 
         # Must appear in loaded address contents_tree
         content_ids = [
             item.removeprefix("saved::")
             for item in self.app.assignments.contents_tree.get_children()
         ]
-        self.assertIn("12251-K97-T01", content_ids)
+        self.assertIn("12251K97T01", content_ids)
 
     def test_queue_shift_transfer_triple_click_flow(self) -> None:
         self.app.database.import_products({
-            "12251-K97-T01": "Part 1",
-            "12251-K97-T02": "Part 2",
+            "12251K97T01": "Part 1",
+            "12251K97T02": "Part 2",
         })
         self.app.reload_database_state()
         self.app.assignments.search_var.set("12251")
@@ -340,31 +340,31 @@ class Tab2WholeModeAppWorkflowTests(unittest.TestCase):
             item.removeprefix("product::")
             for item in self.app.assignments.queue_tree.get_children()
         ]
-        self.assertIn("12251-K97-T01", tree_items)
-        self.assertIn("12251-K97-T02", tree_items)
+        self.assertIn("12251K97T01", tree_items)
+        self.assertIn("12251K97T02", tree_items)
 
         # Click 1
-        self.app.assign_queue_selection_to_address(whole_mode=True)
+        self.app.assign_queue_selection_to_address(to_shelf=True)
         self.assertEqual(self.app.queue_shift_clicks, 1)
         self.assertIn("Click 2 more times", str(self.app.assignments.queue_move_button.cget("text")))
         placements = self.app.database.get_placement_details()
-        self.assertNotIn("12251-K97-T01", placements)
+        self.assertNotIn("12251K97T01", placements)
 
         # Click 2
-        self.app.assign_queue_selection_to_address(whole_mode=True)
+        self.app.assign_queue_selection_to_address(to_shelf=True)
         self.assertEqual(self.app.queue_shift_clicks, 2)
         self.assertIn("Click 1 more time", str(self.app.assignments.queue_move_button.cget("text")))
         placements = self.app.database.get_placement_details()
-        self.assertNotIn("12251-K97-T01", placements)
+        self.assertNotIn("12251K97T01", placements)
 
         # Click 3 -> Execution
-        self.app.assign_queue_selection_to_address(whole_mode=True)
+        self.app.assign_queue_selection_to_address(to_shelf=True)
         self.assertEqual(self.app.queue_shift_clicks, 0)
         placements = self.app.database.get_placement_details()
-        self.assertIn("12251-K97-T01", placements)
-        self.assertIn("12251-K97-T02", placements)
-        self.assertEqual(placements["12251-K97-T01"].stock_qty, 999)
-        self.assertEqual(placements["12251-K97-T02"].stock_qty, 999)
+        self.assertIn("12251K97T01", placements)
+        self.assertIn("12251K97T02", placements)
+        self.assertEqual(placements["12251K97T01"].stock_qty, 999)
+        self.assertEqual(placements["12251K97T02"].stock_qty, 999)
         self.assertEqual(str(self.app.assignments.revert_button.cget("state")), "normal")
 
         # Both must be deleted from queue_tree
@@ -372,21 +372,21 @@ class Tab2WholeModeAppWorkflowTests(unittest.TestCase):
             item.removeprefix("product::")
             for item in self.app.assignments.queue_tree.get_children()
         ]
-        self.assertNotIn("12251-K97-T01", queue_ids)
-        self.assertNotIn("12251-K97-T02", queue_ids)
+        self.assertIn("12251K97T01", queue_ids)
+        self.assertIn("12251K97T02", queue_ids)
 
         # Both must appear in contents_tree
         content_ids = [
             item.removeprefix("saved::")
             for item in self.app.assignments.contents_tree.get_children()
         ]
-        self.assertIn("12251-K97-T01", content_ids)
-        self.assertIn("12251-K97-T02", content_ids)
+        self.assertIn("12251K97T01", content_ids)
+        self.assertIn("12251K97T02", content_ids)
 
     def test_revert_latest_shift_transfer(self) -> None:
         # Transfer catalog item C1
         self.app.assignments.catalog_tree.selection_set("catalog::C1")
-        self.app.assign_catalog_selection_to_address(whole_mode=True)
+        self.app.assign_catalog_selection_to_address(to_shelf=True)
         self.assertIn("C1", self.app.database.get_placement_details())
         self.assertEqual(str(self.app.assignments.revert_button.cget("state")), "normal")
 

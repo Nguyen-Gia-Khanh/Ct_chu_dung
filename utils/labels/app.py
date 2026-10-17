@@ -144,6 +144,7 @@ class LabelDatabase:
         if not self.path.is_file():
             raise FileNotFoundError(f"Choose your existing warehouse database:\n{self.path}")
         connection = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=5)
+        connection.execute("PRAGMA foreign_keys = ON")
         connection.row_factory = sqlite3.Row
         return connection
 
@@ -180,20 +181,13 @@ class LabelDatabase:
                 rows = connection.execute(
                     "SELECT row_number, slot_count FROM shelf_rows WHERE shelf_id = ? ORDER BY row_number", (shelf_id,),
                 ).fetchall()
-                product_columns = {
-                    row["name"] for row in connection.execute("PRAGMA table_info(products)")
-                }
-                label_name = (
-                    "COALESCE(NULLIF(TRIM(p.shortened_name), ''), p.product_name)"
-                    if "shortened_name" in product_columns
-                    else "p.product_name"
-                )
+                label_name = "COALESCE(p.full_name,p.brand_name,p.product_id)"
                 records = connection.execute(f"""
                     SELECT sl.slot_id, sl.slot_name, r.row_number, sl.slot_number,
                            p.product_id, {label_name} AS label_name
                     FROM shelf_rows r JOIN slots sl ON sl.row_id = r.row_id
-                    LEFT JOIN placements pl ON pl.slot_id = sl.slot_id
-                    LEFT JOIN products p ON p.product_id = pl.product_id
+                    LEFT JOIN (SELECT product_id,slot_id FROM placements UNION SELECT product_id,slot_id FROM exception_placements) pl ON pl.slot_id = sl.slot_id
+                    LEFT JOIN catalog_products p ON p.product_id = pl.product_id
                     WHERE r.shelf_id = ?
                     ORDER BY r.row_number, sl.slot_number, p.product_id COLLATE NOCASE
                 """, (shelf_id,)).fetchall()

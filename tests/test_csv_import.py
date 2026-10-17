@@ -34,7 +34,7 @@ class CSVImportTests(WorkspaceTestCase):
         path = self.folder / "warehouse.db"
         database = WarehouseDatabase(path)
         database.import_products({"P1": ("Queue original", "Queue")})
-        database.import_catalog_products({"P1": ("Catalog original", "Catalog")})
+        database.import_catalog_products({"P1": ("Catalog original", '')})
         database.save_shelf("1", "A", [1], side="1")
         address = database.get_slot_address("1", "1", "A", 1, 1)
         database.add_to_on_hand({"P1": 7}, "2026-10-03T08:00:00+07:00")
@@ -75,20 +75,8 @@ class CSVImportTests(WorkspaceTestCase):
                     self.assertIn("Blank/invalid rows skipped: 3", summary)
                     self.assertIn("Duplicate IDs inside CSV: 1", summary)
                     self.assertEqual(database.get_placement_details()["P1"], placement)
-                    if catalog:
-                        self.assertEqual(database.get_product_records(), queue_before)
-                        self.assertEqual(database.get_catalog_products(), [
-                            ("P1", "Warehouse name", "Warehouse"), ("P3", "Reference", ""),
-                        ])
-                    else:
-                        self.assertEqual(database.get_catalog_products(), catalog_before)
-                        self.assertEqual(database.get_product_records(), [
-                            ("P1", "Final name", "Final"), ("P2", "Washers", "Washers"),
-                        ])
+                    expected = ({'P1':('Warehouse','Warehouse name'),'P2':('Washers',''),'P3':('Reference','Reference')}
+                                if catalog else {'P1':('Final name','Final'),'P2':('Washers','')})
+                    self.assertEqual({pid:(name,brand) for pid,name,brand in database.get_catalog_products()},expected)
                     app.primal_view.refresh()
-                    expected = {
-                        "P1": ("Final name", "Final"), "P2": ("Washers", "Washers"),
-                    }
-                    if catalog:
-                        expected["P3"] = ("Reference", "")
-                    self.assertEqual(app.primal_view.catalog_products, expected)
+                    self.assertEqual(app.primal_view.catalog_products,expected)

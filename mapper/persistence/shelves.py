@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
+from mapper.core.common import normalise_sku, iso_timestamp, UTC_DEFAULT
+from .inventory import LOCATION_SQL
 from datetime import datetime
 
 from mapper.core.common import clean_location_segment, make_slot_name
@@ -156,76 +158,22 @@ class ShelfOperations:
             row["slot_name"],
         )
 
-    def get_slot_contents(self, slot_id: int) -> list[tuple[str, str, Placement]]:
+    def _read_contents(self, where, parameter):
         with closing(self.connect()) as connection:
-            rows = connection.execute(
-                """
-                SELECT product_id, product_name, slot_name, stock_qty, assigned_at
-                FROM (
-                    SELECT products.product_id, products.product_name, slots.slot_name,
-                           placements.stock_qty, placements.assigned_at
-                    FROM placements
-                    JOIN products ON products.product_id = placements.product_id
-                    JOIN slots ON slots.slot_id = placements.slot_id
-                    WHERE placements.slot_id = ?
-                    UNION
-                    SELECT ep.product_id, COALESCE(products.product_name, 'Exc - added later') AS product_name, slots.slot_name,
-                           ep.stock_qty, ep.assigned_at
-                    FROM exception_placements ep
-                    LEFT JOIN products ON products.product_id = ep.product_id
-                    JOIN slots ON slots.slot_id = ep.slot_id
-                    WHERE ep.slot_id = ?
-                )
-                ORDER BY assigned_at, product_id COLLATE NOCASE
-                """,
-                (slot_id, slot_id),
-            ).fetchall()
-        return [
-            (
-                row["product_id"],
-                row["product_name"],
-                Placement(row["slot_name"], row["stock_qty"], row["assigned_at"]),
-            )
-            for row in rows
-        ]
+            rows = connection.execute(f"""
+                SELECT l.product_id, COALESCE(c.full_name,c.brand_name,l.product_id) AS product_name,
+                       s.slot_name,l.stock_qty,l.assigned_at
+                FROM ({LOCATION_SQL}) l JOIN catalog_products c USING(product_id)
+                JOIN slots s USING(slot_id) JOIN shelf_rows r USING(row_id)
+                WHERE {where} ORDER BY r.row_number,s.slot_number,l.product_id COLLATE NOCASE
+            """, (parameter,)).fetchall()
+        return [(r['product_id'],r['product_name'],Placement(r['slot_name'],r['stock_qty'],r['assigned_at'])) for r in rows]
 
-    def get_shelf_contents(self, shelf_id: int) -> list[tuple[str, str, Placement]]:
-        """Return only committed products on one shelf for the read-only viewer."""
-        with closing(self.connect()) as connection:
-            rows = connection.execute(
-                """
-                SELECT product_id, product_name, slot_name, stock_qty, assigned_at, row_number, slot_number
-                FROM (
-                    SELECT products.product_id, products.product_name, slots.slot_name,
-                           placements.stock_qty, placements.assigned_at,
-                           shelf_rows.row_number, slots.slot_number
-                    FROM placements
-                    JOIN products ON products.product_id = placements.product_id
-                    JOIN slots ON slots.slot_id = placements.slot_id
-                    JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
-                    WHERE shelf_rows.shelf_id = ?
-                    UNION
-                    SELECT ep.product_id, COALESCE(products.product_name, 'Exc - added later') AS product_name, slots.slot_name,
-                           ep.stock_qty, ep.assigned_at,
-                           shelf_rows.row_number, slots.slot_number
-                    FROM exception_placements ep
-                    LEFT JOIN products ON products.product_id = ep.product_id
-                    JOIN slots ON slots.slot_id = ep.slot_id
-                    JOIN shelf_rows ON shelf_rows.row_id = slots.row_id
-                    WHERE shelf_rows.shelf_id = ?
-                )
-                ORDER BY row_number, slot_number, product_id COLLATE NOCASE
-                """,
-                (shelf_id, shelf_id),
-            ).fetchall()
-        return [
-            (
-                row["product_id"],
-                row["product_name"],
-                Placement(row["slot_name"], row["stock_qty"], row["assigned_at"]),
-            )
-            for row in rows
-        ]
+    def get_slot_contents(self, slot_id):
+        return self._read_contents('l.slot_id=?',slot_id)
+
+    def get_shelf_contents(self, shelf_id):
+        return self._read_contents('r.shelf_id=?',shelf_id)
 
     @classmethod
     def _sync_layout(
@@ -337,6 +285,11 @@ class ShelfOperations:
         side: str = "1",
         shelf_id: int | None = None,
     ) -> int:
+        if any(not p.assigned_at for p in staged_assignments.values()):
+            raise ValueError('Each assignment must include a timezone-aware assignment time.')
+        staged_assignments = {normalise_sku(pid): Placement(p.slot_name,p.stock_qty,iso_timestamp(p.assigned_at))
+                              for pid,p in staged_assignments.items()}
+        pending_unassignments = {normalise_sku(pid) for pid in pending_unassignments}
         floor = clean_location_segment(floor)
         shelf_code = clean_location_segment(shelf_code)
         side = clean_location_segment(side)
@@ -368,7 +321,7 @@ class ShelfOperations:
                     )
                 cursor = connection.execute(
                     """UPDATE shelves
-                       SET floor = ?, side = ?, shelf_code = ?, updated_at = CURRENT_TIMESTAMP
+                       SET floor = ?, side = ?, shelf_code = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
                        WHERE shelf_id = ?""",
                     (floor, side, shelf_code, shelf_id),
                 )
@@ -383,10 +336,16 @@ class ShelfOperations:
             else:
                 shelf_id = int(shelf["shelf_id"])
                 connection.execute(
-                    "UPDATE shelves SET updated_at = CURRENT_TIMESTAMP WHERE shelf_id = ?",
+                    "UPDATE shelves SET updated_at = (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')) WHERE shelf_id = ?",
                     (shelf_id,),
                 )
 
+            for pid in pending_unassignments - staged_assignments.keys():
+                primary = connection.execute('SELECT stock_qty FROM placements WHERE product_id=?',(pid,)).fetchone()
+                if primary:
+                    connection.execute('INSERT INTO on_hand_queue(product_id,stock_qty,queued_at) VALUES (?,?,?)',
+                                       (pid,primary[0],iso_timestamp()))
+                connection.execute('DELETE FROM exception_placements WHERE product_id=?',(pid,))
             # Explicit removals/moves happen in this same transaction, so a product
             # can be moved off a top row and that row removed in one commit.
             connection.executemany(
@@ -398,10 +357,6 @@ class ShelfOperations:
             )
             connection.executemany(
                 "DELETE FROM on_hand_queue WHERE product_id = ?",
-                ((product_id,) for product_id in staged_assignments),
-            )
-            connection.executemany(
-                "DELETE FROM returned_queue_products WHERE product_id = ?",
                 ((product_id,) for product_id in staged_assignments),
             )
             self._sync_layout(
@@ -428,6 +383,8 @@ class ShelfOperations:
                     f"Unknown slot in staged assignments: {unknown_slots[0]}"
                 )
 
+            for pid,p in staged_assignments.items():
+                connection.execute('DELETE FROM exception_placements WHERE product_id=? AND slot_id=?',(pid,slot_ids[p.slot_name]))
             connection.executemany(
                 "INSERT INTO placements (product_id, slot_id, stock_qty, assigned_at) VALUES (?, ?, ?, ?)",
                 (

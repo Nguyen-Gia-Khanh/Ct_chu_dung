@@ -1,3 +1,7 @@
+> Database cleanup: see [migration instructions](migrations/README.md) and the
+> [schema report](docs/warehouse-schema-cleanup.md). An older checkout cannot read
+> the migrated schema; keep the app on this feature branch until it is merged.
+
 # Warehouse Shelf Mapper
 
 A local Windows/Tkinter application for mapping products to irregular warehouse
@@ -111,7 +115,7 @@ Commit pending designer changes or discard them with **New shelf** before deleti
 ### CSV imports
 
 The import dialog asks which columns contain product ID, full name, and
-shortened name. Extra CSV columns are allowed. Re-importing an existing product
+brand name. Extra CSV columns are allowed. Re-importing an existing product
 ID updates its names; it does not delete its shelf placement, stock, or
 historical assignment time. IDs absent from a later CSV remain in the database.
 Re-importing the full catalog updates its stored names; queue names continue
@@ -168,8 +172,8 @@ is held.
 
 | Button/source | Normal click | Hold Shift and click |
 | --- | --- | --- |
-| Full catalog assignment | Selected products → loaded cell, with manually entered quantities and no total-queue copy. | One selected product → loaded cell, with stock **999**. |
-| Total queue assignment | Selected ready products → loaded cell, with manually entered quantities. | All visible ready queue search results → loaded cell, with stock **999**. |
+| Full catalog assignment | Selected products → loaded cell, with manually entered quantities and no total-queue copy. | One selected product → loaded cell, with retained stock, or **999** when uncounted. |
+| Total queue assignment | Selected ready products → loaded cell, with manually entered quantities. | All visible ready queue search results → loaded cell, with retained stock, or **999** when uncounted. |
 | On-hand assignment | Selected on-hand rows → loaded cell, retaining quantities. | All on-hand products → loaded cell, retaining quantities. |
 
 The queue shortcut requires IDs with the same first five characters after
@@ -186,25 +190,17 @@ when the app closes.
 
 ### Return products and modify stock
 
-Removing products from a shelf moves them to on-hand first. Ctrl-click one or
-more on-hand rows and use **Dequeue selected → queue / catalog** to remove
-that subset from the batch. Total-queue products return to the total queue with
-stock retained; catalog-only products return to the full catalog, even after
-being assigned and removed from a shelf. Dequeue does not restore a shelf
-assignment. Returned queue rows use ordinary styling, with no yellow or bold
-highlight; moving them to on-hand again prefills their stock. Queue/catalog
-membership survives restarting the app.
-Transfers made before source tracking was added return to the total queue.
-In the loaded address,
-Ctrl-click one or more rows and use **Selected product(s) → on-hand** for a
-partial transfer. **Shelf → on-hand (all)** remains available when the complete
-address must be emptied. These actions preserve each product's recorded stock
-quantity for reassignment.
+Removing a product's last location moves it to the persistent on-hand queue with
+its recorded stock. Removing one of several locations leaves the shared count
+and the remaining locations intact. Removing the primary location promotes an
+extra location. Select on-hand rows to assign them again; there is no separate
+returned queue or Dequeue action.
 
-All these Tab 2 moves and stock edits save immediately; **Commit shelf design**
-is for the Shelf Designer's pending changes. To move a product while preserving
-its actual stock, use normal assignment with the prefilled quantities. Catalog/queue Shift
-transfers use stock **999**.
+Ctrl-click rows in a loaded address for **Selected product(s) to on-hand**, or
+use **Shelf to on-hand (all)** for the complete cell. These actions save
+immediately. **Commit shelf design** applies to pending shelf design changes.
+Catalog and queue Shift assignment preserve a known count, including zero;
+**999** means located but uncounted and is used when there is no known count.
 
 ### Update website locations
 
@@ -220,24 +216,22 @@ uses the same single/all-products switch.
 
 ### Search and catalog behavior
 
-One search box filters both the total queue and the full catalog. It searches
-product ID, full name, and shortened name without case or Vietnamese accents.
-An exact product ID also reports whether the product is on-hand, returned to the
-total queue, or already at a shelf address.
+One search box filters both lists by SKU, Vietnamese full name, and Honda brand
+name, without case or Vietnamese accents. Every SKU is uppercase without hyphens
+or spaces. Typing `06410-kfl-850` finds `06410KFL850`.
 
-The full catalog view combines the working queue and warehouse catalog by
-product ID. Queue names take precedence for matching IDs; other products use
-their warehouse catalog names. The two CSV imports remain separate, so
-re-importing the queue does not overwrite stored warehouse catalog names.
-**Assign selected catalog → loaded address** assigns catalog products directly
-to the loaded shelf with entered stock. Catalog-only products remain outside
-the total queue throughout assignment and shelf removal. Shelf removal holds
-them on-hand until reassignment or Dequeue returns them to the catalog.
+Names live only in `catalog_products.full_name` and `brand_name`. The working
+CSV imports full names and hot-seller membership; the Honda catalog CSV imports
+brand names. The column dialog can optionally map the other name. Excel error
+names become NULL. Imports preserve saved inventory.
+
+Catalog assignment goes directly to the loaded shelf. Catalog-only products
+keep their original list membership. Removed stock stays on-hand until it is
+assigned again. Every location of a SKU shows its one shared stock count.
 Double-clicking a catalog or total-queue product only fills and selects its ID
 in the search field; it does not transfer the product.
 
-An 11-character barcode such as `06410KFL850` is normalized to
-`06410-KFL-850` in the search field.
+Barcode and typed input use the same canonical SKU spelling.
 
 View: [location_assignment_view.py](ui/desktop/location_assignment_view.py).
 Moves and stock/address actions: [assignment_actions.py](ui/desktop/assignment_actions.py).
@@ -249,8 +243,8 @@ in the source guide.
 ## Tab 3: Primal Queue / Shelves
 
 Search the working product list and full catalog by product ID, full name, or
-shortened name. Working products remain in this view after assignment: their
-rows report assigned location, on-hand state, returned state, or unassigned
+brand name. Working products remain in this view after assignment: their
+rows report assigned location, on-hand state, or unassigned
 state and any recorded stock. Exact-ID search or selecting an assigned product
 navigates to its saved shelf and cell.
 

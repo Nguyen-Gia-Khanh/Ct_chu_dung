@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from mapper.core.common import vietnam_time
+
 import tkinter as tk
 from collections import Counter
 from tkinter import ttk
 
 from .assignment_view import AssignmentView
-from mapper.core.common import MAX_VISIBLE_PRODUCTS, normalize_search, product_search_text
+from mapper.core.common import normalise_sku, MAX_VISIBLE_PRODUCTS, normalize_search, product_search_text
 from mapper.persistence.database import Placement, WarehouseDatabase
 from utils.barcode_scanner import format_product_id
 
@@ -17,7 +19,7 @@ class ProductLookupView(ttk.Frame):
         super().__init__(parent)
         self.database = database
         self.products: dict[str, str] = {}
-        self.shortened_names: dict[str, str] = {}
+        self.brand_names: dict[str, str] = {}
         self.search_text: dict[str, str] = {}
         self.selected_product_id: str | None = None
         self.shelf_contents: list[tuple[str, str, Placement]] = []
@@ -60,15 +62,15 @@ class ProductLookupView(ttk.Frame):
         catalog_rows = self.database.get_display_catalog_products()
         self.products = {
             product_id: product_name
-            for product_id, product_name, _shortened_name in catalog_rows
+            for product_id, product_name, _brand_name in catalog_rows
         }
-        self.shortened_names = {
-            product_id: shortened_name
-            for product_id, _product_name, shortened_name in catalog_rows
+        self.brand_names = {
+            product_id: brand_name
+            for product_id, _product_name, brand_name in catalog_rows
         }
         self.search_text = {
             product_id: product_search_text(
-                product_id, product_name, self.shortened_names[product_id]
+                product_id, product_name, self.brand_names[product_id]
             )
             for product_id, product_name in self.products.items()
         }
@@ -88,7 +90,7 @@ class ProductLookupView(ttk.Frame):
     def refresh_results(self) -> None:
         self._cancel_search()
         raw_query = self.view.search_var.get().strip()
-        query = normalize_search(raw_query)
+        query = normalize_search(normalise_sku(raw_query))
         matches = [
             product_id
             for product_id in self.products
@@ -112,7 +114,7 @@ class ProductLookupView(ttk.Frame):
                 values=(
                     product_id,
                     self.products[product_id],
-                    self.shortened_names[product_id],
+                    self.brand_names[product_id],
                 ),
             )
         self.view.queue_count_text.set(
@@ -240,7 +242,7 @@ class ProductLookupView(ttk.Frame):
                     placement.stock_qty
                     if placement.stock_qty is not None
                     else "Unknown",
-                    placement.assigned_at.replace("T", " ")
+                    vietnam_time(placement.assigned_at)
                     if placement.assigned_at
                     else "Unknown",
                     "Saved",

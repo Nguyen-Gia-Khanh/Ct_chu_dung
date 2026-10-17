@@ -5,12 +5,43 @@ from __future__ import annotations
 import re
 import sys
 import unicodedata
+from datetime import datetime, timedelta, timezone
 from collections.abc import Iterable
 from pathlib import Path
 
 
 APP_TITLE = "Warehouse Shelf Mapper"
 MAX_VISIBLE_PRODUCTS = 750
+UTC_DEFAULT = "(strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))"
+VIETNAM_TIME = timezone(timedelta(hours=7))
+EXCEL_ERRORS = frozenset({'#N/A', '#VALUE!', '#REF!', '#DIV/0!', '#NAME?', '#NUM!', '#NULL!', '#SPILL!', '#CALC!'})
+
+
+def normalise_sku(value: str) -> str:
+    """The one stored and searched SKU spelling, including scanner/import input."""
+    return str(value).strip().upper().replace('-', '').replace(' ', '')
+
+
+def clean_product_name(value: str | None) -> str | None:
+    text = str(value).strip() if value is not None else ''
+    return text if text and text.upper() not in EXCEL_ERRORS else None
+
+
+def iso_timestamp(value: str | None = None, *, legacy_utc: bool = False) -> str:
+    moment = datetime.fromisoformat(value) if value is not None else datetime.now(timezone.utc)
+    if moment.utcoffset() is None:
+        if not legacy_utc:
+            raise ValueError('The time must include a timezone.')
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).isoformat(timespec='seconds')
+
+
+def vietnam_time(value: str | None) -> str:
+    if not value:
+        return ''
+    return datetime.fromisoformat(iso_timestamp(value, legacy_utc=True)).astimezone(
+        VIETNAM_TIME
+    ).isoformat(sep=' ', timespec='seconds')
 
 
 def application_directory() -> Path:
@@ -49,27 +80,17 @@ def normalize_search(value: str) -> str:
 
 
 def product_search_text(
-    product_id: str, name: str, shortened_name: str = "", search_id: str | None = None,
+    product_id: str, name: str | None, brand_name: str | None = "",
 ) -> str:
-    """Cache both ID spellings in one searchable string when products load/change."""
-    search_id = product_id.replace("-", "") if search_id is None else search_id
-    text = f"{product_id} {name} {shortened_name}"
-    if search_id != product_id:
-        text += f" {search_id}"
-    return normalize_search(text)
+    """Cache SKU and both catalog names with the same search normalization."""
+    return normalize_search(normalise_sku(f'{product_id} {name or ""} {brand_name or ""}'))
 
 
 def exact_product_search_id(query: str, product_ids: Iterable[str]) -> str | None:
-    """Resolve visible results, preserving literal IDs and rejecting alias collisions."""
-    query = query.casefold()
-    aliases = set()
-    for product_id in product_ids:
-        folded = product_id.casefold()
-        if folded == query:
-            return product_id
-        if folded.replace("-", "") == query:
-            aliases.add(product_id)
-    return next(iter(aliases)) if len(aliases) == 1 else None
+    """Resolve user input to a canonical SKU among the visible results."""
+    query = normalise_sku(query)
+    matches = {pid for pid in product_ids if normalise_sku(pid) == query}
+    return next(iter(matches)) if len(matches) == 1 else None
 
 
 def clean_location_segment(value: str) -> str:

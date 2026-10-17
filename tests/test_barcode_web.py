@@ -141,7 +141,7 @@ class BarcodeWebTests(WorkspaceTestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["lookup"]["locations"], ["L1-1A2-3", "L2-2B4-5"])
         with closing(sqlite3.connect(self.server.lookup.path)) as connection, connection:
-            connection.execute("DELETE FROM exception_placements WHERE product_id='00123-456-7890'")
+            connection.execute("DELETE FROM exception_placements WHERE product_id='001234567890'")
         answer = json.loads(self.request("POST", "/api/scans", payload)[1])
         self.assertTrue(answer["duplicate"])
         self.assertEqual(answer["lookup"]["locations"], ["L1-1A2-3"])
@@ -170,7 +170,7 @@ class BarcodeWebTests(WorkspaceTestCase):
             self.assertEqual("cells" in json.loads(body)["lookup"], flag)
         self.assertNotIn("include_cell_contents", self.store.recent()[0])
         with closing(sqlite3.connect(self.server.lookup.path)) as connection, connection:
-            connection.execute("DELETE FROM exception_placements WHERE product_id='CAT-001'")
+            connection.execute("DELETE FROM placements WHERE product_id='CAT001'")
         answer = json.loads(self.request("POST", "/api/scans", {**payload, "include_cell_contents": True})[1])
         self.assertTrue(answer["duplicate"])
         self.assertEqual(len(answer["lookup"]["cells"][1]["products"]), 1)

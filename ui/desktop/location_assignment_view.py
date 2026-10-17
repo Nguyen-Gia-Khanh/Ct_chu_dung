@@ -31,7 +31,6 @@ class LocationAssignmentView(ttk.Frame):
         on_catalog_activate: Callable[[tk.Event], object],
         on_load_address: Callable[[], object],
         on_assign_address: Callable[[], object],
-        on_dequeue_hand: Callable[[], object],
         on_selected_to_hand: Callable[[], object],
         on_slot_to_hand: Callable[[], object],
         on_modify_hand_stock: Callable[[], object],
@@ -71,7 +70,6 @@ class LocationAssignmentView(ttk.Frame):
             hand_panel,
             on_load_address,
             on_assign_address,
-            on_dequeue_hand,
             on_modify_hand_stock,
         )
         self._build_contents_panel(
@@ -157,7 +155,7 @@ class LocationAssignmentView(ttk.Frame):
         if hasattr(self, "catalog_transfer_button"):
             if enabled:
                 self.catalog_transfer_button.configure(
-                    text="Transfer selected → shelf (stock 999)",
+                    text="Transfer selected → shelf (keep stock)",
                     style="WholeMode.TButton",
                 )
             else:
@@ -169,7 +167,7 @@ class LocationAssignmentView(ttk.Frame):
         if hasattr(self, "queue_move_button"):
             if enabled:
                 self.queue_move_button.configure(
-                    text="Transfer queue → shelf (stock 999)",
+                    text="Transfer queue → shelf (keep stock)",
                     style="WholeMode.TButton",
                 )
             else:
@@ -184,7 +182,7 @@ class LocationAssignmentView(ttk.Frame):
         if remaining_clicks is None or remaining_clicks <= 0:
             if self.whole_mode:
                 self.queue_move_button.configure(
-                    text="Transfer queue → shelf (stock 999)",
+                    text="Transfer queue → shelf (keep stock)",
                     style="WholeMode.TButton",
                 )
             else:
@@ -270,7 +268,7 @@ class LocationAssignmentView(ttk.Frame):
 
         queue.rowconfigure(3, weight=1)
         queue.columnconfigure(0, weight=1)
-        ttk.Label(queue, text="Search code, full name, or shortened name").grid(
+        ttk.Label(queue, text="Search code, full name, or brand name").grid(
             row=0, column=0, sticky="w"
         )
         self.search_var = tk.StringVar(self)
@@ -400,7 +398,6 @@ class LocationAssignmentView(ttk.Frame):
         parent: ttk.Frame,
         on_load_address: Callable[[], object],
         on_assign_address: Callable[[], object],
-        on_dequeue_hand: Callable[[], object],
         on_modify_hand_stock: Callable[[], object],
     ) -> None:
         parent.rowconfigure(1, weight=1)
@@ -495,11 +492,7 @@ class LocationAssignmentView(ttk.Frame):
             text="Edit selected quantity",
             command=on_modify_hand_stock,
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
-        ttk.Button(
-            hand_actions,
-            text="Dequeue selected → queue / catalog",
-            command=on_dequeue_hand,
-        ).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+
 
         address = ttk.LabelFrame(parent, text="Shelf address", padding=8)
         self.address_panel = address

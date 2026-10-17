@@ -1,3 +1,15 @@
+# Warehouse schema update
+
+The current schema and migration are documented in
+[docs/warehouse-schema-cleanup.md](docs/warehouse-schema-cleanup.md) and
+[migrations/README.md](migrations/README.md). `hot_sellers` replaces `products`;
+only `catalog_products` stores names (`full_name`, `brand_name`).
+`placements` owns the shared stock and one primary location;
+`exception_placements` has only extra locations. All SKU input uses
+`mapper.core.common.normalise_sku`; all stored times use UTC ISO 8601 offsets,
+and `vietnam_time` formats displayed times. Old databases require the explicit
+backed-up migration before starting this version.
+
 # Desktop source and behavior guide
 
 Use this file to locate the code for a requested desktop change. [README.md](README.md)
@@ -124,13 +136,13 @@ cycling/reset, and the Tab 6 synchronization boundary.
 ### Normal clicks and Shift clicks
 
 Normal clicks assign selected products directly to the loaded cell with entered
-quantities; Shift invokes stock-999/whole-batch shortcuts. On-hand holds products
+quantities; Shift invokes direct/whole-batch shortcuts, preserving known stock. On-hand holds products
 removed from shelves for reassignment or return to their queue/catalog list.
 
 | Source/button | Normal click | Hold Shift and click |
 | --- | --- | --- |
-| Catalog assignment | Selected catalog products go directly to the loaded cell after entering stock; catalog-only products stay out of the total queue. | Exactly one selected catalog product goes directly to the loaded cell with stock `999`. |
-| Total queue assignment | Selected ready queue products go directly to the loaded cell after entering stock in `StockQuantityDialog`. | All currently visible ready queue rows go directly to the loaded cell with stock `999`; this uses the displayed search results, not just the selected rows. |
+| Catalog assignment | Selected catalog products go directly to the loaded cell after entering stock; catalog-only products stay out of the total queue. | Exactly one selected catalog product goes directly to the loaded cell with retained stock, or `999` when uncounted. |
+| Total queue assignment | Selected ready queue products go directly to the loaded cell after entering stock in `StockQuantityDialog`. | All currently visible ready queue rows go directly to the loaded cell with retained stock, or `999` when uncounted; this uses the displayed search results, not just the selected rows. |
 | On-hand assignment | Only selected on-hand rows go to the loaded cell with their recorded quantities. | The entire on-hand batch goes to the loaded cell with its recorded quantities. |
 
 Direct transfers require a loaded saved cell. For the queue shortcut, IDs must
@@ -155,7 +167,6 @@ one-step reversal, not a general history of all inventory edits.
 | Catalog to loaded cell | `CatalogActions.assign_catalog_selection_to_address`, shared `assign_product_records_to_address`; database `assign_catalog_direct_to_slot`. |
 | Selected/all on-hand assignment | `AssignmentActions.assign_on_hand_to_address`; database `assign_on_hand_to_slot`. |
 | Returning products from a cell | `move_selected_address_to_on_hand` and `move_address_to_on_hand`; database `move_slot_to_on_hand`. |
-| Returning on-hand products to queue/catalog | `dequeue_selected_on_hand`; database `dequeue_on_hand`. Original membership determines the destination; total-queue stock is retained. Returned rows have ordinary styling. |
 | Stock entry or modification | `StockQuantityDialog` in `assignment_view.py`, `modify_on_hand_stock`, `_modify_loaded_address_stock`, and `validate_stock_quantity`. |
 | Search, location status, catalog double-click | `CatalogActions.schedule_queue_refresh`, `refresh_product_queue`, `refresh_catalog`, `refresh_search_location`, and `activate_catalog_product`. |
 | Queue double-click | `LocationAssignmentView._on_queue_double_click` fills and selects the search field; it does not move inventory. |
@@ -201,7 +212,7 @@ reuse; `tests/test_persistence.py` checks the underlying inventory moves.
 **View and local handlers:** [primal_queue_view.py](ui/desktop/primal_queue_view.py),
 `PrimalQueueView`. `refresh` reads working/catalog products and inventory state;
 `refresh_results` / `_update_search_status` filter the two lists and report
-assigned, on-hand, returned, and unassigned products. Exact-ID search and row
+assigned, on-hand, and unassigned products. Exact-ID search and row
 selection use `_highlight_product_location` to navigate to a saved shelf.
 The three `_on_*_double_click` handlers fill/select the search field.
 
@@ -358,7 +369,7 @@ identify the relevant code section without depending on changing line numbers.
 | `app.py`: `on_cell_transfer_changed` | 5; refreshes inventory consumers | Readback after switch/combine. |
 | `catalog_actions.py`: `import_csv`, `import_catalog_csv` | Buttons on 1; data consumed by 2, 3, 6 | Import into the separate working/catalog stores. |
 | `catalog_actions.py`: `schedule_queue_refresh`, `refresh_product_queue`, `refresh_catalog`, `refresh_search_location`, `activate_catalog_product`, `assign_catalog_selection_to_address` | 2 | Search, location status, catalog activation and assignment. Tab 3 has its own search handlers. |
-| `assignment_actions.py`: `assign_queue_selection_to_address`, `assign_product_records_to_address`, `assign_on_hand_to_address`, `dequeue_selected_on_hand`, `move_address_to_on_hand`, `move_selected_address_to_on_hand`, stock/address/Shift handlers | 2 | Direct assignment and shelf-removal holding queue. |
+| `assignment_actions.py`: `assign_queue_selection_to_address`, `assign_product_records_to_address`, `assign_on_hand_to_address`, `move_address_to_on_hand`, `move_selected_address_to_on_hand`, stock/address/Shift handlers | 2 | Direct assignment and shelf-removal holding queue. |
 | `assignment_actions.py`: `assign_selected_products`, `refresh_slot_contents`, `transfer_selected_products`; `catalog_actions.py`: `preassign_queue_stock`, `return_selected_to_queue` | Older staged workflow | Retained methods; not the current Tab 2 button callbacks in `_build_ui`. |
 | `assignment_view.py`: `StockQuantityDialog` | 2; retained staged assignment code | Per-product quantity entry. |
 | `assignment_view.py`: `AssignmentView.render_shelf`, `_cell_visual`, `refresh_cell`, `mark_selected` | 4; previews produced by 1 | Shared full-size shelf renderer. Tab 2 has its own compact renderer. |
@@ -411,17 +422,16 @@ identify the relevant code section without depending on changing line numbers.
 | --- | --- |
 | Shelf Designer structure and staged editor changes | Explicit **Commit shelf design** on Tab 1. Previewing alone does not save. |
 | CSV imports | Database upserts during import; existing placement/stock/time are retained. |
-| Tab 2 on-hand moves, quantity edits, assignments, dequeue, and Shift transfers | Saved immediately by the database operation. No Tab 1 commit is required. |
+| Tab 2 on-hand moves, quantity edits, assignments and Shift transfers | Saved immediately by the database operation. No Tab 1 commit is required. |
 | Tab 5 switch/combine | Saved immediately after confirmation, preserving stock and original assignment timestamps. Pending designer changes must be resolved first. |
 | Tab 6 exception placement and registration | Placement and CSV/catalog registration are separate operations; staged registration status tracks the remaining targets. |
 | Web modification/resync | Explicit browser action; local assignment alone does not update KiotViet. |
 
 `products` is the working product set, including assigned and on-hand products;
-it is not the same as the visible unassigned queue. `catalog_products` is the
-combined display catalog. Queue names take precedence over catalog names for
-matching IDs, while both import stores remain separate.
+it is not the same as the visible unassigned queue. `catalog_products` owns both names for all SKUs;
+`hot_sellers` stores working-product membership and its import time.
 
-`committed_placements`, `on_hand_products`, and `returned_queue_products` mirror
+`committed_placements` and `on_hand_products` mirror
 saved inventory state. `staged_assignments`, `pending_unassignments`, and
 `transferred_stock` also support editor/staged workflows. Normal queue, on-hand,
 and assigned states are distinct; Tab 6 explicitly permits multiple shelf
@@ -432,8 +442,8 @@ locations for a product.
 
 | File | Responsibility |
 | --- | --- |
-| `schema.py` | Database initialization and schema migrations. |
-| `models.py` | `Placement`, `SlotAddress`, on-hand/returned records, and stock validation. |
+| `schema.py` | Current schema initialization; upgrades are in `migrations/warehouse_cleanup.py`. |
+| `models.py` | `Placement`, `SlotAddress`, on-hand records, and stock validation. |
 | `catalog.py` | Working/catalog imports and the combined display catalog. |
 | `shelves.py` | Shelf layouts, address resolution, cell contents, and shelf commit. |
 | `inventory.py` | Queue/on-hand/placement moves, direct assignments, stock edits, switch/combine, and Shift reversal. |
@@ -453,8 +463,8 @@ font fitting, and atomic PDF output. Keep PDF-only work in this file.
 
 Read [utils/labels/app.py](utils/labels/app.py) when the change involves label
 selection, data loading, export controls, or print history. `LabelDatabase.read_shelves`
-reads `products.shortened_name`, falling back to `products.product_name` when
-the shortened name is blank. `LabelPrinterApp.start_print` and `_print_worker`
+reads catalog `full_name`, falling back to `brand_name` and then the SKU,
+including every extra location. `LabelPrinterApp.start_print` and `_print_worker`
 pass the selected height, orientation, mode, and name-limit option to the renderer.
 The launcher is [warehouse_label_printer.py](warehouse_label_printer.py).
 

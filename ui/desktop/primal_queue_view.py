@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from mapper.core.common import (
+    normalise_sku,
     MAX_VISIBLE_PRODUCTS, exact_product_search_id, make_slot_name, normalize_search,
     product_search_text,
 )
@@ -33,7 +34,7 @@ class PrimalQueueView(ttk.Frame):
         self.database = database
 
         self.products: dict[str, str] = {}
-        self.product_shortened: dict[str, str] = {}
+        self.product_brands: dict[str, str] = {}
         self.product_search: dict[str, str] = {}
 
         self.catalog_products: dict[str, tuple[str, str]] = {}
@@ -41,7 +42,6 @@ class PrimalQueueView(ttk.Frame):
 
         self.placements: dict[str, Placement] = {}
         self.on_hand_products: dict[str, object] = {}
-        self.returned_queue_products: dict[str, object] = {}
 
         self.shelves: list[tuple[int, str, str, str]] = []
         self.shelf_choices: dict[str, int] = {}
@@ -83,7 +83,7 @@ class PrimalQueueView(ttk.Frame):
         parent.rowconfigure(3, weight=1)
 
         ttk.Label(
-            parent, text="Search code, full name, or shortened name"
+            parent, text="Search code, full name, or brand name"
         ).grid(row=0, column=0, sticky="w")
 
         self.search_var = tk.StringVar(self)
@@ -142,7 +142,6 @@ class PrimalQueueView(ttk.Frame):
             "stock_qty", width=55, minwidth=40, anchor="e", stretch=False
         )
 
-        self.primal_tree.tag_configure("returned", background="#fff2a8", font=("Segoe UI", 9, "bold"))
         self.primal_tree.tag_configure("on_hand", background="#e1f5fe")
         self.primal_tree.tag_configure("unassigned", foreground="#888888")
 
@@ -178,18 +177,18 @@ class PrimalQueueView(ttk.Frame):
 
         self.catalog_tree = ttk.Treeview(
             catalog_body,
-            columns=("product_id", "product_name", "shortened_name"),
+            columns=("product_id", "product_name", "brand_name"),
             show="headings",
             selectmode="browse",
             height=8,
         )
         self.catalog_tree.heading("product_id", text="Product ID")
         self.catalog_tree.heading("product_name", text="Product name")
-        self.catalog_tree.heading("shortened_name", text="Shortened name")
+        self.catalog_tree.heading("brand_name", text="Brand name")
 
         self.catalog_tree.column("product_id", width=110, minwidth=80, stretch=False)
         self.catalog_tree.column("product_name", width=180, minwidth=100)
-        self.catalog_tree.column("shortened_name", width=120, minwidth=80)
+        self.catalog_tree.column("brand_name", width=120, minwidth=80)
 
         catalog_y_scroll = ttk.Scrollbar(
             catalog_body, orient="vertical", command=self.catalog_tree.yview
@@ -293,25 +292,25 @@ class PrimalQueueView(ttk.Frame):
 
     def refresh(self) -> None:
         """Reload all data from database and refresh views."""
-        product_rows = self.database.get_product_records(include_search_id=True)
+        product_rows = self.database.get_product_records()
         catalog_only = self.database.get_catalog_only_product_ids()
         product_rows = [row for row in product_rows if row[0] not in catalog_only]
         self.products = {
             product_id: product_name
-            for product_id, product_name, _shortened_name, _search_id in product_rows
+            for product_id, product_name, _brand_name in product_rows
         }
-        self.product_shortened = {
-            product_id: shortened_name
-            for product_id, _product_name, shortened_name, _search_id in product_rows
+        self.product_brands = {
+            product_id: brand_name
+            for product_id, _product_name, brand_name in product_rows
         }
         self.product_search = {
             row[0]: product_search_text(*row) for row in product_rows
         }
 
-        catalog_rows = self.database.get_display_catalog_products(include_search_id=True)
+        catalog_rows = self.database.get_display_catalog_products()
         self.catalog_products = {
-            product_id: (product_name, shortened_name)
-            for product_id, product_name, shortened_name, _search_id in catalog_rows
+            product_id: (product_name, brand_name)
+            for product_id, product_name, brand_name in catalog_rows
         }
         self.catalog_search = {
             row[0]: product_search_text(*row) for row in catalog_rows
@@ -319,7 +318,6 @@ class PrimalQueueView(ttk.Frame):
 
         self.placements = self.database.get_placement_details()
         self.on_hand_products = self.database.get_on_hand_products()
-        self.returned_queue_products = self.database.get_returned_queue_products()
 
         self.shelves = self.database.list_shelves()
         choices = {
@@ -357,7 +355,7 @@ class PrimalQueueView(ttk.Frame):
             self.search_after_id = None
 
         raw_query = self.search_var.get().strip()
-        query = normalize_search(raw_query)
+        query = normalize_search(normalise_sku(raw_query))
 
         # 1. Primal queue filtering
         primal_matches = [
@@ -386,11 +384,6 @@ class PrimalQueueView(ttk.Frame):
                 loc = "On-hand"
                 qty = str(item.stock_qty) if getattr(item, "stock_qty", None) is not None else "Unknown"
                 tag = "on_hand"
-            elif product_id in self.returned_queue_products:
-                item = self.returned_queue_products[product_id]
-                loc = "Queue (Returned)"
-                qty = str(item.stock_qty) if getattr(item, "stock_qty", None) is not None else ""
-                tag = "returned"
             else:
                 loc = "Unassigned"
                 qty = ""
@@ -406,8 +399,8 @@ class PrimalQueueView(ttk.Frame):
 
         # 2. Catalog filtering
         catalog_matches = [
-            (product_id, product_name, shortened_name)
-            for product_id, (product_name, shortened_name) in self.catalog_products.items()
+            (product_id, product_name, brand_name)
+            for product_id, (product_name, brand_name) in self.catalog_products.items()
             if not query or query in self.catalog_search[product_id]
         ]
         catalog_matches.sort(
@@ -418,10 +411,10 @@ class PrimalQueueView(ttk.Frame):
         )
 
         catalog_rows = []
-        for product_id, product_name, shortened_name in catalog_matches[:MAX_VISIBLE_PRODUCTS]:
+        for product_id, product_name, brand_name in catalog_matches[:MAX_VISIBLE_PRODUCTS]:
             catalog_rows.append((
                 f"catalog::{product_id}",
-                (product_id, product_name, shortened_name), (),
+                (product_id, product_name, brand_name), (),
             ))
         sync_tree_rows(self.catalog_tree, catalog_rows)
 

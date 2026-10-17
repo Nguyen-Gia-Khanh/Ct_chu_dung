@@ -22,11 +22,11 @@ class ExceptionStagingLifecycleTest(unittest.TestCase):
         self.folder.cleanup()
 
     def test_independent_registration_and_wipe(self):
-        pid = "99999-ZZZ-999"
+        pid = "99999ZZZ999"
         self.db.assign_exception(pid, self.first.slot_id, product_name="Tên hàng, A")
         stage = self.db.get_exception_staging()[0]
         self.assertEqual((stage["csv_updated"], stage["catalog_updated"]), (False, False))
-        self.assertNotIn(pid, {row[0] for row in self.db.get_catalog_products()})
+        self.assertIn(pid, {row[0] for row in self.db.get_catalog_products()})
 
         self.assertEqual(self.db.add_staged_to_catalog([pid]), 1)
         stage = self.db.get_exception_staging()[0]
@@ -58,7 +58,7 @@ class ExceptionStagingLifecycleTest(unittest.TestCase):
         self.assertEqual(self.db.get_product_locations(pid), [])
 
     def test_wipe_removes_regular_placement(self):
-        pid = "00001-AAA-001"
+        pid = "00001AAA001"
         self.db.import_products({pid: ("Regular", "Regular")})
         self.db.add_to_on_hand({pid: 1}, "2026-09-22T09:00:00+00:00")
         self.db.assign_on_hand_to_slot(self.first.slot_id, "2026-09-22T10:00:00+00:00", [pid])
@@ -67,16 +67,6 @@ class ExceptionStagingLifecycleTest(unittest.TestCase):
         self.db.wipe_staged_exception(pid)
         self.assertEqual(self.db.get_product_locations(pid), [])
 
-    def test_migration_preserves_old_rows(self):
-        pid = "99999-ZZZ-999"
-        self.db.assign_exception(pid, self.first.slot_id)
-        with closing(sqlite3.connect(self.db.path)) as connection, connection:
-            connection.execute("ALTER TABLE wait_to_update_csv DROP COLUMN csv_updated")
-            connection.execute("ALTER TABLE wait_to_update_csv DROP COLUMN catalog_updated")
-        self.db.initialize()
-        stage = self.db.get_exception_staging()[0]
-        self.assertFalse(stage["csv_updated"])
-        self.assertFalse(stage["catalog_updated"])
 
 
 if __name__ == "__main__":

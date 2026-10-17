@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 from ui.desktop.app import WarehouseMapperApp
 from ui.desktop.assignment_view import AssignmentView, StockQuantityDialog
 from mapper.core.common import make_slot_name
-from mapper.persistence.database import Placement, ReturnedQueueProduct, WarehouseDatabase
+from mapper.persistence.database import Placement, WarehouseDatabase
 
 
 CELL_ONE = make_slot_name("1", "A", 1, 1, side="1")
@@ -45,7 +45,6 @@ class StockPlacementTests(unittest.TestCase):
         app.pending_unassignments = set()
         app.transferred_stock = {}
         app.on_hand_products = {}
-        app.returned_queue_products = {}
         app.selected_slot = CELL_ONE
         app.current_layout = [2]
         app.preview_key = ("1", "1", "A")
@@ -128,21 +127,6 @@ class StockPlacementTests(unittest.TestCase):
         self.assertEqual(self.database.get_placements(), {})
         app.refresh_all_views.assert_not_called()
 
-    def test_return_and_reassign_record_new_details_and_leave_other_product_unchanged(self):
-        app = self.make_app()
-        self.stage(app, {"P1": 12, "P2": 3}, FIRST_TIME)
-        with patch("ui.desktop.app.messagebox.showinfo"):
-            app.commit_changes()
-        original_p2 = app.committed_placements["P2"]
-        app.assignments.contents_tree.selection.return_value = ("saved::P1",)
-        app.return_selected_to_queue()
-        app.selected_slot = CELL_TWO
-        assigned_at = self.stage(app, {"P1": 9}, SECOND_TIME)
-        with patch("ui.desktop.app.messagebox.showinfo"):
-            app.commit_changes()
-        self.assertEqual(self.database.get_placement_details(), {
-            "P1": Placement(CELL_TWO, 9, assigned_at), "P2": original_p2,
-        })
 
     def test_layout_only_commit_preserves_quantity_and_both_timestamps(self):
         self.database.commit_shelf("1", "A", [2], {"P1": Placement(CELL_ONE, 16, FIRST_TIME)}, set())
@@ -172,42 +156,6 @@ class StockPlacementTests(unittest.TestCase):
         self.assertEqual(app.staged_assignments, {"P1": Placement(CELL_ONE, 7, instant)})
         self.assertEqual(self.database.get_placements(), {})
 
-    def test_legacy_migration_preserves_commit_time_and_does_not_invent_stock_or_added_time(self):
-        self.database.commit_shelf("1", "A", [2], {}, set())
-        # Recreate the exact original placements schema and an existing record.
-        with closing(self.database.connect()) as connection, connection:
-            slot_id = connection.execute("SELECT slot_id FROM slots WHERE slot_name = ?", (CELL_ONE,)).fetchone()[0]
-            original_slots = [tuple(row) for row in connection.execute("SELECT * FROM slots ORDER BY slot_id")]
-            connection.execute("DROP TABLE placements")
-            connection.execute("""
-                CREATE TABLE placements (
-                    product_id TEXT PRIMARY KEY REFERENCES products(product_id) ON DELETE CASCADE,
-                    slot_id INTEGER NOT NULL REFERENCES slots(slot_id) ON DELETE RESTRICT,
-                    assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            connection.execute(
-                "INSERT INTO placements VALUES (?, ?, ?)", ("P1", slot_id, "1999-12-30 08:00:00"),
-            )
-        migrated = WarehouseDatabase(self.database.path)
-        self.assertEqual(migrated.get_placements(), {"P1": CELL_ONE})
-        self.assertEqual(migrated.get_placement_details(), {"P1": Placement(CELL_ONE, None, None)})
-        with closing(migrated.connect()) as connection:
-            row = connection.execute("SELECT * FROM placements").fetchone()
-            self.assertEqual(row["committed_at"], "1999-12-30 08:00:00")
-            self.assertEqual([tuple(row) for row in connection.execute("SELECT * FROM slots ORDER BY slot_id")], original_slots)
-            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
-        # Opening twice must not rename the real assignment timestamp or data.
-        reopened = WarehouseDatabase(self.database.path)
-        self.assertEqual(reopened.get_placement_details(), migrated.get_placement_details())
-        reopened.commit_shelf("1", "A", [2], {"P2": Placement(CELL_ONE, 34, SECOND_TIME)}, set())
-        self.assertEqual(reopened.get_placement_details()["P1"], Placement(CELL_ONE, None, None))
-        self.assertEqual(reopened.get_placement_details()["P2"], Placement(CELL_ONE, 34, SECOND_TIME))
-        app = self.make_app()
-        app.reload_database_state()
-        app.refresh_slot_contents()
-        values = {call.kwargs["iid"]: call.kwargs["values"] for call in app.assignments.contents_tree.insert.call_args_list}
-        self.assertEqual(values["saved::P1"], ("P1", "Bolts", "Unknown", "Unknown", "Saved"))
 
     def test_transfer_staged_product_preserves_stock_and_unassigns(self):
         app = self.make_app()
@@ -230,85 +178,8 @@ class StockPlacementTests(unittest.TestCase):
         self.assertEqual(app.transferred_stock.get("P1"), 22)
         app.refresh_all_views.assert_called()
 
-    def test_catalog_transfer_adds_product_to_queue_and_keeps_catalog_record(self):
-        self.database.import_catalog_products({"C1": ("Catalog bolt", "C bolt")})
-        app = self.make_app()
-        app.catalog_products = {"C1": ("Catalog bolt", "C bolt")}
-        app.assignments.catalog_tree = Mock()
-        app.assignments.catalog_tree.selection.return_value = ("catalog::C1",)
-        app.reload_database_state = Mock()
 
-        app.transfer_catalog_selection_to_queue()
 
-        self.assertIn(("C1", "Catalog bolt"), self.database.get_products())
-        self.assertIn(("C1", "Catalog bolt", "C bolt"), self.database.get_catalog_products())
-        app.reload_database_state.assert_called_once()
-        app.refresh_all_views.assert_called()
-
-    def test_catalog_transfer_moves_saved_product_to_queue_with_stock(self):
-        placement = Placement(CELL_ONE, 27, FIRST_TIME)
-        self.database.import_catalog_products({"P1": ("Bolts", "Bolt")})
-        self.database.commit_shelf("1", "A", [2], {"P1": placement}, set())
-        app = self.make_app()
-        app.catalog_products = {"P1": ("Bolts", "Bolt")}
-        app.committed_placements = {"P1": placement}
-        app.committed_locations = {"P1": CELL_ONE}
-        app.assignments.catalog_tree = Mock()
-        app.assignments.catalog_tree.selection.return_value = ("catalog::P1",)
-        app.reload_database_state = Mock()
-
-        app.transfer_catalog_selection_to_queue()
-
-        self.assertIn("P1", app.pending_unassignments)
-        self.assertEqual(app.transferred_stock["P1"], 27)
-        self.assertIn(("P1", "Bolts", "Bolt"), self.database.get_catalog_products())
-
-    def test_catalog_transfer_with_on_hand_tree_force_pulls_shelf_and_hand_products(self):
-        placement = Placement(CELL_ONE, 27, FIRST_TIME)
-        self.database.import_catalog_products({
-            "P1": ("Bolts", "Bolt"),
-            "P2": ("Washers", "Washer"),
-            "C1": ("New Nut", "Nut"),
-        })
-        self.database.commit_shelf("1", "A", [2], {"P1": placement}, set())
-        self.database.add_to_on_hand({"P2": 14}, FIRST_TIME)
-        app = self.make_app()
-        app.assignments.on_hand_tree = Mock()
-        app.assignments.search_var = Mock()
-        app.assignments.search_var.get.return_value = ""
-        app.assignments.queue_count_text = Mock()
-        app.assignments.on_hand_count_text = Mock()
-        app.assignments.catalog_count_text = Mock()
-        app.catalog_products = {
-            "P1": ("Bolts", "Bolt"),
-            "P2": ("Washers", "Washer"),
-            "C1": ("New Nut", "Nut"),
-        }
-        app.committed_placements = {"P1": placement}
-        app.committed_locations = {"P1": CELL_ONE}
-        app.assignments.catalog_tree = Mock()
-        app.assignments.catalog_tree.get_children.return_value = ()
-        app.assignments.on_hand_tree.get_children.return_value = ()
-        app.assignments.queue_tree.get_children.return_value = ()
-        app.assignments.catalog_tree.selection.return_value = (
-            "catalog::P1",
-            "catalog::P2",
-            "catalog::C1",
-        )
-
-        app.transfer_catalog_selection_to_queue()
-
-        self.assertNotIn("P1", self.database.get_placement_details())
-        self.assertNotIn("P2", self.database.get_on_hand_products())
-        returned = self.database.get_returned_queue_products()
-        self.assertEqual(returned["P1"].stock_qty, 27)
-        self.assertEqual(returned["P2"].stock_qty, 14)
-        self.assertEqual(app.transferred_stock.get("P1"), 27)
-        self.assertIn(("C1", "New Nut"), self.database.get_products())
-        status_msg = app.status_text.set.call_args[0][0]
-        self.assertIn("pulled from shelf", status_msg)
-        self.assertIn("pulled from on-hand", status_msg)
-        self.assertIn("added to queue", status_msg)
 
     def test_double_click_located_catalog_product_searches_without_transferring(self):
         app = self.make_app()
@@ -438,78 +309,8 @@ class StockPlacementTests(unittest.TestCase):
 
         self.assertIn("fastener alias", app.product_search["P1"])
 
-    def test_total_queue_shows_returned_stock_first_with_highlight(self):
-        app = self.make_app()
-        app.product_search = {"P1": "p1 bolts", "P2": "p2 washers"}
-        app.search_after_id = None
-        app.returned_queue_products = {
-            "P1": ReturnedQueueProduct("P1", 42, SECOND_TIME)
-        }
-        app.assignments.search_var = Mock()
-        app.assignments.search_var.get.return_value = ""
-        app.assignments.on_hand_tree = Mock()
-        app.assignments.queue_tree.get_children.return_value = ()
-        app.assignments.queue_count_text = Mock()
 
-        WarehouseMapperApp.refresh_product_queue(app)
 
-        calls = app.assignments.queue_tree.insert.call_args_list
-        self.assertEqual(
-            calls[0].kwargs,
-            {
-                "iid": "product::P1",
-                "values": ("P1", "Bolts", "42"),
-                "tags": ("returned",),
-            },
-        )
-        self.assertEqual(
-            calls[1].kwargs,
-            {
-                "iid": "product::P2",
-                "values": ("P2", "Washers", ""),
-                "tags": (),
-            },
-        )
-
-    def test_move_returned_product_to_on_hand_prefills_and_clears_marker(self):
-        self.database.add_to_on_hand({"P1": 42}, FIRST_TIME)
-        self.database.dequeue_on_hand(["P1"], SECOND_TIME)
-        app = self.make_app()
-        app.returned_queue_products = self.database.get_returned_queue_products()
-        app.assignments.queue_tree.selection.return_value = ("product::P1",)
-
-        with patch("ui.desktop.assignment_actions.StockQuantityDialog") as mock_dialog, patch(
-            "ui.desktop.assignment_actions.datetime"
-        ) as clock:
-            mock_dialog.return_value = SimpleNamespace(result={"P1": 42})
-            clock.now.return_value = datetime.fromisoformat(SECOND_TIME)
-
-            app.move_selected_to_on_hand()
-
-        self.assertEqual(
-            mock_dialog.call_args.kwargs["initial_quantities"], {"P1": 42}
-        )
-        self.assertEqual(self.database.get_returned_queue_products(), {})
-        self.assertEqual(self.database.get_on_hand_products()["P1"].stock_qty, 42)
-
-    def test_dequeue_action_moves_only_selected_on_hand_rows(self):
-        self.database.add_to_on_hand({"P1": 12, "P2": 4}, FIRST_TIME)
-        app = self.make_app()
-        app.on_hand_products = self.database.get_on_hand_products()
-        app.assignments.on_hand_tree = Mock()
-        app.assignments.on_hand_tree.get_children.return_value = ()
-        app.assignments.on_hand_tree.selection.return_value = ("hand::P1",)
-        app.assignments.on_hand_count_text = Mock()
-
-        with patch("ui.desktop.assignment_actions.datetime") as clock:
-            clock.now.return_value = datetime.fromisoformat(SECOND_TIME)
-            app.dequeue_selected_on_hand()
-
-        self.assertEqual(set(self.database.get_on_hand_products()), {"P2"})
-        self.assertEqual(
-            self.database.get_returned_queue_products()["P1"].stock_qty, 12
-        )
-        app.refresh_all_views.assert_called_once()
 
     def test_assign_prefills_transferred_stock_and_cleans_up(self):
         app = self.make_app()
@@ -534,12 +335,6 @@ class StockPlacementTests(unittest.TestCase):
         self.assertEqual(app.transferred_stock, {"P1": 10, "P2": 20})
         app.refresh_product_queue.assert_called()
 
-    def test_return_selected_to_queue_clears_transferred_stock(self):
-        app = self.make_app()
-        app.transferred_stock["P1"] = 99
-        app.assignments.contents_tree.selection.return_value = ("staged::P1",)
-        app.return_selected_to_queue()
-        self.assertNotIn("P1", app.transferred_stock)
 
 
 class QuantityDialogTests(unittest.TestCase):
@@ -619,8 +414,7 @@ class AssignmentViewInteractionTests(unittest.TestCase):
                 on_catalog_activate=Mock(),
                 on_load_address=Mock(),
                 on_assign_address=Mock(),
-                on_dequeue_hand=Mock(),
-                on_selected_to_hand=Mock(),
+                    on_selected_to_hand=Mock(),
                 on_slot_to_hand=Mock(),
                 on_modify_hand_stock=Mock(),
                 on_modify_stock=Mock(),
