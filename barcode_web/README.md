@@ -25,7 +25,7 @@ and reload the phone page.
    (see below). Then scan QR 2, press **Start camera**, and allow camera access.
    Add the scanner to the home screen to reopen it directly next time.
 5. Scanned content appears in the phone, the laptop receiver, the terminal,
-   and `data/barcode_web/scans.jsonl`. The receiver displays the last 200 scans;
+   and `data/barcode_web/scans.jsonl`. The receiver displays the last 100 scans;
    the log keeps older scans. Barcode text is preserved, including leading
    zeros, spaces and separators. The phone also shows the product and its
    locations, or a clear unknown/unassigned/ambiguous result.

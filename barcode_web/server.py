@@ -146,7 +146,7 @@ class ScanStore:
         folder.mkdir(parents=True, exist_ok=True)
         self.path = folder / "scans.jsonl"
         self.lock = threading.Lock()
-        self.scans = deque(maxlen=200)
+        self.scans = deque(maxlen=100)  # Shown on the receiver; scans.jsonl keeps every scan.
         self.ids = deque(maxlen=2000)
         # Bound startup memory even when the log has been used for months.
         if self.path.exists():

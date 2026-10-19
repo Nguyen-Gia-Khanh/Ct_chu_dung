@@ -56,6 +56,17 @@ class BarcodeWebTests(WorkspaceTestCase):
             output.write("\nnull\n[]\n{}\nnot-json\n")
         self.assertEqual(ScanStore(self.folder).recent(), self.store.recent())
 
+    def test_receiver_shows_latest_100_scans_and_log_keeps_all(self):
+        for index in range(105):
+            self.store.add({"id": f"scan-{index}", "text": f"PART{index}", "format": "Code 39"})
+        shown = json.loads(self.request("GET", "/api/scans")[1])
+        self.assertEqual(len(shown), 100)
+        self.assertEqual((shown[0]["text"], shown[-1]["text"]), ("PART104", "PART5"))
+        self.assertEqual(len(self.store.path.read_text(encoding="utf-8").splitlines()), 105)
+        self.assertEqual(len(ScanStore(self.folder).recent()), 100, "a restart also loads only the latest 100")
+        self.assertTrue(self.store.add({"id": "scan-0", "text": "PART0", "format": "Code 39"})["duplicate"],
+                        "duplicate protection still covers scans no longer shown")
+
     def test_saved_phone_token_authenticates_after_server_restart(self):
         token = load_token(self.folder)
         self.server.token = token
