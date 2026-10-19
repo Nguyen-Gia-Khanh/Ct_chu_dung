@@ -59,16 +59,16 @@ class ShelfDeletionTests(WorkspaceTestCase):
         self.assertIsNone(self.app.selected_address)
         self.assertFalse(self.app.has_pending_changes())
         self.assertIsNone(self.app.shelf_browser.current_key)
-        self.assertEqual(self.app.shelf_browser.view.slot_buttons, {})
+        self.assertEqual(self.app.shelf_browser.shelf_grid.cells, {})
         self.assertEqual(self.app.shelf_selector.get(), "")
 
     def test_delete_clears_preview_of_saved_shelf(self) -> None:
         self.app.load_selected_shelf()
         self.app.build_shelf_preview(switch_tab=False)
         self.assertIsNone(self.app.shelf_browser.current_shelf_id)
-        self.assertTrue(self.app.shelf_browser.view.slot_buttons)
+        self.assertTrue(self.app.shelf_browser.shelf_grid.cells)
         self.delete()
-        self.assertEqual(self.app.shelf_browser.view.slot_buttons, {})
+        self.assertEqual(self.app.shelf_browser.shelf_grid.cells, {})
 
     def test_delete_other_shelf_preserves_loaded_editor_and_browser(self) -> None:
         self.app.load_selected_shelf()

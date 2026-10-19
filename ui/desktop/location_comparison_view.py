@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
@@ -10,14 +9,14 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from mapper.persistence.database import WarehouseDatabase
-from mapper.core.common import data_directory
+from mapper.core.common import split_locations
 from mapper.features.location_comparison import (
     LocationDifference,
     compare_locations,
     export_comparison,
-    location_parts,
+    export_path,
+    is_header_row,
     read_web_locations,
-    suggested_columns,
 )
 from mapper.features.web_upload import LocationUpdate
 from mapper.features.kiotviet_settings import MAX_UPLOAD_TABS, load_settings, save_settings
@@ -70,14 +69,10 @@ class WorkbookColumnDialog(tk.Toplevel):
         for sheet_name in self.workbook.sheetnames:
             worksheet = self.workbook[sheet_name]
             for row_number, row in enumerate(worksheet.iter_rows(max_row=15, values_only=True), 1):
-                product, location = suggested_columns(list(row))
-                if product != location and row[product] and row[location]:
-                    from mapper.features.location_comparison import _plain_header, ID_HEADERS, LOCATION_HEADERS
-                    if (_plain_header(row[product]) in ID_HEADERS
-                            and _plain_header(row[location]) in LOCATION_HEADERS):
-                        self.sheet.set(sheet_name)
-                        self.header_row.set(row_number)
-                        return
+                if is_header_row(list(row)):
+                    self.sheet.set(sheet_name)
+                    self.header_row.set(row_number)
+                    return
 
     def _update_columns(self, _event=None) -> None:
         try:
@@ -245,18 +240,6 @@ class LocationComparisonView(ttk.Frame):
         if self.store_url.get().strip() and not self._web_busy:
             self.save_browser_settings(quiet=True)
 
-    def _local_locations(self) -> dict[str, list[str]]:
-        local: dict[str, list[str]] = {}
-        registered_ids = {row[0] for row in self.database.get_product_records()}
-        registered_ids.update(row[0] for row in self.database.get_catalog_products())
-        for product_id, slot_name, _stock, _assigned_at in self.database.get_all_placement_items():
-            if product_id not in registered_ids:
-                continue
-            slots = local.setdefault(product_id, [])
-            if slot_name not in slots:
-                slots.append(slot_name)
-        return local
-
     def import_excel(self) -> None:
         if self.busy:
             return
@@ -322,27 +305,20 @@ class LocationComparisonView(ttk.Frame):
             web_locations = read_web_locations(path, *columns) if columns is not None else web_snapshot
             if web_locations is None:
                 raise ValueError("Import website data before comparing locations.")
-            local_locations = self._local_locations()
+            local_locations = self.database.get_location_sets()
             differences, missing_ids = compare_locations(local_locations, web_locations)
-            export_path = None
+            destination = None
             export_count = 0
             if action == "export":
                 remaining = [row for row in differences
                              if resynced_snapshot.get(row.product_id) != row.true_location]
                 export_count = len(remaining)
                 if remaining:
-                    result_dir = data_directory() / "exports" / "location_comparison"
-                    result_dir.mkdir(parents=True, exist_ok=True)
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    export_path = result_dir / f"kiotviet_location_comparison_{timestamp}.xlsx"
-                    counter = 2
-                    while export_path.exists():
-                        export_path = result_dir / f"kiotviet_location_comparison_{timestamp}_{counter}.xlsx"
-                        counter += 1
-                    export_comparison(export_path, remaining)
+                    destination = export_path()
+                    export_comparison(destination, remaining)
             self._comparison_events.put((
                 "done", web_locations, local_locations, differences, missing_ids,
-                export_path, export_count,
+                destination, export_count,
             ))
         except Exception as error:
             self._comparison_events.put(("error", str(error)))
@@ -394,8 +370,7 @@ class LocationComparisonView(ttk.Frame):
                 status, tag = "Saved; re-export to verify", "resynced"
             elif not difference.true_location:
                 status, tag = "Ready to clear web location", ""
-            elif len(location_parts(difference.true_location)) > 1:
-                count = len(location_parts(difference.true_location))
+            elif (count := len(split_locations(difference.true_location))) > 1:
                 status, tag = f"Ready to sync {count} locations", ""
             else:
                 status, tag = "Unsynced", ""
@@ -458,12 +433,11 @@ class LocationComparisonView(ttk.Frame):
 
     def _update_summary(self) -> None:
         unsynced = self.exportable_differences()
-        ready = sum(row.can_resync for row in unsynced)
         self.summary.set(
-            f"{len(unsynced):,} unsynced · {ready:,} ready for web resync · "
+            f"{len(unsynced):,} unsynced and ready for web resync · "
             f"{len(self.missing_ids):,} local IDs absent from export"
         )
-        self.resync_button.configure(state="normal" if ready and not self.busy else "disabled")
+        self.resync_button.configure(state="normal" if unsynced and not self.busy else "disabled")
         self.export_button.configure(state="normal" if unsynced and not self.busy else "disabled")
 
     def exportable_differences(self) -> list[LocationDifference]:
@@ -471,11 +445,8 @@ class LocationComparisonView(ttk.Frame):
                 if self.resynced.get(row.product_id) != row.true_location]
 
     def pending_updates(self) -> list[LocationUpdate]:
-        return [
-            LocationUpdate(row.product_id, location_parts(row.true_location))
-            for row in self.differences
-            if row.can_resync and self.resynced.get(row.product_id) != row.true_location
-        ]
+        return [LocationUpdate(row.product_id, split_locations(row.true_location))
+                for row in LocationComparisonView.exportable_differences(self)]
 
     def resync(self) -> None:
         if self.busy or self.web_locations is None:

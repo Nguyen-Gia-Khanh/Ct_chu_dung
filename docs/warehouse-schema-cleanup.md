@@ -200,7 +200,7 @@ exception ID sequence was removed. Surviving ID high-water marks were preserved:
   without changing their instant. Defaults and writers use the same format;
   desktop assignment, stock-change, and staging times display `+07:00`.
 - Desktop searches, scanner input, manual entry, CSV imports, Excel/KiotViet
-  imports, database methods, and upload objects use `normalise_sku()`.
+  imports, database methods, and upload objects use `normalize_sku()`.
   `06410-kfl-850` finds `06410KFL850`. Both names remain searchable.
   Scanner and label database connections remain read-only. Every application
   connection enables foreign keys; only the explicit migration turns them off

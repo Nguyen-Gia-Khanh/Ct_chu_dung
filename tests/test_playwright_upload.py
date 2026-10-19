@@ -151,7 +151,7 @@ class PlaywrightUploadTests(WorkspaceTestCase):
 
         def read_shelves(_uploader):
             barrier.wait(timeout=5)
-            return {"A"}, {"A": "11"}
+            return {"A": "11"}
 
         def modify(uploader, product, progress, *, save):
             uploader._set_location(product, progress)
@@ -161,7 +161,7 @@ class PlaywrightUploadTests(WorkspaceTestCase):
                 patch.object(WebsiteUploader, "_choose_tab"), \
                 patch.object(WebsiteUploader, "_new_upload_tab"), \
                 patch.object(WebsiteUploader, "_dom", return_value=True), \
-                patch.object(WebsiteUploader, "_get_shelves_by_name", read_shelves), \
+                patch.object(WebsiteUploader, "_shelf_ids_by_name", read_shelves), \
                 patch.object(WebsiteUploader, "_select_location_ids", lambda _u, p, _ids: selected.append(p.product_id)), \
                 patch.object(WebsiteUploader, "modify_location", modify), \
                 patch.object(WebsiteUploader, "disconnect"):

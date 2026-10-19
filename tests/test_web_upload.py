@@ -23,10 +23,8 @@ class LocationCreationTests(unittest.TestCase):
         uploader._click = Mock()
         uploader._fill_input = Mock()
         uploader._select_location_ids = Mock()
-        uploader._get_shelves_by_name = Mock(side_effect=[
-            (set(), {}),
-            ({product.location_id}, {product.location_id: "42"}),
-        ])
+        # First read, recheck under the creation lock, then the post-create poll.
+        uploader._shelf_ids_by_name = Mock(side_effect=[{}, {}, {product.location_id: "42"}])
 
         uploader._set_location(product, Mock())
 
@@ -44,9 +42,7 @@ class LocationCreationTests(unittest.TestCase):
         uploader._click = Mock()
         uploader._fill_input = Mock()
         uploader._select_location_ids = Mock()
-        uploader._get_shelves_by_name = Mock(return_value=(
-            {product.location_id}, {product.location_id: "42"},
-        ))
+        uploader._shelf_ids_by_name = Mock(return_value={product.location_id: "42"})
 
         uploader._set_location(product, Mock())
 
@@ -65,7 +61,7 @@ class UploadInteractionTests(unittest.TestCase):
         uploader._clear_location = Mock()
         uploader._set_location = Mock()
         uploader._location_values_match = Mock()
-        uploader._get_shelves_by_name = Mock()
+        uploader._shelf_ids_by_name = Mock()
         uploader._wait = Mock()
         uploader._save_product = Mock(return_value="cleared")
 
@@ -74,7 +70,7 @@ class UploadInteractionTests(unittest.TestCase):
         uploader._clear_location.assert_called_once_with()
         uploader._set_location.assert_not_called()
         uploader._location_values_match.assert_not_called()
-        uploader._get_shelves_by_name.assert_not_called()
+        uploader._shelf_ids_by_name.assert_not_called()
         uploader._wait.assert_not_called()
         uploader._save_product.assert_called_once_with(product, ANY, location_only=True)
 
@@ -82,13 +78,13 @@ class UploadInteractionTests(unittest.TestCase):
         uploader = WebsiteUploader(step_delay=0)
         uploader._wait = Mock()
         uploader._dom = Mock(return_value=True)
-        uploader._get_shelves_by_name = Mock()
+        uploader._shelf_ids_by_name = Mock()
         uploader._click = Mock()
 
         uploader._clear_location()
 
         uploader._dom.assert_called_once_with("location_clear", ANY)
-        uploader._get_shelves_by_name.assert_not_called()
+        uploader._shelf_ids_by_name.assert_not_called()
         uploader._click.assert_not_called()
 
     def test_normal_upload_has_no_fixed_pause(self):

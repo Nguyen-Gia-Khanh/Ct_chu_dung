@@ -5,8 +5,9 @@
 
 # Warehouse Shelf Mapper
 
-A local Windows/Tkinter application for mapping products to irregular warehouse
-shelves. SQLite is local, so no Docker or database server is required.
+A local Windows application for mapping products to irregular warehouse
+shelves, with a Tkinter front end and a faster Tauri front end over the same
+Python code. SQLite is local, so no Docker or database server is required.
 
 For source changes, see [instruction.md](instruction.md): it maps each desktop
 tab to its view, action handlers, persistence methods, and verification steps.
@@ -48,6 +49,26 @@ database from their existing folders. The project venv and source files must
 remain in place. `warehouse_label_printer.exe` works the same way for the label
 printer.
 
+### Faster desktop app (Tauri)
+
+`warehouse_mapper_tauri.exe` is a second front end with the same seven tabs. Its
+window is a small Rust/WebView2 shell; all warehouse rules still run in Python
+(`python -m mapper.rpc`, started automatically from `.venv`). Searching the full
+catalog takes a few milliseconds per keystroke, and long lists scroll without
+loading every row. Both apps can be used; they read and write the same database.
+
+Build it once (needs Node.js and the Rust MSVC toolchain), then double-click the
+exe in the project folder:
+
+```powershell
+ui\tauri\build.cmd
+```
+
+Use `warehouse_mapper_tauri.exe --db path/to/file.db` for another database.
+Python errors from the data service are written to `data/logs/desktop-sidecar.log`.
+For development, `cd ui/tauri; npm install; npx tauri dev` reloads the interface
+on save; `npm run check` and `npm test` type-check and test it.
+
 To run the source directly from the project folder:
 
 ```powershell
@@ -76,8 +97,7 @@ code, or other app resources.
 `requirements.txt` contains only libraries used by the desktop apps and existing
 tools: `openpyxl`, `playwright`, `reportlab`, `pypdf`, `beautifulsoup4`, `pandas`,
 `requests`, and `tqdm`. Their required dependencies are installed automatically.
-The optional Laya model fallback and deprecated web UI's optional native wrapper
-are excluded; the existing rule-based extraction and browser fallback remain available.
+The optional Laya model fallback is excluded; the existing rule-based extraction and browser fallback remain available.
 
 Playwright is used for the optional Chrome/KiotViet integration. The existing
 Chrome connection uses port 9222 and does not need ChromeDriver or a downloaded
@@ -237,7 +257,7 @@ Barcode and typed input use the same canonical SKU spelling.
 View: [location_assignment_view.py](ui/desktop/location_assignment_view.py).
 Moves and stock/address actions: [assignment_actions.py](ui/desktop/assignment_actions.py).
 Search and catalog transfers: [catalog_actions.py](ui/desktop/catalog_actions.py).
-Quantity entry uses `StockQuantityDialog` in the shared `assignment_view.py`;
+Quantity entry uses `StockQuantityDialog` in `dialogs.py`;
 [source sections and callbacks](instruction.md#tab-2-assign-locations) are listed
 in the source guide.
 
@@ -255,9 +275,8 @@ lookup to browse a shelf, then click a cell to inspect its products. These
 search and selection actions do not move inventory.
 
 View and handlers: [primal_queue_view.py](ui/desktop/primal_queue_view.py).
-Shelf lookup uses `ShelfAddressLookup`; cell styling and row refresh use
-`shelf_cell_visual` / `sync_tree_rows` in `widgets.py`. The older `lookup_view.py`
-is not the active numbered tab. See [Tab 3 source sections](instruction.md#tab-3-primal-queue--shelves).
+Shelf lookup uses `ShelfAddressLookup`; the shelf drawing and row refresh use
+`ShelfGridCanvas` / `sync_tree_rows` in `widgets.py`. See [Tab 3 source sections](instruction.md#tab-3-primal-queue--shelves).
 
 ## Tab 4: Browse Shelves
 
@@ -269,11 +288,9 @@ Tab 1 also sends its unsaved layout preview here. Check the summary:
 **Committed SQLite data** describes a saved shelf; **Uncommitted shelf preview**
 describes pending designer changes. Return to Tab 1 and commit to save a preview.
 
-View: [shelf_browser.py](ui/desktop/shelf_browser.py). The common shelf renderer
-is `AssignmentView.render_shelf` / `refresh_cell` in
-[assignment_view.py](ui/desktop/assignment_view.py), while the preview producer
-is `ShelfActions.render_shelf`. This renderer is separate from the stock dialog
-used by Tab 2. See [Tab 4 source sections](instruction.md#tab-4-browse-shelves).
+View: [shelf_browser.py](ui/desktop/shelf_browser.py). Every shelf drawing is a
+`ShelfGridCanvas` (`widgets.py`) fed by the `ShelfGrid` model in
+`mapper/services/shelf_grid.py`; the preview producer is `ShelfActions.render_shelf`. See [Tab 4 source sections](instruction.md#tab-4-browse-shelves).
 
 ## Tab 5: Switch / Combine Cells
 
@@ -375,10 +392,10 @@ includes persistence and retained handlers.
 | --- | --- |
 | `app.py`: `_build_ui`, `on_tab_changed`, `on_global_barcode_scan` | All tabs: wiring, activation, scans. |
 | `catalog_actions.py`: import methods vs. search/transfer methods | Imports on 1; search/transfers on 2. Imported data is also read by 3 and 6. |
-| `assignment_view.py`: `StockQuantityDialog` vs. `AssignmentView.render_shelf` / `refresh_cell` | Quantity dialog on 2; shelf rendering on 4, including previews from 1. |
+| `dialogs.py`: `StockQuantityDialog` | Quantity dialog on 2. |
 | `shelf_actions.py`: preview/commit vs. `can_change_cells` | Editor/preview on 1 and 4; pending-change guard on 5. |
 | `state_actions.py`: `reconcile_inventory_products`, `refresh_visible_cells`, `on_exception_data_changed` | Writes from 2/5; visible cells on 2/3/4/5; exception callback from 6. |
-| `widgets.py`: `ScrollableFrame`, `sync_tree_rows`, `shelf_cell_visual` | Scrolling on 1-5; row updates on 2-5; common cell styling on 3-5. Tab 2 has its own compact styling. |
+| `widgets.py`: `ShelfGridCanvas`, `sync_tree_rows`, `ScrollableFrame` | Canvas shelf drawing on 2-5 (Tab 2 uses a compact style); row updates on 2-6; scrolling in the row editor and quantity dialog. |
 | `shelf_address_lookup.py`: `ShelfAddressLookup` | 3, 4, 5. Tabs 2/6 use their own address fields. |
 | `mapper/core/common.py`: `clean_location_segment`, `make_slot_name`, `normalize_search` | Address/search consumers in 1-6; 7 reads saved location names and has separate comparison rules. |
 | `utils/barcode_scanner.py`: scan detection and ID/entry helpers | Main scan/search flows on 2, 3, 5, 6. |
@@ -405,13 +422,13 @@ L1-1A8-10
 | --- | --- |
 | `warehouse_mapper.py`, `warehouse_mapper.exe` | Root desktop script and small launcher; Python changes load on the next run. |
 | `warehouse_label_printer.py`, `warehouse_label_printer.exe` | Root label printer script and small launcher. |
-| `warehouse_web.py` | Root launcher for the deprecated web UI. |
 | `ui/desktop/` | Tkinter window, tabs, widgets, and action handlers. |
+| `ui/tauri/` | Tauri (Rust shell) + Svelte front end; `build.cmd` produces `warehouse_mapper_tauri.exe`. |
+| `mapper/rpc/` | JSON-over-stdio service the Tauri app starts (`python -m mapper.rpc`). |
+| `mapper/services/` | Rules shared by both front ends: Shift transfers, shelf grid model, cell lookup, web jobs. |
 | `mapper/persistence/` | SQLite schema and catalog, shelf, inventory, and exception operations. |
 | `mapper/features/` | CSV import, location comparison, and optional KiotViet integration. |
 | `mapper/core/` | Shared location and search rules. |
-| `mapper/api/` | Local HTTP API for the deprecated web UI. |
-| `ui/web/` | Deprecated React/TypeScript UI, retained for reference. |
 | `utils/labels/` | Label printer implementation. |
 | `tests/` | Test code; start with the file map and verification workflow in `instruction.md`. |
 | `utils/laya/` | Laya extraction tools. |
@@ -419,9 +436,8 @@ L1-1A8-10
 | `utils/build_exe.py`, `utils/launcher.c` | Rebuild the small desktop launchers. |
 | `data/` | Local database and generated output, ignored by Git. |
 
-The supported interface is Tkinter. The web UI and its API remain available as
-deprecated code. Package `__init__.py` files identify Python packages; they
-are not launchers.
+Both front ends are supported. Package `__init__.py` files identify Python
+packages; they are not launchers.
 
 ## Data and backup
 

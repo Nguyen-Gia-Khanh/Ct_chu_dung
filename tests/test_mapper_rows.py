@@ -11,7 +11,6 @@ from types import MethodType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 from ui.desktop.app import WarehouseMapperApp
-from ui.desktop.assignment_view import AssignmentView
 from mapper.core.common import application_directory
 from mapper.persistence.database import Placement
 from ui.desktop.designer import ShelfDesigner
@@ -29,7 +28,6 @@ class RowOrderTests(unittest.TestCase):
 
         for module, names in (
             ("ui.desktop.designer.ttk", ("Label", "Spinbox", "Separator")),
-            ("ui.desktop.assignment_view.tk", ("Frame", "Label", "Button")),
         ):
             for name in names:
                 patcher = patch(f"{module}.{name}", side_effect=record_widget)
@@ -42,7 +40,7 @@ class RowOrderTests(unittest.TestCase):
             side_var=tk.StringVar(self.tcl, "1"),
             shelf_code_var=tk.StringVar(self.tcl, "A"),
             row_count_var=tk.StringVar(self.tcl, "3"),
-            row_inputs=[],
+            row_inputs=[], _row_trace_names=[],
             row_editor_scroll=SimpleNamespace(inner=Mock()),
             add_row_button=Mock(), remove_row_button=Mock(),
             can_resize=Mock(return_value=True), on_rows_changed=Mock(),
@@ -91,39 +89,6 @@ class RowOrderTests(unittest.TestCase):
         self.assertEqual(self.designer.row_count_var.get(), "3")
         self.assertEqual(self.designer.validated_layout()[3], [6, 6, 10])
 
-    def test_assignment_view_uses_same_ground_up_order_and_slot_names(self):
-        view = SimpleNamespace(
-            shelf_scroll=SimpleNamespace(
-                inner=Mock(), canvas=Mock(), bind_wheel_events=Mock(),
-            ),
-            slot_buttons={}, selected_slot_text=tk.StringVar(self.tcl), on_select=Mock(),
-        )
-        view.shelf_scroll.inner.winfo_children.return_value = []
-        self.created_widgets.clear()
-        AssignmentView.render_shelf(view, "1", "A", [6, 6, 10], {}, None)
-        self.assertEqual(
-            self.displayed_labels(view.shelf_scroll.inner),
-            ["Row 3", "Row 2", "Row 1 — ground"],
-        )
-        self.assertEqual(len(view.slot_buttons), 22)
-        self.assertIn("L1-1A1-2", view.slot_buttons)
-        self.assertIn("L1-1A3-10", view.slot_buttons)
-        row_frames = [widget for parent, options, widget in self.created_widgets
-                      if parent is view.shelf_scroll.inner and options.get("height") == 72]
-        self.assertEqual(len(row_frames), 3)
-        for row_number, (frame, count) in enumerate(zip(row_frames, (6, 6, 10)), start=1):
-            buttons = [(options, widget) for parent, options, widget in self.created_widgets
-                       if parent is frame and "command" in options]
-            self.assertEqual([options["text"].split("\n")[0] for options, widget in buttons],
-                             [f"A{row_number}-{number}" for number in range(1, count + 1)])
-            self.assertEqual([widget.grid.call_args.kwargs["column"] for options, widget in buttons],
-                             list(range(count)))
-        for parent, options, _ in self.created_widgets:
-            if options.get("text", "").startswith("A1-2\n") and "command" in options:
-                options["command"]()
-                break
-        view.on_select.assert_called_once_with("L1-1A1-2")
-
     def test_database_default_stays_beside_entry_point(self):
         self.assertEqual(application_directory(), Path(__file__).resolve().parents[1])
 
@@ -131,6 +96,7 @@ class RowOrderTests(unittest.TestCase):
         for staged in (False, True):
             with self.subTest(staged=staged), patch("ui.desktop.app.messagebox.showerror"):
                 app = WarehouseMapperApp.__new__(WarehouseMapperApp)
+                app.database = Mock(get_shelf_id=Mock(return_value=None))
                 app.current_layout = [3]
                 app.preview_key = ("1", "1", "A")
                 app.selected_slot = "L1-1A1-3"
@@ -153,7 +119,8 @@ class RowOrderTests(unittest.TestCase):
         app.staged_assignments = {"P2": assignment}
         app.pending_unassignments = set()
         app.selected_slot = "L1-1A2-6"
-        app.refresh_all_views = Mock()
+        app.database = Mock(get_shelf_id=Mock(return_value=None))
+        app.render_shelf = Mock()
         app.notebook = Mock()
         app.status_text = tk.StringVar(self.tcl)
         self.designer.on_rows_changed = app.on_rows_changed

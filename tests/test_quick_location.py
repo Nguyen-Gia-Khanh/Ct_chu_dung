@@ -135,7 +135,7 @@ class QuickLocationTests(WorkspaceTestCase):
         )
         self.assertEqual(self.view.hand_view.get(), "shelf")
         self.assertEqual(self.app.selected_address, self.address)
-        self.assertEqual(self.view._selected_shelf_cell, (2, 2))
+        self.assertEqual(self.view.shelf_grid.selected, self.address.slot_name)
         self.assertIn("saved::P1", self.view.contents_tree.get_children())
         self.assertEqual(self.app.database.get_all_placement_items(), before)
 

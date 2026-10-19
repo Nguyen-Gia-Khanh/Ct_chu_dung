@@ -143,12 +143,13 @@ class ShelfActions:
                         for product_id, item in self.committed_placements.items()
                     }
                 self.selected_slot = renamed.get(self.selected_slot, self.selected_slot)
+                # Renamed cells change the location column of the product lists.
+                self.refresh_product_lists()
 
         self.current_layout = layout
         self.preview_key = new_key
         if self.selected_slot not in valid_slots:
             self.selected_slot = None
-        self.refresh_all_views()
         self.render_shelf()
         if switch_tab:
             self.notebook.select(self.shelf_browser)
@@ -185,29 +186,6 @@ class ShelfActions:
             contents,
         )
 
-    def select_slot(self, slot_name: str) -> None:
-        self.selected_slot = slot_name
-        if hasattr(self.assignments, "mark_selected"):
-            self.assignments.mark_selected(slot_name)
-            self.refresh_slot_contents()
-
-    def visible_slot_counts(self) -> dict[str, tuple[int, int]]:
-        saved: dict[str, int] = {}
-        staged: dict[str, int] = {}
-        for product_id, slot_name in self.committed_locations.items():
-            if (
-                product_id not in self.pending_unassignments
-                and product_id not in self.staged_assignments
-            ):
-                saved[slot_name] = saved.get(slot_name, 0) + 1
-        for placement in self.staged_assignments.values():
-            slot_name = placement.slot_name
-            staged[slot_name] = staged.get(slot_name, 0) + 1
-        return {
-            slot_name: (saved.get(slot_name, 0), staged.get(slot_name, 0))
-            for slot_name in set(saved) | set(staged)
-        }
-
     def refresh_shelf_selector(self) -> None:
         choices = self.database.list_shelves()
         self.shelf_choices = {
@@ -223,7 +201,7 @@ class ShelfActions:
         if hasattr(self, "shelf_browser"):
             self.shelf_browser.refresh()
         if hasattr(self, "cell_transfer"):
-            self.cell_transfer.refresh()
+            self.refresh_visible_or_mark_stale(self.cell_transfer)
 
     def has_pending_changes(self, *, excluding_queue_transfers: bool = False) -> bool:
         pending_unassignments = self.pending_unassignments

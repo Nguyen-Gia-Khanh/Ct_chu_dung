@@ -56,9 +56,6 @@ class LocationComparisonTests(unittest.TestCase):
         self.assertEqual(
             [item.product_id for item in differences], ["MULTI", "SKU-2", "WEB-ONLY"]
         )
-        self.assertTrue(differences[0].can_resync)
-        self.assertTrue(differences[1].can_resync)
-        self.assertTrue(differences[2].can_resync)
         self.assertEqual(differences[2].wrong_location, "L9-9Z9-9")
         self.assertEqual(differences[2].true_location, "")
         self.assertEqual(missing, ["SKU-3"])
@@ -71,7 +68,6 @@ class LocationComparisonTests(unittest.TestCase):
         self.assertEqual(differences[0].product_id, "PROD-100")
         self.assertEqual(differences[0].wrong_location, "A-01-01")
         self.assertEqual(differences[0].true_location, "")
-        self.assertTrue(differences[0].can_resync)
         self.assertEqual(missing, [])
 
     def test_tab_queues_web_location_clear_for_unassigned_product(self):
@@ -100,7 +96,7 @@ class LocationComparisonTests(unittest.TestCase):
         events = Queue()
         view = SimpleNamespace(
             _comparison_events=events,
-            _local_locations=Mock(return_value={"P1": ["A-02"]}),
+            database=Mock(get_location_sets=Mock(return_value={"P1": ("A-02",)})),
             tree=Mock(),
         )
 
@@ -115,7 +111,7 @@ class LocationComparisonTests(unittest.TestCase):
 
     def test_comparison_rows_render_in_small_ui_batches(self):
         callbacks = []
-        differences = [LocationDifference(f"P{i}", "A-01", "A-02", True) for i in range(450)]
+        differences = [LocationDifference(f"P{i}", "A-01", "A-02") for i in range(450)]
         view = SimpleNamespace(
             _render_rows=[("difference", row) for row in differences],
             _render_index=0,
@@ -144,7 +140,7 @@ class LocationComparisonTests(unittest.TestCase):
             path = Path(directory) / "comparison.xlsx"
             export_comparison(
                 path,
-                [LocationDifference("=SKU-1", "L0-1A1-1", "L1-1A1-1", True)],
+                [LocationDifference("=SKU-1", "L0-1A1-1", "L1-1A1-1")],
             )
             workbook = load_workbook(path)
             sheet = workbook.active

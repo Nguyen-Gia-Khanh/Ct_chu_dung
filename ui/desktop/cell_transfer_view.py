@@ -6,17 +6,14 @@ from collections.abc import Callable
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-from mapper.core.common import clean_location_segment, make_slot_name, normalize_search
+from mapper.core.common import clean_location_segment, normalize_sku
 from mapper.persistence.database import Placement, SlotAddress, WarehouseDatabase
 from mapper.features.web_upload import LocationUpdate
+from mapper.services.cell_lookup import find_cell
+from mapper.services.shelf_grid import load_grid
 from .shelf_address_lookup import ShelfAddressLookup
-from .widgets import ScrollableFrame, shelf_cell_visual, sync_tree_rows
-from utils.barcode_scanner import (
-    BarcodeScanner,
-    bind_auto_highlight,
-    format_product_id,
-    select_all_entry_text,
-)
+from .widgets import ShelfGridCanvas, sync_tree_rows
+from utils.barcode_scanner import BarcodeScanner
 
 
 class DuplicateCellMergeDialog(simpledialog.Dialog):
@@ -73,9 +70,6 @@ class CellTransferPane(ttk.LabelFrame):
         self.current_layout: list[int] = []
         self.current_contents: list[tuple[str, str, Placement]] = []
         self.selected_address: SlotAddress | None = None
-        self.slot_buttons: dict[str, tk.Button] = {}
-        self.slot_labels: dict[str, str] = {}
-        self.rendered_shelf_key: tuple | None = None
         self.on_focus_callback: Callable[[CellTransferPane], object] | None = None
 
         self.columnconfigure(0, weight=1)
@@ -163,13 +157,10 @@ class CellTransferPane(ttk.LabelFrame):
         shelf_frame.grid(row=3, column=0, sticky="nsew")
         shelf_frame.rowconfigure(0, weight=1)
         shelf_frame.columnconfigure(0, weight=1)
-        self.shelf_scroll = ScrollableFrame(
-            shelf_frame,
-            horizontal=True,
-            vertical=True,
-            smooth=True,
-        )
-        self.shelf_scroll.grid(row=0, column=0, sticky="nsew")
+        self.shelf_grid = ShelfGridCanvas(
+            shelf_frame, on_select=lambda cell: self._select_coordinates(cell.row, cell.cell),
+            label=lambda cell: f"{self.side_var.get()}{self._shelf_code()}{cell.row}-{cell.cell}", cell_width=78)
+        self.shelf_grid.grid(row=0, column=0, sticky="nsew")
 
         self.selection_text = tk.StringVar(self, value="No cell selected")
         ttk.Label(
@@ -227,6 +218,10 @@ class CellTransferPane(ttk.LabelFrame):
             placement.slot_name == self.selected_address.slot_name
             for _product_id, _product_name, placement in self.current_contents
         )
+
+    def _shelf_code(self) -> str:
+        model = self.shelf_grid.model
+        return clean_location_segment(model.shelf_code) if model is not None else ""
 
     def refresh(self) -> None:
         """Reload selector choices while keeping the current shelf/cell if possible."""
@@ -308,110 +303,49 @@ class CellTransferPane(ttk.LabelFrame):
 
     def find(self, _event: tk.Event | None = None) -> str:
         if self.barcode_scanner is not None and self.barcode_scanner.is_scanner():
-            code = self.barcode_scanner.pop_scanner_code()
-            raw_query = code.strip() if code else ""
+            raw_query = (self.barcode_scanner.pop_scanner_code() or "").strip()
         else:
             raw_query = self.search_var.get().strip()
-
         if not raw_query:
             return "break"
-
-        query = format_product_id(raw_query)
-        address = None
-        # 1. First check if it's a product ID (e.g. 91201-KVB-901 or 91201KVB901)
-        product_location = self.database.get_product_location(query)
-        if product_location is None and query != raw_query:
-            product_location = self.database.get_product_location(raw_query)
-        if product_location is not None:
-            floor, side, shelf_code, _layout = self.database.get_shelf(
-                product_location.shelf_id
-            )
-            address = self.database.get_slot_address(
-                floor,
-                side,
-                shelf_code,
-                product_location.row_number,
-                product_location.slot_number,
-            )
-        # 2. Fallback: check if it's an exact cell/location ID
-        if address is None:
-            address = self.database.get_slot_by_name(query)
-        if address is None and query != raw_query:
-            address = self.database.get_slot_by_name(raw_query)
-
-        if address is not None:
+        query = normalize_sku(raw_query)
+        found = find_cell(self.database, raw_query, self.shelves or None)
+        if found.address is not None:
             if not self.shelf_choices:
                 self.refresh()
-            self.load_shelf(address.shelf_id, select_slot_id=address.slot_id)
-            self._set_and_select_search(query)
-            return "break"
-
-        # 3. Fallback: check if query matches a shelf name
-        normalized = normalize_search(raw_query)
-        shelf_matches = [
-            shelf
-            for shelf in self.shelves
-            if normalized
-            in normalize_search(
-                f"{shelf[1]} {shelf[2]} {shelf[3]} "
-                f"floor {shelf[1]} side {shelf[2]} shelf {shelf[3]}"
-            )
-        ]
-        if len(shelf_matches) == 1:
-            self.load_shelf(shelf_matches[0][0])
-            self._set_and_select_search(query)
-        elif len(shelf_matches) > 1:
-            messagebox.showinfo(
-                "More than one shelf found",
-                "Use the Shelf dropdown above to select the exact shelf.",
-                parent=self,
-            )
-            self._set_and_select_search(query)
+            self.load_shelf(found.address.shelf_id, select_slot_id=found.address.slot_id)
+        elif len(found.shelves) == 1:
+            self.load_shelf(found.shelves[0][0])
+        elif found.shelves:
+            messagebox.showinfo("More than one shelf found",
+                                "Use the Shelf dropdown above to select the exact shelf.", parent=self)
         else:
-            messagebox.showinfo(
-                "Product not found",
-                f"Product ID or location '{raw_query}' was not found on any shelf.",
-                parent=self,
-            )
-            self._set_and_select_search(query)
+            messagebox.showinfo("Product not found",
+                                f"Product ID or location '{raw_query}' was not found on any shelf.", parent=self)
+        self._set_and_select_search(query)
         return "break"
 
-    def load_shelf(
-        self,
-        shelf_id: int,
-        *,
-        select_slot_id: int | None = None,
-    ) -> None:
-        floor, side, shelf_code, layout = self.database.get_shelf(shelf_id)
-        contents = self.database.get_shelf_contents(shelf_id)
-        same_layout = self.rendered_shelf_key == (floor, side, shelf_code, tuple(layout))
+    def load_shelf(self, shelf_id: int, *, select_slot_id: int | None = None) -> None:
+        grid, contents = load_grid(self.database, shelf_id)
+        floor, side, shelf_code = grid.key
+        same_layout = self.shelf_grid.key == (*grid.key, grid.layout)
         self.current_shelf_id = shelf_id
-        self.current_layout = layout
+        self.current_layout = list(grid.layout)
         self.current_contents = contents
         if not same_layout:
             self.selected_address = None
         self.floor_var.set(floor)
         self.side_var.set(side)
         self.shelf_address_lookup.set_address(floor, side, shelf_code)
-
-        label = self.shelf_id_to_label.get(
-            shelf_id, f"Floor {floor} — Side {side} — Shelf {shelf_code}"
-        )
-        self.shelf_var.set(label)
-
-        self.row_selector.configure(values=[str(row) for row in range(1, len(layout) + 1)])
+        self.shelf_var.set(self.shelf_id_to_label.get(shelf_id, f"Floor {floor} — Side {side} — Shelf {shelf_code}"))
+        self.row_selector.configure(values=[str(row) for row in range(1, len(grid.layout) + 1)])
         if not same_layout:
             self.row_var.set("")
             self.cell_selector.configure(values=())
             self.cell_var.set("")
-
-        if same_layout:
-            for slot_name, button in self.slot_buttons.items():
-                button.configure(**self._cell_visual(slot_name))
-            self._refresh_contents()
-        else:
-            self._render_shelf(floor, side, shelf_code, layout, contents)
-
+        selected = self.selected_address.slot_name if self.selected_address is not None else None
+        self.shelf_grid.show(grid, selected=selected, keep_view=same_layout)
+        self._refresh_contents()
         if select_slot_id is not None and (
             self.selected_address is None or self.selected_address.slot_id != select_slot_id
         ):
@@ -420,16 +354,8 @@ class CellTransferPane(ttk.LabelFrame):
                 self.select_address(address)
 
     def select_address(self, address: SlotAddress) -> None:
-        old_name = (
-            self.selected_address.slot_name
-            if self.selected_address is not None
-            else None
-        )
         self.selected_address = address
-        for slot_name in (old_name, address.slot_name):
-            button = self.slot_buttons.get(slot_name or "")
-            if button is not None:
-                button.configure(**self._cell_visual(slot_name))
+        self.shelf_grid.select(address.slot_name)
         label = self.shelf_id_to_label.get(address.shelf_id)
         if label:
             self.shelf_var.set(label)
@@ -437,21 +363,9 @@ class CellTransferPane(ttk.LabelFrame):
         self._set_cell_choices(address.row_number)
         self.cell_var.set(str(address.slot_number))
         self._refresh_contents()
-        self.after_idle(
-            lambda slot_name=address.slot_name: self._center_selected_cell(slot_name)
-        )
-
-    def _center_selected_cell(self, slot_name: str) -> None:
-        if (self.selected_address is None
-                or self.selected_address.slot_name != slot_name):
-            return
-        button = self.slot_buttons.get(slot_name)
-        if button is not None:
-            self.shelf_scroll.center_widget(button)
 
     def _shelf_changed(self, _event: tk.Event | None = None) -> None:
-        label = self.shelf_var.get()
-        shelf_id = self.shelf_choices.get(label)
+        shelf_id = self.shelf_choices.get(self.shelf_var.get())
         if shelf_id is not None and shelf_id != self.current_shelf_id:
             self.load_shelf(shelf_id)
 
@@ -468,42 +382,23 @@ class CellTransferPane(ttk.LabelFrame):
 
     def _cell_changed(self, _event: tk.Event | None = None) -> None:
         try:
-            row_number = int(self.row_var.get())
-            slot_number = int(self.cell_var.get())
+            self._select_coordinates(int(self.row_var.get()), int(self.cell_var.get()))
         except ValueError:
             return
-        self._select_coordinates(row_number, slot_number)
 
     def _select_coordinates(self, row_number: int, slot_number: int) -> None:
-        if self.current_shelf_id is None:
-            return
-        floor, side, shelf_code, _layout = self.database.get_shelf(
-            self.current_shelf_id
-        )
-        address = self.database.get_slot_address(
-            floor,
-            side,
-            shelf_code,
-            row_number,
-            slot_number,
-        )
-        if address is not None:
-            self.select_address(address)
+        if self.current_shelf_id is not None:
+            address = self.database.get_slot_in_shelf(self.current_shelf_id, row_number, slot_number)
+            if address is not None:
+                self.select_address(address)
 
     def _set_cell_choices(self, row_number: int) -> None:
-        count = (
-            self.current_layout[row_number - 1]
-            if 1 <= row_number <= len(self.current_layout)
-            else 0
-        )
+        count = self.current_layout[row_number - 1] if 1 <= row_number <= len(self.current_layout) else 0
         self.cell_selector.configure(values=[str(cell) for cell in range(1, count + 1)])
 
     def _clear_all_selectors(self) -> None:
-        self.shelf_var.set("")
-        self.row_var.set("")
-        self.cell_var.set("")
-        self.floor_var.set("")
-        self.side_var.set("")
+        for variable in (self.shelf_var, self.row_var, self.cell_var, self.floor_var, self.side_var):
+            variable.set("")
         self.shelf_address_lookup.set_address("", "", "")
         self.row_selector.configure(values=())
         self.cell_selector.configure(values=())
@@ -516,139 +411,21 @@ class CellTransferPane(ttk.LabelFrame):
         self._render_empty(message)
 
     def _clear_cell_selection(self) -> None:
-        if self.selected_address is not None:
-            button = self.slot_buttons.get(self.selected_address.slot_name)
-            if button is not None:
-                button.configure(**shelf_cell_visual(
-                    self.slot_labels[self.selected_address.slot_name],
-                    self._cell_count(self.selected_address.slot_name),
-                ))
         self.selected_address = None
-        self.selection_text.set("No cell selected")
-        self.contents_tree.delete(*self.contents_tree.get_children())
+        self.shelf_grid.select(None)
+        self._refresh_contents()
 
     def _render_empty(self, message: str) -> None:
-        for child in self.shelf_scroll.inner.winfo_children():
-            child.destroy()
-        self.slot_buttons.clear()
-        self.slot_labels.clear()
-        self.rendered_shelf_key = None
-        ttk.Label(
-            self.shelf_scroll.inner,
-            text=message,
-            wraplength=360,
-        ).pack(padx=25, pady=25)
-        self.selection_text.set("No cell selected")
-        self.contents_tree.delete(*self.contents_tree.get_children())
-        self.shelf_scroll.bind_wheel_events()
+        self.shelf_grid.show_message(message)
+        self._refresh_contents()
 
-    def _render_shelf(
-        self,
-        floor: str,
-        side: str,
-        shelf_code: str,
-        layout: list[int],
-        contents: list[tuple[str, str, Placement]],
-    ) -> None:
-        self.rendered_shelf_key = (floor, side, shelf_code, tuple(layout))
-        for child in self.shelf_scroll.inner.winfo_children():
-            child.destroy()
-        self.slot_buttons.clear()
-        self.slot_labels.clear()
-        row_width = max(320, max(layout, default=1) * 78)
-        shelf_label = clean_location_segment(shelf_code)
-        side_label = clean_location_segment(side)
-
-        ttk.Label(
-            self.shelf_scroll.inner,
-            text=f"FLOOR {floor.upper()} · SIDE {side.upper()} · SHELF {shelf_code.upper()}",
-            style="Heading.TLabel",
-        ).grid(row=0, column=0, columnspan=2, pady=(7, 10))
-        for row_number, count in enumerate(layout, start=1):
-            screen_row = len(layout) - row_number + 1
-            ttk.Label(
-                self.shelf_scroll.inner,
-                text=f"R{row_number}" + (" · ground" if row_number == 1 else ""),
-            ).grid(row=screen_row, column=0, padx=(5, 7), sticky="e")
-            row_frame = tk.Frame(
-                self.shelf_scroll.inner,
-                width=row_width,
-                height=62,
-                background="#d0d0d0",
-                borderwidth=1,
-                relief="solid",
-            )
-            row_frame.grid(row=screen_row, column=1, sticky="nsew", pady=2)
-            row_frame.grid_propagate(False)
-            row_frame.rowconfigure(0, weight=1)
-            even_side = side.isdigit() and int(side) % 2 == 0
-            slot_numbers = range(count, 0, -1) if even_side else range(1, count + 1)
-            for display_column, slot_number in enumerate(slot_numbers):
-                row_frame.columnconfigure(
-                    display_column,
-                    weight=1,
-                    uniform=f"transfer-r{row_number}",
-                )
-                slot_name = make_slot_name(
-                    floor,
-                    shelf_code,
-                    row_number,
-                    slot_number,
-                    side=side,
-                )
-                self.slot_labels[slot_name] = (
-                    f"{side_label}{shelf_label}{row_number}-{slot_number}"
-                )
-                button = tk.Button(
-                    row_frame,
-                    **self._cell_visual(slot_name),
-                    command=lambda row=row_number, cell=slot_number: self._select_coordinates(
-                        row, cell
-                    ),
-                    activebackground="#cfe8ff",
-                    relief="solid",
-                    highlightthickness=0,
-                )
-                button.grid(
-                    row=0,
-                    column=display_column,
-                    sticky="nsew",
-                    padx=1,
-                    pady=1,
-                )
-                self.slot_buttons[slot_name] = button
-        self.selection_text.set("No cell selected")
-        self.contents_tree.delete(*self.contents_tree.get_children())
-        self.shelf_scroll.inner.update_idletasks()
-        self.shelf_scroll.canvas.configure(
-            scrollregion=self.shelf_scroll.canvas.bbox("all")
-        )
-        self.shelf_scroll.bind_wheel_events()
-
-    def _cell_count(self, slot_name: str) -> int:
-        return sum(
-            placement.slot_name == slot_name
-            for _pid, _name, placement in self.current_contents
-        )
-
-    def _cell_visual(self, slot_name: str) -> dict[str, object]:
-        return shelf_cell_visual(
-            self.slot_labels[slot_name], self._cell_count(slot_name),
-            selected=self.selected_address is not None
-            and self.selected_address.slot_name == slot_name,
-        )
-
-    def refresh_cell(
-        self, slot_name: str, contents: list[tuple[str, str, Placement]] | None = None
-    ) -> None:
-        button = self.slot_buttons.get(slot_name)
-        if button is None:
+    def refresh_cell(self, slot_name: str, contents: list[tuple[str, str, Placement]] | None = None) -> None:
+        if slot_name not in self.shelf_grid:
             return
         if contents is not None:
-            self.current_contents = [
-                item for item in self.current_contents if item[2].slot_name != slot_name
-            ] + list(contents)
-        button.configure(**self._cell_visual(slot_name))
+            self.current_contents = [item for item in self.current_contents
+                                     if item[2].slot_name != slot_name] + list(contents)
+        self.shelf_grid.set_count(slot_name, sum(p.slot_name == slot_name for _, _, p in self.current_contents))
         if self.selected_address is not None and self.selected_address.slot_name == slot_name:
             self._refresh_contents()
 
@@ -663,7 +440,7 @@ class CellTransferPane(ttk.LabelFrame):
             for product_id, product_name, placement in self.current_contents
             if placement.slot_name == self.selected_address.slot_name
         ]
-        searched_query = format_product_id(self.search_var.get().strip())
+        searched_query = normalize_sku(self.search_var.get().strip())
         target_item = None
         rows = []
         for product_id, product_name, placement in visible:
@@ -789,14 +566,13 @@ class CellTransferView(ttk.Frame):
         self.left.on_focus_callback = self._set_active_pane
         self.right.on_focus_callback = self._set_active_pane
         self.barcode_scanner = barcode_scanner
-        self.refresh()
 
     def _set_active_pane(self, pane: CellTransferPane) -> None:
         self.last_active_pane = pane
 
     def on_barcode_scan(self, barcode: str) -> None:
         target = self.last_active_pane if self.last_active_pane is not None else self.left
-        target._set_and_select_search(format_product_id(barcode))
+        target._set_and_select_search(normalize_sku(barcode))
         target.find()
 
     def focus_search(self) -> None:

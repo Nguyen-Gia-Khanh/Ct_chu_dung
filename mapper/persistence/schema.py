@@ -3,9 +3,7 @@ from __future__ import annotations
 
 from contextlib import closing
 import sqlite3
-from uuid import uuid4
 from mapper.core.common import UTC_DEFAULT, EXCEL_ERRORS
-from .models import LayoutConflictError
 
 SCHEMA_VERSION = 4
 SKU_CHECK = "CHECK (length(product_id) > 0 AND product_id = upper(trim(product_id)) AND instr(product_id, '-') = 0 AND instr(product_id, ' ') = 0)"
@@ -104,27 +102,3 @@ class SchemaOperations:
                 )
             create_schema(connection)
             connection.execute('INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)',(SCHEMA_VERSION,))
-
-    @staticmethod
-    def _rename_slots(connection: sqlite3.Connection, names: dict[int, str]) -> None:
-        if not names:
-            return
-        if len(set(names.values())) != len(names):
-            raise LayoutConflictError(
-                "These shelf codes produce duplicate location IDs. Use distinct shelf codes."
-            )
-        # Temporary names avoid UNIQUE collisions between old and new labels.
-        prefix = f"__location_update_{uuid4().hex}_"
-        connection.executemany(
-            "UPDATE slots SET slot_name = ? WHERE slot_id = ?",
-            ((f"{prefix}{slot_id}", slot_id) for slot_id in names),
-        )
-        try:
-            connection.executemany(
-                "UPDATE slots SET slot_name = ? WHERE slot_id = ?",
-                ((name, slot_id) for slot_id, name in names.items()),
-            )
-        except sqlite3.IntegrityError as error:
-            raise LayoutConflictError(
-                "A location ID already belongs to another shelf. Use a distinct side or shelf code."
-            ) from error

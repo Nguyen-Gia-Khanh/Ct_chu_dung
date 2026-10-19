@@ -9,7 +9,7 @@ from pathlib import Path
 from statistics import median
 from timeit import timeit
 
-from mapper.core.common import normalize_search, product_search_text, normalise_sku
+from mapper.core.common import normalize_search, product_search_text, normalize_sku
 
 
 def benchmark(path: Path) -> None:
@@ -32,7 +32,7 @@ def benchmark(path: Path) -> None:
     print(f"{len(records):,} products; cached filtering only (excludes sorting/rendering).")
     print("Query             Before ms  After ms  Ratio  Matches before/after")
     for label, query in queries.items():
-        term = normalize_search(normalise_sku(query))
+        term = normalize_search(normalize_sku(query))
         times = [[], []]
         for repeat in range(11):
             # Alternate order to reduce warm-up and scheduling bias.

@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
-from mapper.core.common import vietnam_time
-
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from mapper.core.common import (
-    normalise_sku,
-    clean_location_segment, make_slot_name, normalize_search, product_search_text,
-)
+from mapper.core.common import MAX_VISIBLE_PRODUCTS, clean_location_segment, make_slot_name, normalize_sku, vietnam_time
+from mapper.core.search import ProductIndex
 from mapper.persistence.database import SlotAddress, WarehouseDatabase
+from .widgets import sync_tree_rows
 from utils.barcode_scanner import (
     BarcodeScanner,
     bind_auto_highlight,
-    format_product_id,
     select_all_entry_text,
 )
 
@@ -41,8 +37,8 @@ class ExceptionsView(ttk.Frame):
         self.barcode_scanner = barcode_scanner
 
         self.selected_address: SlotAddress | None = None
-        self.catalog_records: list[tuple[str, str, str]] = []
-        self.catalog_search: dict[str, str] = {}
+        self.catalog_index = ProductIndex()
+        self._filter_after_id: str | None = None
 
         # Variables
         self.product_id_var = tk.StringVar(self)
@@ -185,7 +181,7 @@ class ExceptionsView(ttk.Frame):
         catalog_search_entry = ttk.Entry(catalog_box, textvariable=self.catalog_search_var)
         catalog_search_entry.pack(fill="x", pady=(3, 6))
         bind_auto_highlight(catalog_search_entry)
-        self.catalog_search_var.trace_add("write", self._filter_catalog_tree)
+        self.catalog_search_var.trace_add("write", self._schedule_catalog_filter)
 
         catalog_tree_frame = ttk.Frame(catalog_box)
         catalog_tree_frame.pack(fill="both", expand=True)
@@ -333,16 +329,16 @@ class ExceptionsView(ttk.Frame):
     def _on_product_id_return(self, _event: tk.Event | None = None) -> str:
         if self.barcode_scanner is not None and self.barcode_scanner.is_scanner():
             code = self.barcode_scanner.pop_scanner_code()
-            value = format_product_id(code) if code else ""
+            value = normalize_sku(code) if code else ""
         else:
-            value = format_product_id(self.product_id_var.get())
+            value = normalize_sku(self.product_id_var.get())
         self.product_id_var.set(value)
         self.after_idle(self._select_entry)
         self.assign_exception()
         return "break"
 
     def _on_barcode_scan(self, scanned_code: str) -> None:
-        self.product_id_var.set(format_product_id(scanned_code))
+        self.product_id_var.set(normalize_sku(scanned_code))
         self.after_idle(self._select_entry)
 
     def on_barcode_scan(self, scanned_code: str) -> None:
@@ -386,7 +382,7 @@ class ExceptionsView(ttk.Frame):
             self.product_name_var.set(str(values[1]))
 
     def find_product(self) -> None:
-        product_id = format_product_id(self.product_id_var.get().strip())
+        product_id = normalize_sku(self.product_id_var.get().strip())
         self.product_id_var.set(product_id)
         if not product_id:
             self.found_locations_text.set("Enter a product ID to find its saved locations.")
@@ -414,12 +410,14 @@ class ExceptionsView(ttk.Frame):
         return list({str(self.pending_tree.item(iid, "values")[0]) for iid in selection})
 
     def _refresh_after_change(self) -> None:
-        self.refresh()
+        """The app callback reloads shared caches and refreshes this tab once."""
         if self.on_refresh_callback:
             self.on_refresh_callback()
+        else:
+            self.refresh()
 
     def save_name(self) -> None:
-        product_id = format_product_id(self.product_id_var.get().strip())
+        product_id = normalize_sku(self.product_id_var.get().strip())
         name = self.product_name_var.get().strip()
         if not product_id or not name:
             messagebox.showinfo("Name required", "Select a staged product and enter its name.", parent=self)
@@ -485,7 +483,7 @@ class ExceptionsView(ttk.Frame):
             messagebox.showinfo("Missing Product ID", "Please enter or scan a product ID.", parent=self)
             return
 
-        clean_pid = format_product_id(raw_id)
+        clean_pid = normalize_sku(raw_id)
         if not self.selected_address:
             # Try to load address first
             self.load_address()
@@ -524,7 +522,7 @@ class ExceptionsView(ttk.Frame):
         self.product_id_entry.focus_set()
 
     def remove_from_loaded_cell(self) -> None:
-        product_id = format_product_id(self.product_id_var.get().strip())
+        product_id = normalize_sku(self.product_id_var.get().strip())
         if not product_id:
             messagebox.showinfo(
                 "Select a product", "Enter a product ID or select a product in the loaded cell.", parent=self
@@ -639,81 +637,47 @@ class ExceptionsView(ttk.Frame):
             self.status_text.set(f"Wiped {product_id} from staging, catalog, and saved shelf placements.")
 
     def refresh_pending_tree(self) -> None:
-        selected = set(self.pending_tree.selection())
-        self.pending_tree.delete(*self.pending_tree.get_children())
-        staged = self.database.get_exception_staging()
-        grouped: dict[str, dict] = {}
-        for item in staged:
-            product_id = item["product_id"]
-            if product_id not in grouped:
-                grouped[product_id] = {**item, "locations": []}
-            group = grouped[product_id]
-            if item["slot_name"] not in group["locations"]:
-                group["locations"].append(item["slot_name"])
-            group["csv_updated"] = group["csv_updated"] and item["csv_updated"]
-            group["catalog_updated"] = group["catalog_updated"] and item["catalog_updated"]
-        saved_locations: dict[str, list[str]] = {product_id: [] for product_id in grouped}
-        for product_id, slot_name, _qty, _assigned_at in self.database.get_all_placement_items():
-            if product_id in saved_locations and slot_name not in saved_locations[product_id]:
-                saved_locations[product_id].append(slot_name)
-        for item in grouped.values():
-            created = vietnam_time(item["created_at"]) if item["created_at"] else ""
-            missing = []
-            if not item["csv_updated"]:
-                missing.append("CSV")
-            if not item["catalog_updated"]:
-                missing.append("catalog")
+        rows = []
+        for item in self.database.get_staged_exception_summary():
+            missing = [label for label, done in (("CSV", item["csv_updated"]), ("catalog", item["catalog_updated"]))
+                       if not done]
             status = "Updated" if not missing else "Hasn't Add to: " + " + ".join(missing)
-            iid = f"stage-{item['product_id']}"
-            self.pending_tree.insert(
-                "",
-                "end",
-                iid=iid,
-                values=(item["product_id"], item["product_name"],
-                        ", ".join(saved_locations[item["product_id"]] or item["locations"]),
-                        status, created),
-            )
-            if iid in selected:
-                self.pending_tree.selection_add(iid)
-        self.pending_summary_text.set(f"{len(grouped):,} staged product(s)")
+            rows.append((f"stage-{item['product_id']}", (
+                item["product_id"], item["product_name"], item["locations"] or item["staged_locations"],
+                status, vietnam_time(item["created_at"]) if item["created_at"] else ""), ()))
+        sync_tree_rows(self.pending_tree, rows)
+        self.pending_summary_text.set(f"{len(rows):,} staged product(s)")
 
     def refresh_multi_location_tree(self) -> None:
-        selected = set(self.multi_location_tree.selection())
-        self.multi_location_tree.delete(*self.multi_location_tree.get_children())
-        for product_id, name, locations in self.database.get_multi_location_products():
-            self.multi_location_tree.insert(
-                "", "end", iid=product_id,
-                values=(product_id, name, ", ".join(locations)),
-            )
-            if product_id in selected:
-                self.multi_location_tree.selection_add(product_id)
+        sync_tree_rows(self.multi_location_tree, [
+            (product_id, (product_id, name, ", ".join(locations)), ())
+            for product_id, name, locations in self.database.get_multi_location_products()])
 
     def refresh_catalog_tree(self) -> None:
-        rows = self.database.get_display_catalog_products()
-        self.catalog_records = [row[:3] for row in rows]
-        self.catalog_search = {row[0]: product_search_text(*row) for row in rows}
+        self.catalog_index = ProductIndex(self.database.get_catalog_products())
         self._filter_catalog_tree()
 
+    def _schedule_catalog_filter(self, *_args) -> None:
+        if self._filter_after_id is not None:
+            self.after_cancel(self._filter_after_id)
+        self._filter_after_id = self.after(180, self._filter_catalog_tree)
+
     def _filter_catalog_tree(self, *_args) -> None:
-        selected = set(self.catalog_tree.selection())
-        self.catalog_tree.delete(*self.catalog_tree.get_children())
-        query = normalize_search(normalise_sku(self.catalog_search_var.get()))
-        shown = 0
-        for product_id, name, brand_name in self.catalog_records:
-            if query and query not in self.catalog_search[product_id]:
-                continue
-            self.catalog_tree.insert("", "end", iid=product_id, values=(product_id, name))
-            if product_id in selected:
-                self.catalog_tree.selection_add(product_id)
-            shown += 1
-        self.catalog_count_text.set(f"{shown:,} of {len(self.catalog_records):,} products")
+        self._filter_after_id = None
+        query = self.catalog_search_var.get()
+        index = self.catalog_index
+        matches = index.matches(query)
+        sync_tree_rows(self.catalog_tree, [(pid, (pid, index.name(pid)), ()) for pid in index.top(matches, query)])
+        shown = min(len(matches), MAX_VISIBLE_PRODUCTS)
+        more = " — narrow the search to see more" if len(matches) > shown else ""
+        self.catalog_count_text.set(f"{len(matches):,} matching of {len(index):,} products · showing {shown:,}{more}")
 
     def refresh(self) -> None:
         """Called whenever tab becomes active or database state changes."""
         self.refresh_catalog_tree()
         self.refresh_pending_tree()
         self.refresh_multi_location_tree()
-        product_id = format_product_id(self.product_id_var.get().strip())
+        product_id = normalize_sku(self.product_id_var.get().strip())
         if product_id:
             found = self.database.find_product_locations(product_id)
             if found is not None:

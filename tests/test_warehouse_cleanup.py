@@ -6,7 +6,7 @@ import tkinter as tk
 from unittest.mock import patch
 
 from barcode_web.lookup import WarehouseLookup
-from mapper.core.common import iso_timestamp, normalise_sku, vietnam_time
+from mapper.core.common import iso_timestamp, normalize_sku, vietnam_time
 from mapper.persistence.database import WarehouseDatabase, LayoutConflictError
 from migrations.warehouse_cleanup import connect, migrate, read_rows, snapshot
 from tests.support import WorkspaceTestCase
@@ -297,7 +297,7 @@ class WarehouseCleanupTests(WorkspaceTestCase):
 
     def test_database_constraints_and_normalization_and_timestamp_defaults(self):
         db=self.fresh()
-        self.assertEqual(normalise_sku(' 06410-kfl-850 '),'06410KFL850')
+        self.assertEqual(normalize_sku(' 06410-kfl-850 '),'06410KFL850')
         self.assertEqual(iso_timestamp(FIRST),UTC)
         self.assertEqual(vietnam_time(UTC),FIRST.replace('T',' '))
         with closing(db.connect()) as c:
@@ -326,6 +326,9 @@ class WarehouseCleanupTests(WorkspaceTestCase):
         root.withdraw()
         self.addCleanup(root.destroy)
         app=WarehouseMapperApp(root,db.path)
+        # Hidden tabs load on their first visit.
+        app.refresh_if_stale(app.primal_view)
+        app.refresh_if_stale(app.exceptions_view)
         for query in ('06410-kfl-850','06410KFL850','tên việt','Honda name'):
             app.assignments.search_var.set(query)
             app.refresh_product_lists()

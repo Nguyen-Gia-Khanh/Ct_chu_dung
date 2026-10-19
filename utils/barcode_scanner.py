@@ -1,11 +1,5 @@
 import time
-from mapper.core.common import normalise_sku
-
-
-def format_product_id(value: str) -> str:
-    """Normalize scanner and typed input to the stored SKU format."""
-    return normalise_sku(value) if value else ''
-
+from mapper.core.common import normalize_sku
 
 
 def select_all_entry_text(entry) -> None:
@@ -61,7 +55,7 @@ class BarcodeScanner:
                 code = self.pop_scanner_code()
                 self.last_scan_time = now
                 if self.callback and code:
-                    self.callback(format_product_id(code))
+                    self.callback(normalize_sku(code))
                 return
             self.buffer = ""
             return
@@ -100,10 +94,10 @@ def process_entry_return(
     """Handle Return on an entry, cleanly differentiating scanner from human typer."""
     if scanner is not None and scanner.is_scanner():
         code = scanner.pop_scanner_code()
-        formatted = format_product_id(code) if code else ""
+        formatted = normalize_sku(code) if code else ""
         variable.set(formatted)
     else:
-        formatted = format_product_id(variable.get())
+        formatted = normalize_sku(variable.get())
         variable.set(formatted)
 
     entry.after_idle(lambda: select_all_entry_text(entry))

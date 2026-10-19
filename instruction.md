@@ -10,7 +10,7 @@ unregistered product never adds it. Multiple locations and awaiting CSV/catalog
 registration are separate exception states, independent of hot-seller membership.
 `placements` owns the shared stock and one primary location;
 `exception_placements` has only extra locations. All SKU input uses
-`mapper.core.common.normalise_sku`; all stored times use UTC ISO 8601 offsets,
+`mapper.core.common.normalize_sku`; all stored times use UTC ISO 8601 offsets,
 and `vietnam_time` formats displayed times. Old databases require the explicit
 backed-up migration before starting this version.
 `slots` references `shelves` directly and stores `row_number`; `shelves.row_count`
@@ -21,7 +21,7 @@ preserves empty rows. Cell counts come from `slots`. `shelf_rows` and
 
 Use this file to locate the code for a requested desktop change. [README.md](README.md)
 explains how to launch the app and perform warehouse workflows. The supported UI
-is Tkinter; `ui/web/` and `mapper/api/` are retained as deprecated code.
+is Tkinter.
 
 ## Tab index
 
@@ -66,14 +66,14 @@ Chrome** tab triggers a connection and returns to the previous content tab.
 | 1. Shelf Designer | [designer.py](ui/desktop/designer.py) | [shelf_actions.py](ui/desktop/shelf_actions.py): new/load shelf, row resizing, preview, pending-change checks, and explicit commit. CSV imports are in `catalog_actions.py`. |
 | 2. Assign Locations | [location_assignment_view.py](ui/desktop/location_assignment_view.py) | `assignment_actions.py`: address loading, on-hand moves, quantities, assignment, Shift shortcuts, and revert. `catalog_actions.py`: searches, catalog transfers, and imports. |
 | 3. Primal Queue / Shelves | [primal_queue_view.py](ui/desktop/primal_queue_view.py) | Working-product and full-catalog search, state/stock display, exact-ID navigation, shelf cells, and their contents. |
-| 4. Browse Shelves | [shelf_browser.py](ui/desktop/shelf_browser.py) | Saved-shelf selection and designer previews. Uses `AssignmentView` in `assignment_view.py` for the shelf drawing and cell visuals. |
+| 4. Browse Shelves | [shelf_browser.py](ui/desktop/shelf_browser.py) | Saved-shelf selection and designer previews, drawn with `ShelfGridCanvas`. |
 | 5. Switch / Combine Cells | [cell_transfer_view.py](ui/desktop/cell_transfer_view.py) | `CellTransferPane` owns each side's search, selectors, shelf, and contents. `CellTransferView` validates the pair, confirms operations, and calls database switch/combine methods. |
 | 6. Special Exceptions | [exceptions_view.py](ui/desktop/exceptions_view.py) | Existing-ID lookup, extra locations, unregistered-product assignment, staged name edits, separate CSV/catalog registration, and removal. Persistence is in `mapper/persistence/exceptions.py`. |
 | 7. Web Location Sync | [location_comparison_view.py](ui/desktop/location_comparison_view.py) | Excel column selection, comparison, background progress, export, and resync requests. Comparison rules are in `mapper/features/location_comparison.py`; browser operations are in `web_actions.py`. |
 
-`lookup_view.py` contains the older `ProductLookupView`. The current numbered
 Tab 3 is built from `PrimalQueueView`; `app.lookup` is an alias for that view.
-Check the app wiring before editing an older view with a similar purpose.
+Hidden tabs load on their first visit and reload on later visits only when SQLite
+changed (`StateActions.refresh_if_stale`, `WarehouseDatabase.data_version`).
 
 ## Tab 1: Shelf Designer
 
@@ -174,11 +174,11 @@ one-step reversal, not a general history of all inventory edits.
 | Catalog to loaded cell | `CatalogActions.assign_catalog_selection_to_address`, shared `assign_product_records_to_address`; database `assign_catalog_direct_to_slot`. |
 | Selected/all on-hand assignment | `AssignmentActions.assign_on_hand_to_address`; database `assign_on_hand_to_slot`. |
 | Returning products from a cell | `move_selected_address_to_on_hand` and `move_address_to_on_hand`; database `move_slot_to_on_hand`. |
-| Stock entry or modification | `StockQuantityDialog` in `assignment_view.py`, `modify_on_hand_stock`, `_modify_loaded_address_stock`, and `validate_stock_quantity`. |
+| Stock entry or modification | `StockQuantityDialog` in `dialogs.py`, `modify_on_hand_stock`, `_modify_loaded_address_stock`, and `validate_stock_quantity`. |
 | Search, location status, catalog double-click | `CatalogActions.schedule_queue_refresh`, `refresh_product_queue`, `refresh_catalog`, `refresh_search_location`, and `activate_catalog_product`. |
 | Queue double-click | `LocationAssignmentView._on_queue_double_click` fills and selects the search field; it does not move inventory. |
 | Compact shelf text, count, color, selection | `render_shelf_preview`, `refresh_shelf_cell`, `highlight_shelf_cell`, and `WarehouseMapperApp.refresh_assignment_shelf_preview`. |
-| Web action scope and labels | `LocationAssignmentView._refresh_web_action_labels`; `WebActions._web_placements`, `_saved_location_sets`, and `_location_updates`. |
+| Web action scope and labels | `LocationAssignmentView._refresh_web_action_labels`; `WebActions._web_placements` and `_location_updates` (via `mapper.services.uploads`). |
 
 Shift state is stored in `view.whole_mode`. Mouse press handlers also capture
 the event's Shift bit in `_shift_clicked`, which click handlers consume. The
@@ -205,8 +205,8 @@ label format; changing Tab 2 does not require changing every renderer.
 **Refresh dependencies:** `StateActions.apply_inventory_changes` and
 `reconcile_inventory_products` update the queue/catalog/on-hand caches after
 writes. `refresh_visible_cells` routes changed cells to the active view.
-`StockQuantityDialog` belongs to the quantity-entry section of
-`assignment_view.py`; that file's shelf renderer primarily serves Tab 4.
+`StockQuantityDialog` lives in `dialogs.py`. Shift-transfer rules (shared
+five-character prefix, triple click, stock 999) are in `mapper/services/assignment.py`.
 
 **Save boundary:** the current address/on-hand actions save immediately.
 **Check:** selected moves, all three Shift shortcuts, prefix rejection, timer
@@ -228,8 +228,7 @@ The three `_on_*_double_click` handlers fill/select the search field.
 This is a read-only inspection tab; searching/selecting does not move products.
 
 **Shared sections:** `ShelfAddressLookup` handles Floor/Side/Shelf lookup;
-`ScrollableFrame`, `shelf_cell_visual`, and `sync_tree_rows` handle display and
-updates. `normalize_search` / `MAX_VISIBLE_PRODUCTS` apply to the lists;
+`ShelfGridCanvas` and `sync_tree_rows` handle display and updates. `normalize_search` / `MAX_VISIBLE_PRODUCTS` apply to the lists;
 `make_slot_name` labels the cells. Database reads use `get_product_location`,
 `get_placement_details`, `get_shelf`, and `get_shelf_contents`.
 `StateActions.refresh_visible_cells` can update this tab's changed cells.
@@ -237,23 +236,20 @@ updates. `normalize_search` / `MAX_VISIBLE_PRODUCTS` apply to the lists;
 **Check:** search a working ID and a catalog-only ID, inspect each state, follow
 an assigned ID to its cell, and double-click a result or cell-content row.
 `tests/test_incremental_desktop.py` covers source/destination cell refreshes.
-The older `lookup_view.py` is not the active Tab 3 implementation.
 
 ## Tab 4: Browse Shelves
 
 **View:** [shelf_browser.py](ui/desktop/shelf_browser.py), `ShelfBrowserView`.
 `show_saved_shelf` loads committed data; `show_preview` displays Tab 1's
-uncommitted layout; `_show_layout` feeds the common renderer. `select_slot`,
+uncommitted layout; `_show` feeds the canvas grid. `select_slot`,
 `refresh_cell`, and `refresh_loaded_contents` update the selected contents.
 The summary distinguishes **Committed SQLite data** from **Uncommitted shelf
 preview**. Browsing and selecting cells do not write to SQLite.
 
-**Shared sections:** [assignment_view.py](ui/desktop/assignment_view.py),
-`AssignmentView.render_shelf`, `_cell_visual`, `refresh_cell`, and
-`mark_selected` draw and highlight cells. These are separate from that file's
-`StockQuantityDialog` used by Tab 2. `ShelfActions.render_shelf` is the Tab 1
-preview producer; `ShelfAddressLookup` selects saved shelves. Rendering uses
-`ScrollableFrame` / `shelf_cell_visual`; contents use `sync_tree_rows`.
+**Shared sections:** `ShelfGridCanvas` in [widgets.py](ui/desktop/widgets.py) draws
+and highlights cells from `mapper.services.shelf_grid.load_grid` / `build_grid`.
+`ShelfActions.render_shelf` is the Tab 1 preview producer; `ShelfAddressLookup`
+selects saved shelves; contents use `sync_tree_rows`.
 Persistence reads come from `shelves.py`; `StateActions.refresh_visible_cells`
 refreshes committed cells here after inventory changes.
 
@@ -276,8 +272,8 @@ changes before a mutation. `InventoryOperations.swap_slot_contents` /
 confirmation, retaining quantities and original assignment timestamps.
 `WarehouseMapperApp.on_cell_transfer_changed` reconciles affected products
 through `StateActions.reconcile_inventory_products` / `refresh_visible_cells`.
-`ShelfAddressLookup`, `ScrollableFrame`, `shelf_cell_visual`, and `sync_tree_rows`
-serve both panes. Explicit web updates use
+`ShelfAddressLookup`, `ShelfGridCanvas`, and `sync_tree_rows` serve both panes;
+the Find box uses `mapper.services.cell_lookup.find_cell`. Explicit web updates use
 `WebActions.modify_cell_transfer_locations` and the shared upload worker.
 
 **Check:** switch and both combine directions, same-cell rejection, pending
@@ -378,17 +374,17 @@ identify the relevant code section without depending on changing line numbers.
 | `catalog_actions.py`: `schedule_queue_refresh`, `refresh_product_queue`, `refresh_catalog`, `refresh_search_location`, `activate_catalog_product`, `assign_catalog_selection_to_address` | 2 | Search, location status, catalog activation and assignment. Tab 3 has its own search handlers. |
 | `assignment_actions.py`: `assign_queue_selection_to_address`, `assign_product_records_to_address`, `assign_on_hand_to_address`, `move_address_to_on_hand`, `move_selected_address_to_on_hand`, stock/address/Shift handlers | 2 | Direct assignment and shelf-removal holding queue. |
 | `assignment_actions.py`: `assign_selected_products`, `refresh_slot_contents`, `transfer_selected_products`; `catalog_actions.py`: `preassign_queue_stock`, `return_selected_to_queue` | Older staged workflow | Retained methods; not the current Tab 2 button callbacks in `_build_ui`. |
-| `assignment_view.py`: `StockQuantityDialog` | 2; retained staged assignment code | Per-product quantity entry. |
-| `assignment_view.py`: `AssignmentView.render_shelf`, `_cell_visual`, `refresh_cell`, `mark_selected` | 4; previews produced by 1 | Shared full-size shelf renderer. Tab 2 has its own compact renderer. |
+| `dialogs.py`: `StockQuantityDialog` | 2 | Per-product quantity entry. |
+| `widgets.py`: `ShelfGridCanvas` | 2, 3, 4, 5 | One canvas per shelf; the same layout only recolors cells. Tab 2 uses a compact style. |
 | `shelf_actions.py`: new/load/resize/preview/commit methods | 1 → 4 for preview | Shelf editor operations. |
 | `shelf_actions.py`: `can_change_cells`, `has_pending_changes` | 1 and 5; app close | Prevent saved-cell changes while editor changes are pending. |
-| `state_actions.py`: `remember_imported_products`, `reload_database_state`, `refresh_all_views` | App-wide caches; directly refresh 2, 6, and optionally 3 | Import/startup/exception refresh. Tabs also refresh on activation. |
+| `state_actions.py`: `remember_imported_products`, `reload_database_state`, `refresh_all_views`, `refresh_if_stale` | App-wide caches; refresh 2 and the visible tab | Import/startup/exception refresh. Other tabs reload on their next visit only if SQLite changed. |
 | `state_actions.py`: `apply_inventory_changes`, `reconcile_inventory_products`, `refresh_visible_cells` | Writes from 2, 5; visible cells in 2, 3, 4, 5 | Narrow product readback and in-place list/cell refresh. |
 | `state_actions.py`: `on_exception_data_changed` | 6 → app caches / other consumers | Exception mutation callback. |
 | `web_actions.py`: `_web_placements`, `_upload_products`, `_location_updates`, `upload_selected_product`, `modify_selected_location` | 2 | Selected/all-loaded-cell browser requests. |
 | `web_actions.py`: `modify_cell_transfer_locations` | 5 | Browser request for products in the selected cells. |
 | `web_actions.py`: `resync_web_locations` | 7 | Browser requests from comparison results. |
-| `web_actions.py`: `connect_chrome`, `_saved_location_sets`, `_start_web_update`, `_run_web_upload`, `_poll_web_upload` | Connect Chrome; 2, 5, 7 | Shared browser lifecycle, complete location sets, workers, and progress. |
+| `web_actions.py`: `connect_chrome`, `_start_web_update`, `_run_web_upload`, `_poll_web_upload` | Connect Chrome; 2, 5, 7 | Shared browser lifecycle, workers, and progress. Jobs come from `mapper.services.uploads`. |
 
 ### Common helpers and widgets
 
@@ -401,10 +397,9 @@ identify the relevant code section without depending on changing line numbers.
 | `mapper/core/common.py`: `normalize_search` | 1–6 via address normalization and product search | Case/accent-insensitive normalization. Tab 7 Excel comparison has separate rules in `location_comparison.py`. |
 | `mapper/core/common.py`: `MAX_VISIBLE_PRODUCTS` | 2, 3; older lookup view | Limit displayed queue/catalog results to 750. |
 | `widgets.py`: `ScrollableFrame` and its scrolling methods | 1, 2, 3, 4, 5 | Row editor, quantity dialog, and shelf scroll areas. |
-| `widgets.py`: `sync_tree_rows` | 2, 3, 4, 5 | Reconcile rows in place; Tab 6/7 have their own rendering paths. |
-| `widgets.py`: `shelf_cell_visual` | 3, 4, 5 | Full-size cell count/color/selection styling. Tab 2 styles its compact cells separately. |
+| `widgets.py`: `sync_tree_rows` | 2, 3, 4, 5, 6 | Reconcile rows in place; Tab 7 paints in batches. |
 | `shelf_address_lookup.py`: `find_shelf_id`, `ShelfAddressLookup.load` / `set_address` | 3, 4, 5 | Shared Floor/Side/Shelf lookup. Tabs 2/6 use their own address fields. |
-| `utils/barcode_scanner.py`: `BarcodeScanner`, `format_product_id`, `bind_auto_highlight`, `select_all_entry_text` | Main scan/search flows in 2, 3, 5, 6 | Scanner detection, ID formatting, and entry selection; app routes scans to the active view. |
+| `utils/barcode_scanner.py`: `BarcodeScanner`, `bind_auto_highlight`, `select_all_entry_text` | Main scan/search flows in 2, 3, 5, 6 | Scanner detection and entry selection; IDs use `normalize_sku`; app routes scans to the active view. |
 
 ### Persistence and feature functions
 
@@ -505,9 +500,9 @@ Run the targeted checks from the project root:
 - `reload_database_state` reloads caches; `refresh_all_views` updates widgets.
   Keep those responsibilities distinct to avoid duplicate redraws.
 
-[widgets.py](ui/desktop/widgets.py) provides `sync_tree_rows`, `shelf_cell_visual`,
-and `ScrollableFrame`. Reuse existing rows/buttons when only contents change;
-rebuild a shelf when its structure changes. A partial refresh must preserve
+[widgets.py](ui/desktop/widgets.py) provides `ShelfGridCanvas`, `sync_tree_rows`,
+and `ScrollableFrame`. Reuse existing rows and cells when only contents change;
+`ShelfGridCanvas.show` redraws only when the shelf's layout changes. A partial refresh must preserve
 selection, cell styling, and count text just as a full render does.
 
 [shelf_address_lookup.py](ui/desktop/shelf_address_lookup.py) provides shared
@@ -530,6 +525,28 @@ back onto the Tk thread. Exported mismatches go under
 pipe, and newline separators for location sets. Local IDs missing from an
 export cannot be compared/uploaded by that comparison. Import a fresh website
 export to verify the result after resync.
+
+## Tauri front end
+
+The Tauri app (`ui/tauri/`) shows the same seven tabs. It holds no warehouse
+rules: each action calls one `mapper.rpc` method.
+
+| Layer | Files | Responsibility |
+| --- | --- | --- |
+| Rust shell | `ui/tauri/src-tauri/src/lib.rs` | Finds the project folder, starts `.venv\Scripts\python.exe -m mapper.rpc` without a console, forwards `rpc(method, params)` calls as JSON lines, re-emits sidecar events as `sidecar://<name>`, restarts the sidecar after a crash, and sends `shutdown` on exit. |
+| Python service | `mapper/rpc/api.py`, `server.py` | One method per user action (`products.search`, `assign.shift_queue`, `cells.combine`, `web.resync`, …). Writes return `changes` (products, cells, shelves, catalog). Search uses an in-memory `ProductIndex` patched after each write. Browser jobs run on one thread and report `job` events. |
+| Svelte tabs | `ui/tauri/src/tabs/*.svelte` | One component per tab. A tab reloads when it becomes visible after any write (`app.changes.seq`); hidden tabs wait until they are opened. |
+| Shared UI | `src/components/VirtualTable.svelte`, `ShelfGrid.svelte`, `ShelfPicker.svelte`, `CellPane.svelte`, `Modals.svelte` | Virtualized tables, shelf drawing, shelf lookup, Tab 5 panes, and in-app dialogs (stock, number, CSV columns, merge). |
+| Shared state | `src/lib/app.svelte.ts`, `web.svelte.ts`, `scanner.ts` | Active tab, status line, change counter, scanner routing, and the single Chrome task. |
+
+**Adding an action:** add the rule to `mapper/services/` (or `persistence/`),
+expose it with `@rpc("group.name")` in `mapper/rpc/api.py` returning
+`changes(...)` for writes, then call it from the tab with `call()` and pass the
+result to `applied()` so other tabs refresh.
+
+**Check:** `.venv\Scripts\python.exe -m unittest tests.test_rpc`; in `ui/tauri`,
+`npm run check` and `npm test`; then `npx tauri dev` against a copy of the
+database (`npx tauri dev -- -- --db tmp\copy.db`).
 
 ## Verification workflow
 

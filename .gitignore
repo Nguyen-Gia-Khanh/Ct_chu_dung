@@ -29,7 +29,6 @@ run.ps1
 data/*
 !data/README.md
 tmp/
-ui/web/node_modules/
 
 # Local statement photos and OCR artifacts (utils only)
 utils/images/
@@ -47,3 +46,4 @@ utils/**/*.[tT][iI][fF][fF]
 utils/**/*.[wW][eE][bB][pP]
 utils/**/*.layout.*
 utils/**/*.raw.json
+warehouse_mapper_tauri.exe

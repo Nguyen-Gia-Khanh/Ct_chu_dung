@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mapper.core.common import MAX_STOCK
+
 
 class LayoutConflictError(ValueError):
     pass
 
 
 def validate_stock_quantity(quantity: int | None) -> None:
-    if type(quantity) is not int or not 0 <= quantity <= 9_223_372_036_854_775_807:
-        raise ValueError(
-            "Stock quantity must be a whole number from 0 to 9,223,372,036,854,775,807."
-        )
+    if type(quantity) is not int or not 0 <= quantity <= MAX_STOCK:
+        raise ValueError(f"Stock quantity must be a whole number from 0 to {MAX_STOCK:,}.")
 
 
 @dataclass(frozen=True)

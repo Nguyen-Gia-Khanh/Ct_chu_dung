@@ -6,7 +6,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from mapper.api.write_routes import WriteRoutes
 from mapper.features.location_comparison import compare_locations
 from mapper.features.web_upload import LocationUpdate, UploadProduct, WebsiteUploader
 from mapper.persistence.database import Placement, WarehouseDatabase
@@ -34,37 +33,10 @@ class MultiLocationTests(WorkspaceTestCase):
 
         actions = object.__new__(WebActions)
         actions.database = db
-        self.assertEqual(actions._saved_location_sets({"P1"}), {"P1": expected})
         with patch.object(actions, "_web_placements", return_value=[
             ("P1", Placement(first.slot_name, 7, None))
         ]):
             self.assertEqual(actions._location_updates()[0].location_ids, expected)
-
-        received = []
-
-        def run_batch(products, _progress, _item_done, *, location_only, save):
-            self.assertTrue(location_only)
-            self.assertTrue(save)
-            received.extend(products)
-
-        uploader = SimpleNamespace(
-            run_batch=run_batch,
-        )
-        route = WriteRoutes()
-        replies = []
-        route._send_json = replies.append
-        with (
-            patch("mapper.api.write_routes._get_database", return_value=db),
-            patch("mapper.api.write_routes._get_uploader", return_value=uploader),
-        ):
-            route._handle_api_post("/api/web/modify-location", {
-                "items": [
-                    {"product_id": "P1", "slot_name": first.slot_name},
-                    {"product_id": "P1", "slot_name": second.slot_name},
-                ]
-            })
-        self.assertEqual([item.location_ids for item in received], [expected])
-        self.assertEqual(replies[-1]["count"], 1)
 
     def test_comparison_resyncs_all_local_locations(self) -> None:
         differences, missing = compare_locations(
@@ -72,7 +44,6 @@ class MultiLocationTests(WorkspaceTestCase):
         )
         self.assertEqual(missing, [])
         self.assertEqual(differences[0].true_location, "A, B")
-        self.assertTrue(differences[0].can_resync)
         view = SimpleNamespace(differences=differences, resynced={})
         self.assertEqual(
             LocationComparisonView.pending_updates(view)[0].location_ids,

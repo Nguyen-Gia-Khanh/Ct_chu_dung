@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 import sqlite3
 
-from mapper.core.common import clean_product_name, iso_timestamp, normalise_sku
+from mapper.core.common import clean_product_name, iso_timestamp, normalize_sku
 from mapper.persistence.schema import SCHEMA_VERSION, create_schema
 
 VERSION = SCHEMA_VERSION
@@ -52,7 +52,7 @@ def read_rows(connection: sqlite3.Connection) -> dict[str, list[dict]]:
 
 def catalog_only_ids(origins) -> set[str]:
     """Legacy products also held temporary copies that were never hot sellers."""
-    return {normalise_sku(row['product_id']) for row in origins
+    return {normalize_sku(row['product_id']) for row in origins
             if json.loads(row['snapshot'])['was_in_products'] is False}
 
 
@@ -87,39 +87,39 @@ def review(connection: sqlite3.Connection, honda_csv: Path | None = None) -> dic
     result = {'before': snapshot(connection)}
     if 'products' not in data:
         return result
-    catalog = {normalise_sku(row['product_id']): row for row in data['catalog_products']}
-    products = {normalise_sku(row['product_id']): row for row in data['products']}
+    catalog = {normalize_sku(row['product_id']): row for row in data['catalog_products']}
+    products = {normalize_sku(row['product_id']): row for row in data['products']}
     slots = {row['slot_id']: row['slot_name'] for row in data['slots']}
     locations = defaultdict(list)
     for table in ('placements', 'exception_placements'):
         for row in data[table]:
-            locations[normalise_sku(row['product_id'])].append({
+            locations[normalize_sku(row['product_id'])].append({
                 'table': table, 'slot_id': row['slot_id'], 'slot_name': slots[row['slot_id']],
                 'stock_qty': row['stock_qty'],
             })
     result['missing_catalog'] = {}
     for table in ('products', 'placements', 'exception_placements'):
         result['missing_catalog'][table] = [{
-            'original_product_id': row['product_id'], 'product_id': normalise_sku(row['product_id']),
-            'product_name': products.get(normalise_sku(row['product_id']), {}).get('product_name'),
-            'shortened_name': products.get(normalise_sku(row['product_id']), {}).get('shortened_name'),
-            'slots': locations[normalise_sku(row['product_id'])],
-        } for row in data[table] if normalise_sku(row['product_id']) not in catalog]
+            'original_product_id': row['product_id'], 'product_id': normalize_sku(row['product_id']),
+            'product_name': products.get(normalize_sku(row['product_id']), {}).get('product_name'),
+            'shortened_name': products.get(normalize_sku(row['product_id']), {}).get('shortened_name'),
+            'slots': locations[normalize_sku(row['product_id'])],
+        } for row in data[table] if normalize_sku(row['product_id']) not in catalog]
     result['collisions'] = {}
     for table in ('catalog_products', 'products'):
         grouped = defaultdict(list)
         for row in data[table]:
-            grouped[normalise_sku(row['product_id'])].append(row)
+            grouped[normalize_sku(row['product_id'])].append(row)
         result['collisions'][table] = {key: rows for key, rows in grouped.items() if len(rows) > 1}
     result['exception_products'] = [{
         'product_id': pid, 'locations': rows,
         'distinct_locations': len({row['slot_id'] for row in rows}),
         'real_counts': sorted({row['stock_qty'] for row in rows if row['stock_qty'] not in (None, 999)}),
     } for pid, rows in locations.items() if any(row['table'] == 'exception_placements' for row in rows)]
-    hand = {normalise_sku(row['product_id']): row for row in data['on_hand_queue']}
+    hand = {normalize_sku(row['product_id']): row for row in data['on_hand_queue']}
     result['returned_queue_conflicts'] = [
-        {'returned': row, 'on_hand': hand[normalise_sku(row['product_id'])]}
-        for row in data['returned_queue_products'] if normalise_sku(row['product_id']) in hand
+        {'returned': row, 'on_hand': hand[normalize_sku(row['product_id'])]}
+        for row in data['returned_queue_products'] if normalize_sku(row['product_id']) in hand
     ]
     result['staging_flags'] = [list(row) for row in connection.execute(
         'SELECT csv_updated, catalog_updated, COUNT(*) FROM wait_to_update_csv GROUP BY 1, 2')]
@@ -129,13 +129,13 @@ def review(connection: sqlite3.Connection, honda_csv: Path | None = None) -> dic
             source = list(csv.DictReader(stream, delimiter=';'))
         honda = defaultdict(set)
         for row in source:
-            honda[normalise_sku(row['product_id'])].add(clean_product_name(row['product_name']))
+            honda[normalize_sku(row['product_id'])].add(clean_product_name(row['product_name']))
         result['honda_csv'] = {'path': str(honda_csv.resolve()),
             'sha256': hashlib.sha256(honda_csv.read_bytes()).hexdigest(),
             'mismatches': [row for row in data['catalog_products']
-                if normalise_sku(row['product_id']) in honda
-                and clean_product_name(row['product_name']) not in honda[normalise_sku(row['product_id'])]],
-            'not_in_csv': [row['product_id'] for row in data['catalog_products'] if normalise_sku(row['product_id']) not in honda]}
+                if normalize_sku(row['product_id']) in honda
+                and clean_product_name(row['product_name']) not in honda[normalize_sku(row['product_id'])]],
+            'not_in_csv': [row['product_id'] for row in data['catalog_products'] if normalize_sku(row['product_id']) not in honda]}
     return result
 
 
@@ -219,24 +219,24 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
         original_ids = {row['product_id'] for table in ('products', 'catalog_products') for row in data[table]}
         aliases = defaultdict(set)
         for pid in original_ids:
-            aliases[normalise_sku(pid)].add(pid)
+            aliases[normalize_sku(pid)].add(pid)
         for key, ids in aliases.items():
             if len(ids) > 1 and (ids != COLLISION or keep_sku not in ids):
                 raise ValueError(f'Choose the surviving original SKU before merging {key}: {sorted(ids)}')
         def keyed(table):
             result = {}
             for row in sorted(data[table], key=lambda row: row['product_id'] == keep_sku):
-                result[normalise_sku(row['product_id'])] = row
+                result[normalize_sku(row['product_id'])] = row
             return result
         old_catalog, old_products = keyed('catalog_products'), keyed('products')
-        all_ids = {normalise_sku(row['product_id']) for rows in data.values() for row in rows if 'product_id' in row}
+        all_ids = {normalize_sku(row['product_id']) for rows in data.values() for row in rows if 'product_id' in row}
         missing = sorted(all_ids - old_catalog.keys())
         if missing and not register_missing:
             raise ValueError(f'{len(missing)} missing catalog SKUs require explicit --register-missing approval.')
         catalog = []
         for pid in sorted(all_ids):
             original, product = old_catalog.get(pid), old_products.get(pid)
-            staged = next((row for row in data['wait_to_update_csv'] if normalise_sku(row['product_id']) == pid), {})
+            staged = next((row for row in data['wait_to_update_csv'] if normalize_sku(row['product_id']) == pid), {})
             full = clean_product_name(product['product_name']) if product else clean_product_name(staged.get('product_name'))
             catalog.append({'product_id': pid, 'full_name': full,
                 'brand_name': clean_product_name(original['product_name']) if original else None,
@@ -251,7 +251,7 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
         locations = defaultdict(list)
         for table in ('placements', 'exception_placements'):
             for row in data[table]:
-                locations[normalise_sku(row['product_id'])].append((table, row))
+                locations[normalize_sku(row['product_id'])].append((table, row))
         for pid, rows in locations.items():
             real = {row['stock_qty'] for _, row in rows if row['stock_qty'] not in (None, 999)}
             if len(real) > 1:
@@ -272,11 +272,11 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
                     seen.add(row['slot_id'])
         migrated['placements'], migrated['exception_placements'] = main, extra
         hand = keyed('on_hand_queue')
-        conflicts = [row for row in data['returned_queue_products'] if normalise_sku(row['product_id']) in hand]
+        conflicts = [row for row in data['returned_queue_products'] if normalize_sku(row['product_id']) in hand]
         if conflicts:
             raise ValueError(f'Existing on-hand stock will not be overwritten: {conflicts}')
         for row in data['returned_queue_products']:
-            hand[normalise_sku(row['product_id'])] = {'stock_qty': row['stock_qty'], 'queued_at': row['returned_at']}
+            hand[normalize_sku(row['product_id'])] = {'stock_qty': row['stock_qty'], 'queued_at': row['returned_at']}
         if hand.keys() & locations.keys():
             raise ValueError(f'Products are both on-hand and placed: {sorted(hand.keys() & locations.keys())}')
         migrated['on_hand_queue'] = [{'product_id': pid, 'stock_qty': row['stock_qty'],
@@ -286,7 +286,7 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
             for original in data[table]:
                 row = {key: value for key, value in original.items() if key != 'product_name'}
                 if 'product_id' in row:
-                    row['product_id'] = normalise_sku(row['product_id'])
+                    row['product_id'] = normalize_sku(row['product_id'])
                 for column in row:
                     if column.endswith('_at') and row[column]:
                         row[column] = iso_timestamp(row[column], legacy_utc=True)

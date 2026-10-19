@@ -1,10 +1,9 @@
 """Choose the SKU and the two catalog name sources; the second name is optional."""
 from __future__ import annotations
 
-import re
 import tkinter as tk
 from tkinter import messagebox, ttk
-from mapper.core.common import normalize_search
+from mapper.features.csv_import import suggest_columns
 
 
 class ColumnMappingDialog(tk.Toplevel):
@@ -24,16 +23,7 @@ class ColumnMappingDialog(tk.Toplevel):
         for row,(label,widget) in enumerate((('Product ID',self.id_column),(primary,self.name_column),(secondary,self.other_name_column))):
             ttk.Label(self,text=label).grid(row=row,column=0,padx=16,pady=8,sticky='w')
             widget.grid(row=row,column=1,padx=16,pady=8)
-        keys = [re.sub('[^a-z0-9]','',normalize_search(header)) for header in headers]
-        def find(candidates,fallback):
-            return next((keys.index(key) for key in candidates if key in keys),fallback)
-        full = ('fullname','tentiengviet','productname','itemname','name','description')
-        brand = ('brandname','tenhonda','hondaname')
-        id_index = find(('productid','productcode','sku','maso','mahang','code','id'),0)
-        name_index = find(brand+('productname','name') if catalog else full,1 if len(headers)>1 else 0)
-        other_index = find(full if catalog else brand,-1)
-        if other_index in (id_index,name_index):
-            other_index = -1
+        id_index, name_index, other_index = suggest_columns(headers, catalog=catalog)
         self.id_column.current(id_index)
         self.name_column.current(name_index)
         self.other_name_column.current(other_index+1)

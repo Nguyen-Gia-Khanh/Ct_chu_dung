@@ -43,6 +43,7 @@ class ProductSearchTests(WorkspaceTestCase):
         primal = app.primal_view
         primal.refresh()
         exceptions = app.exceptions_view
+        exceptions.refresh()  # hidden tabs load on their first visit
         with patch.object(app.database, "connect", side_effect=AssertionError("Search opened SQLite")):
             for query in (PRODUCT_ID, "91201kvb901", "91201kvb901", "01kvb9", "oc vit", "fastener"):
                 with self.subTest(query=query):
