@@ -74,10 +74,14 @@ body.scanner {
   position: absolute; width: 100%; aspect-ratio: 4 / 3; max-height: 42dvh;
   top: 50%; transform: translateY(-50%);
 }
+.camera::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px;
+  background: #fff; pointer-events: none;
+}
 .camera video { display: block; width: 100%; height: 100%; object-fit: cover; }
 .window {
   position: absolute; left: 6%; right: 6%; top: 50%; aspect-ratio: 3 / 1; max-height: 82%; transform: translateY(-50%);
-  border-radius: 8px; box-shadow: 0 0 0 100vmax rgba(6, 22, 40, .58);
+  border-radius: 8px;
   /* Corner brackets: the scan area is everything inside them. */
   background:
     linear-gradient(var(--label), var(--label)) left top / 26px 3px, linear-gradient(var(--label), var(--label)) left top / 3px 26px,
@@ -89,8 +93,8 @@ body.scanner {
 }
 .window.read { animation: read .45s ease-out; }
 @keyframes read {
-  0% { box-shadow: 0 0 0 100vmax rgba(6, 22, 40, .58), inset 0 0 0 4px #52D88A; background-color: rgba(82, 216, 138, .3); }
-  100% { box-shadow: 0 0 0 100vmax rgba(6, 22, 40, .58), inset 0 0 0 0 #52D88A; background-color: transparent; }
+  0% { box-shadow: inset 0 0 0 4px #52D88A; }
+  100% { box-shadow: inset 0 0 0 0 #52D88A; }
 }
 .window #mask { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; border-radius: 8px; background: #fff; }
 #barcode-box { position: absolute; border: 2px solid var(--label); border-radius: 4px; pointer-events: none; transition: all .08s linear; }
@@ -105,7 +109,7 @@ body.scanner {
 .zoom input { width: 110px; accent-color: var(--label); }
 
 .scanner .controls { display: flex; align-items: center; gap: 8px; padding: 10px 0; flex: 0 0 auto; }
-.scanner .controls .primary, .scanner .controls .secondary { flex: 1 1 auto; }
+.scanner .controls .primary, .scanner .controls .secondary { flex: 1 1 auto; padding: 0 12px; }
 .scanner .controls .secondary { color: #fff; }
 .toggle { position: relative; display: inline-flex; flex: 0 0 auto; }
 .toggle input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }

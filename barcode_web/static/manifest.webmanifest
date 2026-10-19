@@ -1,6 +1,7 @@
 {
-  "name": "Warehouse scanner",
-  "short_name": "Scanner",
+  "name": "Quét mã kho hàng",
+  "short_name": "Quét mã",
+  "lang": "vi",
   "start_url": "/scan",
   "scope": "/",
   "display": "standalone",

@@ -105,13 +105,13 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 page.reload()
                 self.assertEqual(page.url, url, "access key stays out of the displayed URL")
                 close_server()
-                page.get_by_role("button", name="Retry sending").click()
-                page.wait_for_function("document.querySelector('#delivery').textContent.startsWith('Not received:')")
+                page.get_by_role("button", name="Gửi lại").click()
+                page.wait_for_function("document.querySelector('#delivery').textContent.startsWith('Chưa gửi được:')")
                 server = ScannerServer(address, ScanStore(self.folder), load_token(self.folder), info)
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
                 thread.start()
-                page.get_by_role("button", name="Retry sending").click()
-                page.wait_for_function("document.querySelector('#delivery').textContent === 'Received by laptop.'")
+                page.get_by_role("button", name="Gửi lại").click()
+                page.wait_for_function("document.querySelector('#delivery').textContent === 'Máy tính đã nhận.'")
                 page.reload()
                 self.assertEqual(page.evaluate("token"), token)
 
@@ -128,8 +128,8 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 })).status"""), 200)
                 page.evaluate("scan => sessionStorage.setItem('pending-scan', JSON.stringify(scan))", pending)
                 page.reload()
-                page.get_by_role("button", name="Retry sending").click()
-                page.wait_for_function("document.querySelector('#delivery').textContent === 'Received by laptop.'")
+                page.get_by_role("button", name="Gửi lại").click()
+                page.wait_for_function("document.querySelector('#delivery').textContent === 'Máy tính đã nhận.'")
                 self.assertEqual(len(server.store.recent()), 1, "retry must not duplicate the scan")
 
                 # Upgrade an old page whose access key exists only in session storage.
@@ -142,8 +142,8 @@ class BarcodeBrowserTest(WorkspaceTestCase):
 
                 # Temporary server failures must not tell the phone to replace its link.
                 page.route("**/api/scans", lambda route: route.fulfill(status=503, body="Unavailable"))
-                page.get_by_role("button", name="Start camera").click()
-                page.wait_for_function("document.querySelector('#status').textContent.startsWith('Laptop is unavailable.')")
+                page.get_by_role("button", name="Mở camera").click()
+                page.wait_for_function("document.querySelector('#status').textContent.startsWith('Không kết nối được máy tính.')")
                 page.unroute("**/api/scans")
 
                 # Explicitly opening a replacement link overrides any remembered key.
@@ -152,8 +152,8 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 self.assertEqual(page.evaluate("token"), "replacement-token")
                 self.assertEqual(page.evaluate("localStorage.getItem('scanner-token')"), "replacement-token")
                 self.assertEqual(page.url, url)
-                page.get_by_role("button", name="Start camera").click()
-                page.wait_for_function("document.querySelector('#status').textContent.startsWith('Phone link expired.')")
+                page.get_by_role("button", name="Mở camera").click()
+                page.wait_for_function("document.querySelector('#status').textContent.startsWith('Liên kết quét đã hết hạn.')")
                 context.close()
 
     def test_fake_camera_decodes_sends_and_stops_at_phone_sizes(self):
@@ -227,7 +227,7 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                     };
                 """.replace("FIXTURES", fixtures))
                 page.goto(base + "/scan#browser-test")
-                cell_option = page.get_by_role("checkbox", name="Include cell contents")
+                cell_option = page.get_by_role("checkbox", name="Hiện hàng trong ô")
                 self.assertFalse(cell_option.is_checked())
                 if on_phone:
                     cell_option.check()
@@ -240,24 +240,24 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                                 return
                         route.continue_()
                     page.route("**/api/scans", fail_first_post)
-                page.get_by_role("button", name="Start camera").click()
+                page.get_by_role("button", name="Mở camera").click()
                 if on_phone:
-                    page.get_by_role("button", name="Retry sending").wait_for(state="visible")
+                    page.get_by_role("button", name="Gửi lại").wait_for(state="visible")
                     self.assertFalse(store.recent(), "failed network delivery cannot be acknowledged")
-                    page.get_by_role("button", name="Retry sending").click()
-                page.wait_for_function("document.querySelector('#delivery').textContent === 'Received by laptop.'")
+                    page.get_by_role("button", name="Gửi lại").click()
+                page.wait_for_function("document.querySelector('#delivery').textContent === 'Máy tính đã nhận.'")
                 if on_phone:
                     self.assertEqual(attempts[0], attempts[1], "retry must reuse the delivery ID and text")
                 self.assertEqual(page.locator("#result").inner_text(), "001234567890")
                 self.assertTrue(requested_workers, "the phone decoder worker is loaded")
                 if on_phone:
                     self.assertFalse(uploaded_frames, "decoded on the phone: no camera frames leave it")
-                    self.assertEqual(page.locator("#link-state").inner_text(), "Scanning on phone")
+                    self.assertEqual(page.locator("#link-state").inner_text(), "Đang quét trên điện thoại")
                 else:
                     self.assertGreaterEqual(len(uploaded_frames), 2, "first upload failed, a later one decoded")
                     self.assertTrue(all(frame.startswith(b"\xff\xd8") for frame in uploaded_frames))
-                    self.assertEqual(page.locator("#link-state").inner_text(), "Scanning on laptop")
-                self.assertEqual(page.locator("#badge").inner_text(), "Found")
+                    self.assertEqual(page.locator("#link-state").inner_text(), "Đang quét trên máy tính")
+                self.assertEqual(page.locator("#badge").inner_text(), "Đã tìm thấy")
                 self.assertIn("001234567890", page.locator("#product").inner_text())
                 self.assertEqual(page.locator("#locations").inner_text(), "L1-1A2-3\nL2-2B4-5")
                 self.assertEqual(page.locator("#locations .loc").count(), 2)
@@ -288,28 +288,28 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 self.assertEqual(page.locator("#cells table").count(), 0)
                 page.evaluate("window.fakeLabel = 'qr'")
                 page.wait_for_function("document.querySelector('#result').textContent === 'warehouse-test-001'")
-                page.wait_for_function("document.querySelector('#delivery').textContent === 'Received by laptop.'")
+                page.wait_for_function("document.querySelector('#delivery').textContent === 'Máy tính đã nhận.'")
                 self.assertEqual(store.recent()[0]["text"], "warehouse-test-001")
-                self.assertEqual(page.locator("#locations").inner_text(), "Barcode not found in the warehouse.")
+                self.assertEqual(page.locator("#locations").inner_text(), "Không tìm thấy mã vạch trong kho.")
                 self.assertTrue(page.locator("#cells").is_hidden())
-                page.get_by_role("button", name="Stop", exact=True).click()
+                page.get_by_role("button", name="Dừng", exact=True).click()
                 frame_count = len(uploaded_frames)
                 page.wait_for_timeout(250)
                 self.assertEqual(len(uploaded_frames), frame_count, "stopping must halt frame uploads")
                 self.assertEqual(page.evaluate("window.fakeStream.getTracks().every(t => t.readyState === 'ended')"), True)
-                self.assertTrue(page.get_by_role("button", name="Start camera").is_enabled())
+                self.assertTrue(page.get_by_role("button", name="Mở camera").is_enabled())
                 if on_phone:
                     # Typed search works with the camera off and goes through the same delivery and lookup.
-                    search = page.get_by_role("searchbox", name="Barcode to look up")
+                    search = page.get_by_role("searchbox", name="Mã vạch cần tìm")
                     search.fill(" 001234567890 ")
                     search.press("Enter")
-                    page.wait_for_function("document.querySelector('#delivery').textContent === 'Received by laptop.'"
-                                           " && document.querySelector('#badge').textContent === 'Found'")
+                    page.wait_for_function("document.querySelector('#delivery').textContent === 'Máy tính đã nhận.'"
+                                           " && document.querySelector('#badge').textContent === 'Đã tìm thấy'")
                     self.assertEqual(page.locator("#result").inner_text(), "001234567890")
                     self.assertEqual(page.locator("#locations").inner_text(), "L1-1A2-3\nL2-2B4-5")
                     self.assertEqual((store.recent()[0]["text"], store.recent()[0]["format"]), ("001234567890", "Typed"))
                     self.assertEqual(search.input_value(), "")
-                    page.get_by_role("button", name="Search").click()
+                    page.get_by_role("button", name="Tìm", exact=True).click()
                     self.assertTrue(search.evaluate("element => element === document.activeElement"), "empty search refocuses")
                 self.assertFalse(errors, errors)
                 page.close()

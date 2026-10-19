@@ -100,9 +100,9 @@ function laptopDecoding(now) {
 
 function showMode() {
   if (!active) return;
-  if (phoneDecoding()) setLink("phone", "Scanning on phone");
-  else if (laptopDecoding(performance.now())) setLink("laptop", "Scanning on laptop");
-  else setLink("off", "Preparing decoder…");
+  if (phoneDecoding()) setLink("phone", "Đang quét trên điện thoại");
+  else if (laptopDecoding(performance.now())) setLink("laptop", "Đang quét trên máy tính");
+  else setLink("off", "Đang chuẩn bị bộ giải mã…");
 }
 
 function setLink(state, text) {
@@ -172,7 +172,7 @@ async function sendToLaptop(crop, current) {
   try {
     const jpeg = await new Promise(resolve => laptopCanvas.toBlob(resolve, "image/jpeg", .92));
     if (!active || generation !== current) return;
-    if (!jpeg) throw new Error("Camera frame could not be captured.");
+    if (!jpeg) throw new Error("Không chụp được khung hình camera.");
     timer = setTimeout(() => request.abort(), 5000);
     const response = await fetch("/api/frames", {
       method: "POST", headers: { "Content-Type": "image/jpeg", Authorization: `Bearer ${token}`,
@@ -181,16 +181,16 @@ async function sendToLaptop(crop, current) {
     if (!active || generation !== current) return;
     const answer = await response.json();
     if (!active || generation !== current || response.status === 429) return;
-    if (!response.ok || !answer.ok) throw new Error(answer.error || "Laptop could not process the frame.");
-    if (status.hidden === false && status.textContent.startsWith("Frame not processed")) message("");
+    if (!response.ok || !answer.ok) throw new Error(answer.error || "Máy tính không xử lý được khung hình.");
+    if (status.hidden === false && status.textContent.startsWith("Chưa xử lý được ảnh")) message("");
     showMode();
     receive(answer, "laptop");
   } catch (error) {
     if (active && generation === current) {
       if (!phoneDecoding()) {
         clearOverlay();
-        setLink("offline", "Laptop offline");
-        message(`Frame not processed: ${error.name === "AbortError" ? "Laptop timed out." : error.message} Retrying…`, true);
+        setLink("offline", "Máy tính mất kết nối");
+        message(`Chưa xử lý được ảnh: ${error.name === "AbortError" ? "Máy tính phản hồi quá lâu." : error.message} Đang thử lại…`, true);
       }
       laptop.previous = performance.now() + 1000;
     }
@@ -223,15 +223,15 @@ function receive(answer, source) {
     processed++;
     elapsed += answer.milliseconds;
     if (now - sampleAt >= 1000) {
-      $("#rate").textContent = `${(processed * 1000 / (now - sampleAt)).toFixed(1)} frames/s · `
-        + `${(elapsed / processed).toFixed(0)} ms on ${source}${decoder.native ? " (native detector)" : ""} · ${answer.stage}`;
+      $("#rate").textContent = `${(processed * 1000 / (now - sampleAt)).toFixed(1)} khung hình/giây · `
+        + `${(elapsed / processed).toFixed(0)} ms trên ${source === "phone" ? "điện thoại" : "máy tính"}${decoder.native ? " (bộ đọc tích hợp)" : ""} · ${answer.stage}`;
       processed = 0;
       elapsed = 0;
       sampleAt = now;
     }
     // Struggling: tell the person what usually helps, without blocking anything.
     hint.hidden = !(now - lastPresent < 400 && now - Math.max(lastRead, scanningSince) > 2500);
-    hint.textContent = "Hold steady. Move closer, or zoom, so the bars fill the frame.";
+    hint.textContent = "Giữ máy ổn định. Đưa lại gần hoặc phóng to để mã vạch vừa khung.";
   }
   const found = answer.results?.[0];
   if (found) accept(found);
@@ -274,11 +274,11 @@ function accept(found) {
 function lookUp(found) {
   result.textContent = found.text;
   empty.hidden = true;
-  showBadge(found.source === "catalog" ? "Completed from catalog" : "Looking up…",
+  showBadge(found.source === "catalog" ? "Bổ sung từ danh mục" : "Đang tìm…",
             found.source === "catalog" ? "catalog" : "");
   lookupPanel.hidden = false;
   product.textContent = "";
-  locations.replaceChildren("Looking up location…");
+  locations.replaceChildren("Đang tìm vị trí…");
   locations.className = "message";
   cells.replaceChildren();
   cells.hidden = true;
@@ -316,27 +316,27 @@ async function sendPending() {
   retry.hidden = true;
   delivery.className = "";
   delivery.hidden = true;
-  delivery.textContent = "Sending to laptop…";
+  delivery.textContent = "Đang gửi đến máy tính…";
   try {
     const response = await fetch("/api/scans", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ ...pending, include_cell_contents: cellData.checked }), signal: AbortSignal.timeout(5000),
     });
     const answer = await response.json();
-    if (!response.ok || !answer.ok) throw new Error(answer.error || "Laptop rejected the scan.");
+    if (!response.ok || !answer.ok) throw new Error(answer.error || "Máy tính từ chối mã vừa quét.");
     const completed = pending.format.endsWith("catalog");
     showLookup(answer.lookup, completed);
     pending = null;
     sessionStorage.removeItem("pending-scan");
-    delivery.textContent = "Received by laptop.";
+    delivery.textContent = "Máy tính đã nhận.";
     delivery.className = "success";
     if (active) showMode();
   } catch (error) {
-    delivery.textContent = `Not received: ${error.message} The barcode is kept on this phone; retry before scanning another.`;
+    delivery.textContent = `Chưa gửi được: ${error.message} Mã vạch được giữ trên điện thoại; hãy gửi lại trước khi quét mã khác.`;
     delivery.className = "error";
     delivery.hidden = false;
     retry.hidden = false;
-    setLink("offline", "Laptop offline");
+    setLink("offline", "Máy tính mất kết nối");
   } finally {
     sending = false;
   }
@@ -349,10 +349,10 @@ function showLookup(found, completed = false) {
   empty.hidden = true;
   product.textContent = found?.product_id ? `${found.product_id} · ${found.product_name}` : "";
   const label = {
-    found: ["Found", "found"], unassigned: ["No location", "warn"], not_found: ["Not in catalog", "stop"],
-    ambiguous: ["Several matches", "warn"],
-  }[found?.status] || ["Lookup off", ""];
-  showBadge(completed ? `${label[0]} · completed from catalog` : label[0], completed && found?.status === "found" ? "catalog" : label[1]);
+    found: ["Đã tìm thấy", "found"], unassigned: ["Chưa có vị trí", "warn"], not_found: ["Không có trong danh mục", "stop"],
+    ambiguous: ["Nhiều mã phù hợp", "warn"],
+  }[found?.status] || ["Chưa bật tra cứu", ""];
+  showBadge(completed ? `${label[0]} · bổ sung từ danh mục` : label[0], completed && found?.status === "found" ? "catalog" : label[1]);
   if (found?.status === "found") {
     locations.className = "";
     locations.replaceChildren(...found.locations.map(name => {
@@ -366,7 +366,7 @@ function showLookup(found, completed = false) {
         const table = document.createElement("table");
         table.createCaption().textContent = cell.location;
         const header = table.createTHead().insertRow();
-        for (const text of ["Barcode", "Product", "Stock"]) {
+        for (const text of ["Mã vạch", "Sản phẩm", "Tồn kho"]) {
           const th = document.createElement("th");
           th.scope = "col";
           th.textContent = text;
@@ -385,10 +385,10 @@ function showLookup(found, completed = false) {
     }
   } else {
     locations.className = "message";
-    locations.textContent = found?.status === "unassigned" ? "Product found; no saved location." :
-      found?.status === "not_found" ? "Barcode not found in the warehouse." :
-      found?.status === "ambiguous" ? `Barcode matches multiple IDs: ${found.matches.join(", ")}.` :
-      "Warehouse lookup is not configured on the laptop.";
+    locations.textContent = found?.status === "unassigned" ? "Đã tìm thấy sản phẩm nhưng chưa có vị trí lưu." :
+      found?.status === "not_found" ? "Không tìm thấy mã vạch trong kho." :
+      found?.status === "ambiguous" ? `Mã vạch khớp với nhiều mã sản phẩm: ${found.matches.join(", ")}.` :
+      "Máy tính chưa được cấu hình tra cứu kho.";
   }
 }
 
@@ -436,8 +436,8 @@ function stop() {
   torchButton.setAttribute("aria-pressed", "false");
   zoomControl.hidden = true;
   hint.hidden = false;
-  hint.textContent = "Press Start camera, then fit the whole label inside the frame.";
-  setLink("off", "Camera off");
+  hint.textContent = "Bấm Mở camera, rồi đưa toàn bộ mã vạch vào khung.";
+  setLink("off", "Camera đã tắt");
   clearOverlay();
 }
 
@@ -462,14 +462,14 @@ async function cameraControls() {
 
 async function start() {
   if (starting || active) return;
-  if (!token) return message("Open the current phone link from the laptop receiver.", true);
+  if (!token) return message("Mở liên kết quét hiện tại từ trang nhận trên máy tính.", true);
   if (!isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-    return message("Camera needs trusted HTTPS. Open the laptop's setup link on this phone, install the certificate, then reopen the phone link.", true);
+    return message("Camera cần kết nối HTTPS được tin cậy. Mở liên kết cài đặt từ máy tính trên điện thoại, cài chứng chỉ rồi mở lại liên kết quét.", true);
   }
   starting = true;
   const current = generation;
   startButton.disabled = true;
-  setLink("off", "Starting…");
+  setLink("off", "Đang mở…");
   try {
     audio ??= new (window.AudioContext || window.webkitAudioContext)();
     void audio.resume?.();
@@ -478,8 +478,8 @@ async function start() {
   try {
     // Verify the session before asking permission; old links must not silently lose scans.
     const check = await fetch("/api/scans", { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5000) });
-    if (check.status === 403) throw new Error("Phone link expired. Open the new link from the laptop receiver.");
-    if (!check.ok) throw new Error("Laptop is unavailable. Check the server, then press Start camera again.");
+    if (check.status === 403) throw new Error("Liên kết quét đã hết hạn. Mở liên kết mới từ trang nhận trên máy tính.");
+    if (!check.ok) throw new Error("Không kết nối được máy tính. Kiểm tra máy chủ rồi bấm Mở camera lần nữa.");
     if (generation !== current) return;
     stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: {
       facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 },
@@ -505,14 +505,14 @@ async function start() {
     if (pending) void sendPending();
   } catch (error) {
     stop();
-    message(error.name === "NotAllowedError" ? "Allow camera access in this browser, then try again." : error.message, true);
+    message(error.name === "NotAllowedError" ? "Cho phép trình duyệt dùng camera rồi thử lại." : error.message, true);
   } finally {
     starting = false;
   }
 }
 
 startButton.addEventListener("click", start);
-stopButton.addEventListener("click", () => { stop(); message("Camera stopped."); });
+stopButton.addEventListener("click", () => { stop(); message("Đã dừng camera."); });
 retry.addEventListener("click", sendPending);
 search.addEventListener("submit", event => {
   event.preventDefault();
@@ -550,7 +550,7 @@ zoom.addEventListener("input", () => {
 });
 addEventListener("pagehide", stop);
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden && active) { stop(); message("Camera paused while this tab was hidden. Press Start camera to resume."); }
+  if (document.hidden && active) { stop(); message("Camera đã tạm dừng khi chuyển sang thẻ khác. Bấm Mở camera để tiếp tục."); }
 });
 startDecoder();
 try {
@@ -558,7 +558,7 @@ try {
   if (pending) {
     result.textContent = pending.text;
     empty.hidden = true;
-    delivery.textContent = "A barcode is waiting to be sent. Press Retry sending.";
+    delivery.textContent = "Có mã vạch đang chờ gửi. Bấm Gửi lại.";
     delivery.hidden = false;
     retry.hidden = false;
   }
