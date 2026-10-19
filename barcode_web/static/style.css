@@ -123,6 +123,13 @@ body.scanner {
   margin: 0 -12px; padding: 16px 16px max(16px, env(safe-area-inset-bottom));
   background: var(--paper); color: var(--ink); border-radius: 18px 18px 0 0; overflow: hidden;
 }
+.search { display: flex; gap: 8px; flex: 0 0 auto; }
+.search input {
+  flex: 1 1 auto; min-width: 0; min-height: 48px; padding: 0 12px; border: 2px solid var(--rule); border-radius: var(--radius);
+  background: #fff; font-size: 1rem; font-variant-numeric: tabular-nums;
+}
+.search input:focus-visible { border-color: var(--ink); outline: none; }
+.search .primary { flex: 0 0 auto; padding: 0 16px; }
 .read { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex: 0 0 auto; }
 #result {
   font-family: var(--condensed); font-size: 1.75rem; font-weight: 700; line-height: 1.05;

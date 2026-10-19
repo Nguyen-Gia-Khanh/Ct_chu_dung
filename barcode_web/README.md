@@ -163,7 +163,9 @@ At least four characters must be read; `%` and `_` are matched literally.
 ## Decoding
 
 The scanner page shows a 4:3 camera preview with a **3:1 scan frame**; only the
-frame's pixels are decoded. Each camera frame the decoder is free for is copied
+frame's pixels are decoded. To keep the phone cool, at most **8 frames per
+second** are decoded (`DECODE_INTERVAL` in `static/scanner.js`); the preview
+itself still plays at the camera's frame rate. Each decoded frame is copied
 at full resolution (up to 1920 px wide, no JPEG) to a Web Worker on the phone
 (`static/decoder-worker.js`). One frame is in flight; others are skipped, so
 slow phones drop frames instead of lagging. The worker tries, in order:
@@ -185,7 +187,7 @@ exposes them; zoom gives the sensor's real detail when labels are small.
 
 **Laptop fallback.** If the worker fails to load or keeps failing, or has not
 become ready after 4 s, the page uploads JPEG frames to `POST /api/frames` at up
-to 15 per second, exactly as before (`processing.py`, unchanged). While the
+to 8 per second (the same cap), otherwise as before (`processing.py`, unchanged). While the
 phone decodes, it also sends one frame every ~350 ms to the laptop as a second
 opinion when it has seen a barcode-like pattern for 1.2 s without a read. The
 **Mask** toggle still requests the laptop's thresholded diagnostic image. The
@@ -231,6 +233,10 @@ phone speed still need testing on actual phones.
 Supported formats: Code 39, Code 128, QR and Data Matrix. Keep the whole code plus
 its blank margins inside the frame. Move a barcode out for about 1.2 seconds
 before deliberately scanning the same value again.
+
+**Typed search.** The box at the top of the result sheet looks up a typed
+barcode, with or without the camera running. It goes through `/api/scans` like a
+camera read, so it appears on the laptop receiver with format `Typed`.
 
 Frames never leave the phone during phone decoding. In fallback, JPEG frames are
 processed in memory on the laptop and discarded without logging. Only decoded

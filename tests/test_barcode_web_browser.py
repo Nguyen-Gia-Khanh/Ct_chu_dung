@@ -215,6 +215,12 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                       requestAnimationFrame(draw);
                     }
                     draw();
+                    window.decodedFrames = 0;
+                    const post = Worker.prototype.postMessage;
+                    Worker.prototype.postMessage = function (message, ...rest) {
+                      if (message?.type === 'frame') window.decodedFrames++;
+                      return post.call(this, message, ...rest);
+                    };
                     navigator.mediaDevices.getUserMedia = async () => {
                       window.fakeStream = source.captureStream(30);
                       return window.fakeStream;
@@ -264,8 +270,16 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 else:
                     self.assertTrue(page.locator("#cells").is_hidden())
                 self.assertEqual(page.evaluate("location.hash"), "")
+                counts = "[decodedFrames, video.getVideoPlaybackQuality().totalVideoFrames]"
+                decoded, shown = page.evaluate(counts)
+                uploads = len(uploaded_frames)
                 page.wait_for_timeout(2500)
-                self.assertEqual(len(store.recent()), 1 if width == 393 else 3)
+                decoded, shown = (after - before for after, before in zip(page.evaluate(counts), (decoded, shown)))
+                processed = decoded if on_phone else len(uploaded_frames) - uploads
+                self.assertLessEqual(processed, 2.5 * 8 + 2, "decoding is capped near 8 frames/s")
+                self.assertGreaterEqual(processed, 5, "scanning continues while capped")
+                self.assertGreater(shown, processed * 2, "the preview keeps the camera frame rate")
+                self.assertEqual(len(store.recent()), 1 if width == 393 else 4)
                 self.assertEqual(page.evaluate("document.body.scrollWidth <= innerWidth"), True)
                 print(f"Chrome {width}x{height}: {page.locator('#rate').inner_text()}")
                 page.screenshot(path=str(preview / f"scanner-{width}.png"), full_page=True)
@@ -284,11 +298,24 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 self.assertEqual(len(uploaded_frames), frame_count, "stopping must halt frame uploads")
                 self.assertEqual(page.evaluate("window.fakeStream.getTracks().every(t => t.readyState === 'ended')"), True)
                 self.assertTrue(page.get_by_role("button", name="Start camera").is_enabled())
+                if on_phone:
+                    # Typed search works with the camera off and goes through the same delivery and lookup.
+                    search = page.get_by_role("searchbox", name="Barcode to look up")
+                    search.fill(" 001234567890 ")
+                    search.press("Enter")
+                    page.wait_for_function("document.querySelector('#delivery').textContent === 'Received by laptop.'"
+                                           " && document.querySelector('#badge').textContent === 'Found'")
+                    self.assertEqual(page.locator("#result").inner_text(), "001234567890")
+                    self.assertEqual(page.locator("#locations").inner_text(), "L1-1A2-3\nL2-2B4-5")
+                    self.assertEqual((store.recent()[0]["text"], store.recent()[0]["format"]), ("001234567890", "Typed"))
+                    self.assertEqual(search.input_value(), "")
+                    page.get_by_role("button", name="Search").click()
+                    self.assertTrue(search.evaluate("element => element === document.activeElement"), "empty search refocuses")
                 self.assertFalse(errors, errors)
                 page.close()
             receiver = browser.new_page(viewport={"width": 1000, "height": 760})
             receiver.goto(base + "/receiver")
-            receiver.wait_for_function("document.querySelector('#scans').children.length === 4")
+            receiver.wait_for_function("document.querySelector('#scans').children.length === 5")
             self.assertIn("warehouse-test-001", receiver.locator("#scans").inner_text())
             receiver.screenshot(path=str(preview / "receiver.png"))
             receiver.close()

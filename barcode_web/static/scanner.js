@@ -24,12 +24,16 @@ const torchButton = $("#torch");
 const soundButton = $("#sound");
 const zoomControl = $("#zoom-control");
 const zoom = $("#zoom");
+const search = $("#search");
+const manual = $("#manual");
 // Phone frames are decoded on this phone; the laptop canvas is only for fallback/mask uploads.
 const phoneCanvas = document.createElement("canvas");
 const phoneContext = phoneCanvas.getContext("2d", { willReadFrequently: true });
 const laptopCanvas = document.createElement("canvas");
 const laptopContext = laptopCanvas.getContext("2d");
 const MAX_PHONE_WIDTH = 1920, MAX_UPLOAD_WIDTH = 1280;
+// Decoding every camera frame heats the phone; ~8 reads/s is still instant. The preview keeps camera fps.
+const DECODE_INTERVAL = 1000 / 8;
 
 function stored(key) {
   try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -55,7 +59,7 @@ let lastPresent = 0, lastRead = 0, scanningSince = 0;
 let audio = null, sound = stored("scanner-sound") !== "off";
 
 // ---------- Phone-side decoder ----------
-const decoder = { worker: null, ready: false, busy: false, failed: false, errors: 0, id: 0, native: false, since: 0 };
+const decoder = { worker: null, ready: false, busy: false, failed: false, errors: 0, id: 0, native: false, since: 0, next: 0 };
 const laptop = { request: null, busy: false, previous: 0 };
 let resolving = false;
 const askedPatterns = new Map();
@@ -264,6 +268,10 @@ function accept(found) {
   if (repeated || pending) return;
   decoder.worker?.postMessage({ type: "reset" });
   feedback();
+  lookUp(found);
+}
+
+function lookUp(found) {
   result.textContent = found.text;
   empty.hidden = true;
   showBadge(found.source === "catalog" ? "Completed from catalog" : "Looking up…",
@@ -392,12 +400,17 @@ function nextFrame(callback) {
 function frame(now) {
   if (!active) return;
   if (!pending && video.readyState >= 2) {
-    const crop = windowCrop();
+    const phoneDue = phoneDecoding() && !decoder.busy && now >= decoder.next;
+    const laptopNow = laptopDue(now);
+    const crop = phoneDue || laptopNow ? windowCrop() : null;
     if (crop && crop.width >= 16 && crop.height >= 16) {
-      // Every camera frame the worker is free for: no network, no JPEG, full resolution.
-      if (phoneDecoding() && !decoder.busy) sendToPhoneDecoder(crop, performance.now());
-      if (laptopDue(now)) {
-        laptop.previous = Math.max(laptop.previous + 1000 / 15, now + 1);
+      // No network, no JPEG, full resolution; at most DECODE_INTERVAL apart.
+      if (phoneDue) {
+        decoder.next = Math.max(decoder.next + DECODE_INTERVAL, now);
+        sendToPhoneDecoder(crop, performance.now());
+      }
+      if (laptopNow) {
+        laptop.previous = Math.max(laptop.previous + DECODE_INTERVAL, now + 1);
         void sendToLaptop(crop, generation);
       }
     }
@@ -481,7 +494,7 @@ async function start() {
     active = true;
     lastText = null;
     processed = elapsed = 0;
-    laptop.previous = 0;
+    laptop.previous = decoder.next = 0;
     sampleAt = scanningSince = performance.now();
     startButton.hidden = true;
     stopButton.hidden = false;
@@ -501,6 +514,18 @@ async function start() {
 startButton.addEventListener("click", start);
 stopButton.addEventListener("click", () => { stop(); message("Camera stopped."); });
 retry.addEventListener("click", sendPending);
+search.addEventListener("submit", event => {
+  event.preventDefault();
+  const text = manual.value.trim();
+  if (!text) return manual.focus();
+  if (pending) {
+    delivery.hidden = false;
+    return;
+  }
+  manual.value = "";
+  manual.blur();
+  lookUp({ text, format: "Typed" });
+});
 filter.addEventListener("change", clearOverlay);
 cellData.addEventListener("change", () => {
   cells.replaceChildren();
