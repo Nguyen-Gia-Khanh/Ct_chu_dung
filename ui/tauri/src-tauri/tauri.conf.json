@@ -17,7 +17,8 @@
         "height": 860,
         "minWidth": 1050,
         "minHeight": 650,
-        "maximized": true
+        "maximized": true,
+        "theme": "Light"
       }
     ],
     "security": {

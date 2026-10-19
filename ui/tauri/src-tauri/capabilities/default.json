@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window may call the sidecar bridge and open file dialogs.",
+  "description": "The main window may call the sidecar bridge, open file dialogs, and close itself after its close checks.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save", "dialog:allow-message", "dialog:allow-ask"]
+  "permissions": ["core:default", "core:window:allow-destroy", "dialog:allow-open", "dialog:allow-save", "dialog:allow-message", "dialog:allow-ask"]
 }
