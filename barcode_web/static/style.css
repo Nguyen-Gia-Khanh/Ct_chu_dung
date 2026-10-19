@@ -66,7 +66,7 @@ body.scanner {
 #sound[aria-pressed="false"] .wave { opacity: .25; }
 
 .camera {
-  position: relative; flex: 0 0 auto; width: 100%; aspect-ratio: 4 / 3; max-height: 42dvh;
+  position: relative; flex: 0 0 auto; width: 100%; aspect-ratio: 3.5 / 1; max-height: 22dvh;
   margin-top: 8px; border-radius: 14px; overflow: hidden; background: var(--rack-deep);
 }
 .camera video { display: block; width: 100%; height: 100%; object-fit: cover; }
@@ -131,11 +131,13 @@ body.scanner {
 .empty { margin: 0; color: var(--muted); }
 .scanner #lookup { display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; min-height: 0; }
 #product { margin: 0; color: var(--ink-soft); line-height: 1.4; max-height: 4.2em; overflow: auto; flex: 0 0 auto; }
-#locations { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 1 auto; max-height: 30dvh; overflow: auto; font-weight: 600; }
+#locations { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 0 auto; max-height: 30dvh; overflow: auto; font-weight: 600; }
+#locations:empty { display: none; }
 #locations.message { display: block; font-size: 1.05rem; color: var(--ink-soft); }
 .loc {
   display: block; padding: 8px 14px 6px; border: 3px solid var(--ink); border-radius: 6px; background: var(--label); color: var(--ink);
   font-family: var(--condensed); font-size: 2rem; font-weight: 700; line-height: 1; letter-spacing: .03em;
+  max-width: 100%; overflow-wrap: anywhere;
 }
 .loc.stamp { animation: stamp .35s cubic-bezier(.2, 1.4, .4, 1); }
 @keyframes stamp { from { transform: scale(1.12); opacity: 0; } to { transform: none; opacity: 1; } }

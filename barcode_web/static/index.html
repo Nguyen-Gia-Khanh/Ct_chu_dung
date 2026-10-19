@@ -40,6 +40,7 @@
 <p id="status" role="status" aria-live="polite" hidden></p>
 <p id="rate" hidden></p>
 <main class="sheet">
+  <output id="locations" aria-label="Warehouse locations" aria-live="polite"></output>
   <div class="read">
     <output id="result" aria-label="Last barcode">—</output>
     <span id="badge" class="badge" hidden></span>
@@ -47,7 +48,6 @@
   <p id="empty" class="empty">Scanned parts appear here with their shelf locations.</p>
   <section id="lookup" hidden aria-live="polite">
     <p id="product"></p>
-    <output id="locations" aria-label="Warehouse locations"></output>
     <div id="cells" hidden></div>
   </section>
   <div class="delivery">
