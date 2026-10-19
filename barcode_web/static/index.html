@@ -21,10 +21,12 @@
   </div>
 </header>
 <div class="camera">
-  <video id="video" autoplay muted playsinline></video>
-  <div class="window" id="window">
-    <img id="mask" alt="Detected barcode bars" hidden>
-    <div id="barcode-box" hidden aria-hidden="true"></div>
+  <div class="camera-view">
+    <video id="video" autoplay muted playsinline></video>
+    <div class="window" id="window">
+      <img id="mask" alt="Detected barcode bars" hidden>
+      <div id="barcode-box" hidden aria-hidden="true"></div>
+    </div>
   </div>
   <p id="hint" class="hint">Press Start camera, then fit the whole label inside the frame.</p>
   <label class="zoom" id="zoom-control" hidden>
