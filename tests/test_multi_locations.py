@@ -33,7 +33,6 @@ class MultiLocationTests(WorkspaceTestCase):
 
         actions = object.__new__(WebActions)
         actions.database = db
-        self.assertEqual(actions._saved_location_sets({"P1"}), {"P1": expected})
         with patch.object(actions, "_web_placements", return_value=[
             ("P1", Placement(first.slot_name, 7, None))
         ]):

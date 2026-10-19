@@ -1,49 +1,218 @@
-"""Shared scrollable Tkinter container."""
+"""Shared Tkinter widgets: a canvas-drawn shelf grid, Treeview syncing, and a scrollable frame."""
 
 from __future__ import annotations
 
 import tkinter as tk
+from collections.abc import Callable
 from tkinter import ttk
 from weakref import WeakSet
 
+from mapper.services.shelf_grid import GridCell, ShelfGrid, cell_color
 
-def shelf_cell_visual(
-    label: str,
-    count: int,
-    *,
-    selected: bool = False,
-    staged: bool = False,
-    highlight_selected: bool = False,
-    font_size: int = 9,
-) -> dict[str, object]:
-    """One cell's appearance, shared by initial renders and content updates."""
-    background = "#fff2b2" if staged else "#d9ead3" if count else "#f7f7f7"
-    if selected and highlight_selected:
-        background = "#cfe8ff"
-    return {
-        "text": f"{label}\n{count} product{'s' if count != 1 else ''}",
-        "background": background,
-        "borderwidth": 3 if selected else 1,
-        "font": ("Segoe UI", font_size, "bold" if selected else "normal"),
-    }
+
+def products_label(count: int) -> str:
+    return f"{count} product{'s' if count != 1 else ''}"
+
+
+class ShelfGridCanvas(ttk.Frame):
+    """A whole shelf drawn on one Canvas.
+
+    Drawing rectangles takes milliseconds where one Button per cell took about half
+    a second for a large shelf. Rows are listed top-down by the ShelfGrid model and
+    each row's cells share its full width, like the physical shelf front.
+    """
+
+    ROW_LABEL_WIDTH = 74
+    TITLE_HEIGHT = 34
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        on_select: Callable[[GridCell], None] | None = None,
+        label: Callable[[GridCell], str] = lambda cell: f"{cell.row}-{cell.cell}",
+        count_text: Callable[[int], str] = products_label,
+        row_label: Callable[[int], str] = lambda row: f"R{row}" + (" · ground" if row == 1 else ""),
+        cell_width: int = 80,
+        cell_height: int = 56,
+        min_row_width: int = 320,
+        font_size: int = 9,
+        show_title: bool = True,
+    ):
+        super().__init__(parent)
+        self.on_select = on_select
+        self.label, self.count_text, self.row_label = label, count_text, row_label
+        self.cell_width, self.cell_height, self.min_row_width = cell_width, cell_height, min_row_width
+        self.font = ("Segoe UI", font_size)
+        self.bold_font = ("Segoe UI", font_size, "bold")
+        self.show_title = show_title
+        self.model: ShelfGrid | None = None
+        self.cells: dict[str, GridCell] = {}
+        self.counts: dict[str, int] = {}
+        self.staged: dict[str, int] = {}
+        self.selected: str | None = None
+        self._items: dict[str, tuple[int, int]] = {}
+        self._slot_by_item: dict[int, str] = {}
+
+        self.canvas = tk.Canvas(self, background="#ffffff", highlightthickness=0,
+                                xscrollincrement=20, yscrollincrement=20)
+        y_scroll = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        x_scroll = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.canvas.tag_bind("cell", "<Button-1>", self._clicked)
+        self.canvas.bind("<MouseWheel>", lambda e: self._wheel(e, self.canvas.yview_scroll))
+        self.canvas.bind("<Shift-MouseWheel>", lambda e: self._wheel(e, self.canvas.xview_scroll))
+
+    def __contains__(self, slot_name: object) -> bool:
+        return slot_name in self.cells
+
+    @property
+    def key(self) -> tuple | None:
+        return None if self.model is None else (*self.model.key, self.model.layout)
+
+    def show(self, grid: ShelfGrid, *, selected: str | None = None, staged: dict[str, int] | None = None,
+             keep_view: bool = True) -> None:
+        """Draw a shelf; the same shelf with the same layout only recolors its cells."""
+        counts = {cell.slot_name: cell.count for cell in grid.cells()}
+        if self.key == (*grid.key, grid.layout):
+            self.model, self.counts, self.staged = grid, counts, dict(staged or {})
+            self.selected = selected if selected in counts else None
+            for slot_name in self.cells:
+                self._paint(slot_name)
+            return
+        self.model, self.counts, self.staged = grid, counts, dict(staged or {})
+        self.selected = selected if selected in counts else None
+        self._draw(keep_view=keep_view)
+
+    def show_message(self, text: str) -> None:
+        self.model, self.selected = None, None
+        self.cells, self.counts, self.staged = {}, {}, {}
+        self._items, self._slot_by_item = {}, {}
+        self.canvas.delete("all")
+        self.canvas.create_text(24, 24, text=text, anchor="nw", width=360, font=self.font, fill="#555555")
+        self.canvas.configure(scrollregion=(0, 0, 400, 80))
+        self.canvas.xview_moveto(0)
+        self.canvas.yview_moveto(0)
+
+    def set_count(self, slot_name: str, count: int, staged: int = 0) -> None:
+        if slot_name in self.cells:
+            self.counts[slot_name] = count
+            self.staged[slot_name] = staged
+            self._paint(slot_name)
+
+    def select(self, slot_name: str | None, *, reveal: bool = True) -> None:
+        previous, self.selected = self.selected, slot_name if slot_name in self.cells else None
+        for name in {previous, self.selected} - {None}:
+            self._paint(name)
+        if reveal and self.selected is not None:
+            self.reveal(self.selected)
+
+    def select_coordinates(self, row: int, cell: int) -> str | None:
+        name = next((n for n, c in self.cells.items() if (c.row, c.cell) == (row, cell)), None)
+        self.select(name)
+        return name
+
+    def cell_text(self, slot_name: str) -> str:
+        return self.canvas.itemcget(self._items[slot_name][1], "text")
+
+    def cell_fill(self, slot_name: str) -> str:
+        return self.canvas.itemcget(self._items[slot_name][0], "fill")
+
+    def reveal(self, slot_name: str) -> None:
+        """Scroll so the cell sits near the middle of the view."""
+        self.canvas.update_idletasks()
+        x1, y1, x2, y2 = self.canvas.coords(self._items[slot_name][0])
+        region = self.canvas.bbox("all")
+        if region is None:
+            return
+        for start, end, viewport, center, move in (
+            (region[0], region[2], self.canvas.winfo_width(), (x1 + x2) / 2, self.canvas.xview_moveto),
+            (region[1], region[3], self.canvas.winfo_height(), (y1 + y2) / 2, self.canvas.yview_moveto),
+        ):
+            span = end - start
+            if viewport > 1 and span > viewport:
+                move(max(0.0, min(1.0, (center - viewport / 2 - start) / span)))
+
+    def _draw(self, *, keep_view: bool) -> None:
+        x_view, y_view = self.canvas.xview()[0], self.canvas.yview()[0]
+        self.canvas.delete("all")
+        self.cells, self._items, self._slot_by_item = {}, {}, {}
+        grid = self.model
+        widest = max((len(row) for row in grid.rows), default=1)
+        row_width = max(self.min_row_width, widest * self.cell_width)
+        top = 0
+        if self.show_title:
+            self.canvas.create_text(
+                self.ROW_LABEL_WIDTH + row_width / 2, 16, font=self.bold_font, fill="#24476b",
+                text=f"FLOOR {grid.floor.upper()} · SIDE {grid.side.upper()} · SHELF {grid.shelf_code.upper()}")
+            top = self.TITLE_HEIGHT
+        for index, row in enumerate(grid.rows):
+            y1 = top + index * (self.cell_height + 4)
+            y2 = y1 + self.cell_height
+            if row:
+                self.canvas.create_text(self.ROW_LABEL_WIDTH - 8, (y1 + y2) / 2, anchor="e",
+                                        text=self.row_label(row[0].row), font=self.font, fill="#333333")
+            width = row_width / max(len(row), 1)
+            for column, cell in enumerate(row):
+                x1 = self.ROW_LABEL_WIDTH + column * width
+                rect = self.canvas.create_rectangle(x1 + 1, y1, x1 + width - 1, y2, tags=("cell",))
+                text = self.canvas.create_text((x1 + x1 + width) / 2, (y1 + y2) / 2, tags=("cell",),
+                                               justify="center", width=max(width - 6, 10))
+                self.cells[cell.slot_name] = cell
+                self._items[cell.slot_name] = (rect, text)
+                self._slot_by_item[rect] = self._slot_by_item[text] = cell.slot_name
+                self._paint(cell.slot_name)
+        bottom = top + len(grid.rows) * (self.cell_height + 4)
+        self.canvas.create_line(0, bottom + 4, self.ROW_LABEL_WIDTH + row_width, bottom + 4, fill="#999999")
+        self.canvas.configure(scrollregion=(0, 0, self.ROW_LABEL_WIDTH + row_width + 8, bottom + 12))
+        self.canvas.xview_moveto(x_view if keep_view else 0)
+        self.canvas.yview_moveto(y_view if keep_view else 0)
+
+    def _paint(self, slot_name: str) -> None:
+        rect, text = self._items[slot_name]
+        count = self.counts.get(slot_name, 0)
+        staged = self.staged.get(slot_name, 0)
+        selected = slot_name == self.selected
+        self.canvas.itemconfigure(rect, fill=cell_color(count + staged, staged=bool(staged), selected=selected),
+                                  outline="#1f5f99" if selected else "#8a8a8a", width=3 if selected else 1)
+        self.canvas.itemconfigure(text, text=f"{self.label(self.cells[slot_name])}\n{self.count_text(count + staged)}",
+                                  font=self.bold_font if selected else self.font)
+
+    def _clicked(self, _event: tk.Event) -> None:
+        current = self.canvas.find_withtag("current")
+        slot_name = self._slot_by_item.get(current[0]) if current else None
+        if slot_name is not None and self.on_select is not None:
+            self.on_select(self.cells[slot_name])
+
+    @staticmethod
+    def _wheel(event: tk.Event, scroll) -> str:
+        scroll(-1 if event.delta > 0 else 1, "units")
+        return "break"
 
 
 def sync_tree_rows(tree: ttk.Treeview, rows: list[tuple[str, tuple, tuple]]) -> None:
-    """Reconcile a filtered Treeview while retaining unchanged row widgets."""
-    wanted = {item_id for item_id, _values, _tags in rows}
-    for item_id in tree.get_children():
-        if item_id not in wanted:
-            tree.delete(item_id)
-    for index, (item_id, values, tags) in enumerate(rows):
-        if tree.exists(item_id):
-            if tuple(tree.item(item_id, "values")) != tuple(str(value) for value in values):
-                tree.item(item_id, values=values)
-            if tuple(tree.item(item_id, "tags")) != tags:
-                tree.item(item_id, tags=tags)
-            if tree.index(item_id) != index:
-                tree.move(item_id, "", index)
-        else:
-            tree.insert("", index, iid=item_id, values=values, tags=tags)
+    """Reconcile a filtered Treeview with (id, values, tags) rows, keeping unchanged items."""
+    order = tuple(item_id for item_id, _values, _tags in rows)
+    existing = tree.get_children()
+    stale = set(existing).difference(order)
+    if stale:
+        tree.delete(*stale)
+    present = set(existing) - stale
+    for item_id, values, tags in rows:
+        if item_id not in present:
+            tree.insert("", "end", iid=item_id, values=values, tags=tags)
+            continue
+        if tuple(tree.item(item_id, "values")) != tuple(str(value) for value in values):
+            tree.item(item_id, values=values)
+        if tuple(tree.item(item_id, "tags") or ()) != tuple(tags):
+            tree.item(item_id, tags=tags)
+    if tree.get_children() != order:
+        tree.set_children("", *order)
 
 
 class ScrollableFrame(ttk.Frame):

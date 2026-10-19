@@ -23,7 +23,22 @@ class StateActions:
             self.assignments.refresh_shelf_preview()
         self.refresh_change_summary()
         if hasattr(self, "exceptions_view"):
-            self.exceptions_view.refresh()
+            self.refresh_visible_or_mark_stale(self.exceptions_view)
+
+    def refresh_if_stale(self, view, *, force: bool = False) -> None:
+        """Reload a tab only when SQLite changed since that tab last read it."""
+        versions = self.__dict__.setdefault("_view_versions", {})
+        version = self.database.data_version()
+        if force or versions.get(str(view)) != version:
+            view.refresh()
+            versions[str(view)] = version
+
+    def refresh_visible_or_mark_stale(self, view) -> None:
+        """Refresh a tab now if it is on screen; otherwise its next visit reloads it."""
+        if self.notebook.select() == str(view):
+            self.refresh_if_stale(view, force=True)
+        else:
+            self.__dict__.setdefault("_view_versions", {}).pop(str(view), None)
 
     def refresh_visible_cells(self, slot_names) -> None:
         """Read only changed cells, and touch only the shelf currently on screen."""
@@ -35,7 +50,7 @@ class StateActions:
                 and (
                     (
                         self.assignments.hand_view.get() == "shelf"
-                        and slot_name in self.assignments.shelf_slot_names
+                        and slot_name in self.assignments.shelf_grid
                     )
                     or (
                         self.selected_address is not None
@@ -45,18 +60,18 @@ class StateActions:
             )
             show_primal = (
                 active == str(self.primal_view)
-                and slot_name in self.primal_view.slot_buttons
+                and slot_name in self.primal_view.shelf_grid
             )
             show_browser = (
                 active == str(self.shelf_browser)
                 and self.shelf_browser.current_shelf_id is not None
-                and slot_name in self.shelf_browser.view.slot_buttons
+                and slot_name in self.shelf_browser.shelf_grid
             )
             panes = (
                 (self.cell_transfer.left, self.cell_transfer.right)
                 if active == str(self.cell_transfer) else ()
             )
-            visible_panes = [pane for pane in panes if slot_name in pane.slot_buttons]
+            visible_panes = [pane for pane in panes if slot_name in pane.shelf_grid]
             if not (show_assignment or show_primal or show_browser or visible_panes):
                 continue
             address = self.database.get_slot_by_name(slot_name)
@@ -64,7 +79,7 @@ class StateActions:
                 continue  # A structural reload handles removed cells.
             contents = self.database.get_slot_contents(address.slot_id)
             if show_assignment:
-                if self.assignments.hand_view.get() == "shelf" and slot_name in self.assignments.shelf_slot_names:
+                if self.assignments.hand_view.get() == "shelf" and slot_name in self.assignments.shelf_grid:
                     self.assignments.refresh_shelf_cell(slot_name, len(contents))
                 if self.selected_address is not None and self.selected_address.slot_name == slot_name:
                     self.refresh_address_contents(contents)
@@ -118,16 +133,6 @@ class StateActions:
         self.refresh_change_summary()
         self._preview_dirty = True
         self.refresh_visible_cells(slots)
-
-    def refresh_working_changes(self) -> None:
-        """Refresh staged queue state without touching committed shelf views."""
-        self.refresh_product_queue()
-        self.refresh_catalog()
-        self.refresh_change_summary()
-        self._preview_dirty = True
-        if self.notebook.select() == str(self.shelf_browser) and self.shelf_browser.current_shelf_id is None:
-            self.render_shelf()
-            self._preview_dirty = False
 
     def remember_imported_products(self, records: dict[str, tuple[str, str]]) -> None:
         """Mirror a successful product upsert in the search caches."""
@@ -243,4 +248,4 @@ class StateActions:
         if reload_shelves:
             self.refresh_shelf_selector()
             if hasattr(self, "primal_view"):
-                self.primal_view.refresh()
+                self.refresh_visible_or_mark_stale(self.primal_view)

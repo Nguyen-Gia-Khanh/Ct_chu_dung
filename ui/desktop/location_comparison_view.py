@@ -433,12 +433,11 @@ class LocationComparisonView(ttk.Frame):
 
     def _update_summary(self) -> None:
         unsynced = self.exportable_differences()
-        ready = len(unsynced)
         self.summary.set(
-            f"{len(unsynced):,} unsynced · {ready:,} ready for web resync · "
+            f"{len(unsynced):,} unsynced and ready for web resync · "
             f"{len(self.missing_ids):,} local IDs absent from export"
         )
-        self.resync_button.configure(state="normal" if ready and not self.busy else "disabled")
+        self.resync_button.configure(state="normal" if unsynced and not self.busy else "disabled")
         self.export_button.configure(state="normal" if unsynced and not self.busy else "disabled")
 
     def exportable_differences(self) -> list[LocationDifference]:
@@ -446,10 +445,8 @@ class LocationComparisonView(ttk.Frame):
                 if self.resynced.get(row.product_id) != row.true_location]
 
     def pending_updates(self) -> list[LocationUpdate]:
-        return [
-            LocationUpdate(row.product_id, split_locations(row.true_location))
-            for row in self.differences if self.resynced.get(row.product_id) != row.true_location
-        ]
+        return [LocationUpdate(row.product_id, split_locations(row.true_location))
+                for row in LocationComparisonView.exportable_differences(self)]
 
     def resync(self) -> None:
         if self.busy or self.web_locations is None:

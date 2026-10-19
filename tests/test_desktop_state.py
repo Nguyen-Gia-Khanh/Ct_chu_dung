@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest import TestCase
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 from ui.desktop.state_actions import StateActions
 
@@ -28,7 +28,10 @@ class DesktopStateTests(TestCase):
         app.refresh_on_hand_queue = Mock()
         app.refresh_address_contents = Mock()
         app.refresh_change_summary = Mock()
-        app.exceptions_view = SimpleNamespace(refresh=Mock())
+        app.exceptions_view = MagicMock()
+        app.exceptions_view.__str__.return_value = ".exceptions"
+        app.notebook = SimpleNamespace(select=lambda: ".exceptions")
+        app.database.data_version.return_value = (1, 1)
 
         app.reload_database_state(reload_catalog=True)
         self.assertEqual(app.product_id_lookup["p2"], "P2")
@@ -40,3 +43,12 @@ class DesktopStateTests(TestCase):
         app.refresh_on_hand_queue.assert_called_once()
         app.refresh_address_contents.assert_called_once()
         app.exceptions_view.refresh.assert_called_once()
+
+        # A hidden tab is not redrawn now; its next visit reloads it.
+        app.notebook = SimpleNamespace(select=lambda: ".assign")
+        app.refresh_all_views()
+        app.exceptions_view.refresh.assert_called_once()
+        app.refresh_if_stale(app.exceptions_view)
+        self.assertEqual(app.exceptions_view.refresh.call_count, 2)
+        app.refresh_if_stale(app.exceptions_view)
+        self.assertEqual(app.exceptions_view.refresh.call_count, 2)

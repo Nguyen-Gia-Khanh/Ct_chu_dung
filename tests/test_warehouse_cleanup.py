@@ -326,6 +326,9 @@ class WarehouseCleanupTests(WorkspaceTestCase):
         root.withdraw()
         self.addCleanup(root.destroy)
         app=WarehouseMapperApp(root,db.path)
+        # Hidden tabs load on their first visit.
+        app.refresh_if_stale(app.primal_view)
+        app.refresh_if_stale(app.exceptions_view)
         for query in ('06410-kfl-850','06410KFL850','tên việt','Honda name'):
             app.assignments.search_var.set(query)
             app.refresh_product_lists()

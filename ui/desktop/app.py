@@ -7,7 +7,6 @@ shelf-structure edits still use the explicit Commit action on tab 1.
 
 from __future__ import annotations
 
-from collections import Counter
 import tkinter as tk
 from pathlib import Path
 from queue import Queue
@@ -81,7 +80,8 @@ class WarehouseMapperApp(
         self._configure_window()
         self._build_ui()
         self.reload_database_state(reload_catalog=True, reload_shelves=True)
-        self.refresh_all_views()
+        self.refresh_product_lists()
+        self.refresh_on_hand_queue()
         self.saved_editor_state = self._editor_state()
 
     def _configure_window(self) -> None:
@@ -304,7 +304,7 @@ class WarehouseMapperApp(
             self.refresh_assignment_shelf_preview()
             self.assignments.focus_search()
         elif hasattr(self, "primal_view") and current_tab == str(self.primal_view):
-            self.primal_view.refresh()
+            self.refresh_if_stale(self.primal_view)
             self.primal_view.focus_search()
         elif current_tab == str(self.shelf_browser):
             if self.shelf_browser.current_shelf_id is not None:
@@ -313,33 +313,17 @@ class WarehouseMapperApp(
                 self.render_shelf()
                 self._preview_dirty = False
         elif current_tab == str(self.cell_transfer):
-            self.cell_transfer.refresh()
+            self.refresh_if_stale(self.cell_transfer)
             self.cell_transfer.focus_search()
-        elif hasattr(self, "exceptions_view") and current_tab == str(
-            self.exceptions_view
-        ):
-            self.exceptions_view.refresh()
+        elif hasattr(self, "exceptions_view") and current_tab == str(self.exceptions_view):
+            self.refresh_if_stale(self.exceptions_view)
             self.exceptions_view.focus_search()
-        elif hasattr(self, "location_comparison") and current_tab == str(
-            self.location_comparison
-        ):
-            self.location_comparison.refresh()
+        elif hasattr(self, "location_comparison") and current_tab == str(self.location_comparison):
+            self.refresh_if_stale(self.location_comparison)
 
     def refresh_assignment_shelf_preview(self) -> None:
-        if self.assignments.hand_view.get() != "shelf":
-            return
-        key = getattr(self.assignments, "_shelf_preview_key", None)
-        if key is None:
-            return
-        floor, side, shelf_code = key
-        shelf_id = self.database.get_shelf_id(floor, shelf_code, side=side)
-        if shelf_id is None:
-            self.assignments.clear_shelf_preview("That shelf changed. Select it again.")
-            return
-        contents = self.database.get_shelf_contents(shelf_id)
-        counts = Counter(item[2].slot_name for item in contents)
-        for slot_name in self.assignments.shelf_slot_names:
-            self.assignments.refresh_shelf_cell(slot_name, counts.get(slot_name, 0))
+        if self.assignments.hand_view.get() == "shelf" and self.assignments.shelf_preview_key is not None:
+            self.preview_assignment_shelf()
 
     def on_cell_transfer_changed(self, message: str, updates, slot_names) -> None:
         """Apply known location changes and refresh the two visible cells."""

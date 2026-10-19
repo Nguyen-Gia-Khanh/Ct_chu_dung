@@ -6,9 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
-from .assignment_view import StockQuantityDialog
-from mapper.core.common import MAX_VISIBLE_PRODUCTS, exact_product_search_id, normalize_search, normalize_sku, clean_product_name
-from mapper.features.csv_import import read_csv
+from mapper.core.common import MAX_VISIBLE_PRODUCTS, exact_product_search_id, normalize_search, normalize_sku
+from mapper.features.csv_import import prepare_import, read_csv
+from mapper.services.assignment import catalog_shift_error, shift_transfer
 from .csv_dialog import ColumnMappingDialog
 from .widgets import sync_tree_rows
 
@@ -84,27 +84,16 @@ class CatalogActions:
                 )
                 return
 
-            if len(product_ids) > 1:
-                if hasattr(self.assignments, "search_location_text"):
-                    self.assignments.search_location_text.set(
-                        f"Cannot transfer: Catalog shift transfer only affects 1 product ID (selected {len(product_ids)})."
-                    )
-                if hasattr(self.assignments, "search_location_label"):
-                    self.assignments.search_location_label.configure(foreground="#c62828")
+            refusal = catalog_shift_error(product_ids)
+            if refusal:
+                self._show_search_refusal(refusal)
                 return
 
             records = {
                 product_id: self.catalog_products[product_id] for product_id in product_ids
             }
-            transfer_data = self.database.capture_shift_transfer(product_ids,self.selected_address.slot_id)
-            assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
             try:
-                moved = self.database.assign_catalog_direct_to_slot(
-                    self.selected_address.slot_id,
-                    assigned_at,
-                    records,
-                    default_stock=999,
-                )
+                moved, transfer_data = shift_transfer(self.database, self.selected_address.slot_id, records)
             except Exception as error:
                 messagebox.showerror("Transfer failed", str(error), parent=self.root)
                 return
@@ -126,46 +115,6 @@ class CatalogActions:
         self.assign_product_records_to_address({
             pid: self.catalog_products[pid] for pid in product_ids
         })
-
-    def preassign_queue_stock(self) -> None:
-        selected_items = self.assignments.queue_tree.selection()
-        if not selected_items:
-            messagebox.showinfo(
-                "Choose products",
-                "Select one or more products from the queue to pre-assign their stock.",
-                parent=self.root,
-            )
-            return
-
-        product_ids = [item_id.removeprefix("product::") for item_id in selected_items]
-        initial_quantities = {
-            product_id: self.transferred_stock.get(product_id)
-            for product_id in product_ids
-        }
-        dialog = StockQuantityDialog(
-            self.root,
-            "Queue",
-            [
-                (product_id, self.products.get(product_id, ""))
-                for product_id in product_ids
-            ],
-            initial_quantities=initial_quantities,
-            title_text="Pre-assign stock quantity",
-            destination_label="Pre-assign stock for products before choosing location",
-            button_text="Save quantities",
-        )
-        self.root.wait_window(dialog)
-        if dialog.result is None:
-            return
-
-        for product_id, quantity in dialog.result.items():
-            self.transferred_stock[product_id] = quantity
-
-        self.refresh_product_queue()
-        self.status_text.set(
-            f"Pre-assigned stock for {len(dialog.result)} product(s) in queue."
-        )
-
 
     def schedule_queue_refresh(self, *_args: object) -> None:
         self._quick_move_cycle = None
@@ -439,36 +388,12 @@ class CatalogActions:
         self.root.wait_window(mapping_dialog)
         if mapping_dialog.result is None:
             return
-        id_index, name_index, brand_name_index = mapping_dialog.result
-
-        records: dict[str, tuple[str, str]] = {}
-        skipped = 0
-        duplicates = 0
-        source_codes = {}
-        required_index = max(id_index, name_index, brand_name_index)
-        for row in csv_data.rows:
-            if len(row) <= required_index:
-                skipped += 1
-                continue
-            product_id = normalize_sku(row[id_index])
-            product_name = clean_product_name(row[name_index])
-            brand_name = clean_product_name(row[brand_name_index]) if brand_name_index >= 0 else None
-            if not product_id or not row[name_index].strip():
-                skipped += 1
-                continue
-            if product_id in records:
-                duplicates += 1
-                if source_codes[product_id] != row[id_index].strip() and records[product_id] != (product_name, brand_name):
-                    messagebox.showerror('Conflicting SKUs',f'CSV rows normalize to {product_id} with different names.')
-                    return
-            records[product_id] = (product_name, brand_name)
-            source_codes[product_id] = row[id_index].strip()
-
-        if not records:
-            messagebox.showerror(
-                "No products", "No valid product ID/name rows were found."
-            )
+        try:
+            prepared = prepare_import(csv_data, *mapping_dialog.result)
+        except ValueError as error:
+            messagebox.showerror("CSV rows cannot be imported", str(error))
             return
+        records, skipped, duplicates = prepared.records, prepared.skipped, prepared.duplicates
         try:
             import_records = (
                 self.database.import_catalog_products

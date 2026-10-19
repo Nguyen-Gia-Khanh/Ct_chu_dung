@@ -7,6 +7,7 @@ import sys
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from collections.abc import Iterable
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -107,10 +108,12 @@ def split_locations(value: object) -> tuple[str, ...]:
     return tuple(dict.fromkeys(part.strip() for part in parts if part and part.strip()))
 
 
+@lru_cache(maxsize=None)
 def product_search_text(
     product_id: str, name: str | None, brand_name: str | None = "",
 ) -> str:
-    """Cache SKU and both catalog names with the same search normalization."""
+    """SKU and both catalog names in search spelling; memoized because every product
+    list rebuilds its index from the same rows."""
     return normalize_search(normalize_sku(f'{product_id} {name or ""} {brand_name or ""}'))
 
 

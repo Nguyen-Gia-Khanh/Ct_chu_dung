@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Callable
 import tkinter as tk
 from tkinter import font as tkfont, ttk
 
-from mapper.core.common import make_slot_name, normalize_sku
-from mapper.persistence.database import Placement
-from utils.barcode_scanner import (
-    BarcodeScanner,
-    bind_auto_highlight,
-    select_all_entry_text,
-)
-from .widgets import ScrollableFrame
+from mapper.core.common import normalize_sku
+from utils.barcode_scanner import BarcodeScanner, bind_auto_highlight
+from mapper.services.shelf_grid import GridCell, ShelfGrid
+from .widgets import ShelfGridCanvas
 
 
 class LocationAssignmentView(ttk.Frame):
@@ -438,13 +433,12 @@ class LocationAssignmentView(ttk.Frame):
             textvariable=self.shelf_preview_text,
             width=1,
         ).grid(row=0, column=0, sticky="ew", pady=(0, 5))
-        self.shelf_scroll = ScrollableFrame(
-            self.hand_shelf_page, horizontal=True, vertical=True
-        )
-        self.shelf_scroll.grid(row=1, column=0, sticky="nsew")
-        self.shelf_slot_buttons: dict[tuple[int, int], tk.Button] = {}
-        self.shelf_slot_names: dict[str, tuple[int, int]] = {}
-        self._selected_shelf_cell: tuple[int, int] | None = None
+        self.shelf_grid = ShelfGridCanvas(
+            self.hand_shelf_page, on_select=self._select_shelf_cell, show_title=False,
+            label=lambda cell: f"{cell.row}-{cell.cell:02d}", count_text=str, row_label=lambda row: f"R{row}",
+            cell_width=70, cell_height=44, min_row_width=240, font_size=8, )
+        self.shelf_grid.grid(row=1, column=0, sticky="nsew")
+        self._preview_after_id: str | None = None
         body = ttk.Frame(queue_page)
         body.grid(row=0, column=0, sticky="nsew")
         body.rowconfigure(0, weight=1)
@@ -556,131 +550,43 @@ class LocationAssignmentView(ttk.Frame):
     def _on_shelf_address_changed(self, *_args: object) -> None:
         self.row_var.set("")
         self.cell_var.set("")
-        self.refresh_shelf_preview()
+        # Typing a shelf code fires one trace per keystroke; draw once typing pauses.
+        if self._preview_after_id is not None:
+            self.after_cancel(self._preview_after_id)
+        self._preview_after_id = self.after(250, self.refresh_shelf_preview)
 
     def refresh_shelf_preview(self) -> None:
+        self._preview_after_id = None
         if self.hand_view.get() == "shelf":
             self.on_preview_shelf()
 
-    def clear_shelf_preview(self, message: str) -> None:
-        for child in self.shelf_scroll.inner.winfo_children():
-            child.destroy()
-        self.shelf_slot_buttons.clear()
-        self.shelf_slot_names.clear()
-        self.shelf_cell_colors = {}
-        self._selected_shelf_cell = None
-        self._shelf_preview_key = None
-        self.shelf_preview_text.set(message)
-        self.shelf_scroll.canvas.xview_moveto(0)
-        self.shelf_scroll.canvas.yview_moveto(0)
+    @property
+    def shelf_preview_key(self) -> tuple[str, str, str] | None:
+        model = self.shelf_grid.model
+        return model.key if model is not None else None
 
-    def render_shelf_preview(
-        self,
-        floor: str,
-        side: str,
-        shelf_code: str,
-        layout: list[int],
-        contents: list[tuple[str, str, Placement]],
-    ) -> None:
-        key = (floor, side, shelf_code)
-        same_shelf = getattr(self, "_shelf_preview_key", None) == key
-        x_position = self.shelf_scroll.canvas.xview()[0] if same_shelf else 0.0
-        y_position = self.shelf_scroll.canvas.yview()[0] if same_shelf else 0.0
-        self.clear_shelf_preview(
-            f"Floor {floor} · Side {side} · Shelf {shelf_code}"
-        )
-        self._shelf_preview_key = key
-        counts = Counter(placement.slot_name for _, _, placement in contents)
-        row_width = max(240, max(layout, default=1) * 70)
-        even_side = side.isdigit() and int(side) % 2 == 0
-        for row_number, count in enumerate(layout, start=1):
-            screen_row = len(layout) - row_number + 1
-            row_frame = tk.Frame(
-                self.shelf_scroll.inner,
-                width=row_width,
-                height=44,
-                background="#d0d0d0",
-                borderwidth=1,
-                relief="solid",
-            )
-            row_frame.grid(row=screen_row, column=0, sticky="nsew", pady=1)
-            row_frame.grid_propagate(False)
-            row_frame.rowconfigure(0, weight=1)
-            cells = range(count, 0, -1) if even_side else range(1, count + 1)
-            for display_column, cell in enumerate(cells):
-                row_frame.columnconfigure(
-                    display_column, weight=1, uniform=f"assign-r{row_number}"
-                )
-                slot_name = make_slot_name(
-                    floor, shelf_code, row_number, cell, side=side
-                )
-                product_count = counts.get(slot_name, 0)
-                color = "#d9ead3" if product_count else "#f7f7f7"
-                button = tk.Button(
-                    row_frame,
-                    text=f"{row_number}-{cell:02d}\n{product_count}",
-                    command=lambda row=row_number, col=cell: self._select_shelf_cell(
-                        row, col
-                    ),
-                    background=color,
-                    activebackground="#cfe8ff",
-                    relief="solid",
-                    borderwidth=1,
-                    highlightthickness=0,
-                    font=("Segoe UI", 8, "bold"),
-                    padx=0,
-                    pady=0,
-                )
-                button.grid(row=0, column=display_column, sticky="nsew", padx=1, pady=1)
-                self.shelf_slot_buttons[(row_number, cell)] = button
-                self.shelf_slot_names[slot_name] = (row_number, cell)
-                self.shelf_cell_colors[(row_number, cell)] = color
-        self.shelf_scroll.inner.update_idletasks()
-        self.shelf_scroll.canvas.configure(
-            scrollregion=self.shelf_scroll.canvas.bbox("all")
-        )
-        self.shelf_scroll.canvas.xview_moveto(x_position)
-        self.shelf_scroll.canvas.yview_moveto(y_position)
-        self.shelf_scroll.bind_wheel_events()
+    def clear_shelf_preview(self, message: str) -> None:
+        self.shelf_grid.show_message(message)
+        self.shelf_preview_text.set(message)
+
+    def render_shelf_preview(self, grid: ShelfGrid) -> None:
+        self.shelf_preview_text.set(f"Floor {grid.floor} · Side {grid.side} · Shelf {grid.shelf_code}")
+        self.shelf_grid.show(grid, selected=self.shelf_grid.selected, keep_view=grid.key == self.shelf_preview_key)
         try:
             self.highlight_shelf_cell(int(self.row_var.get()), int(self.cell_var.get()))
         except ValueError:
             pass
 
     def refresh_shelf_cell(self, slot_name: str, count: int) -> None:
-        cell = self.shelf_slot_names.get(slot_name)
-        if cell is None:
-            return
-        color = "#d9ead3" if count else "#f7f7f7"
-        self.shelf_cell_colors[cell] = color
-        selected = cell == self._selected_shelf_cell
-        button = self.shelf_slot_buttons[cell]
-        count_label = str(count)
-        if "product" in button.cget("text").split("\n", 1)[-1]:
-            count_label += f" product{'s' if count != 1 else ''}"
-        button.configure(
-            text=f"{cell[0]}-{cell[1]:02d}\n{count_label}",
-            background="#cfe8ff" if selected else color,
-            borderwidth=2 if selected else 1,
-        )
+        self.shelf_grid.set_count(slot_name, count)
 
     def highlight_shelf_cell(self, row: int, col: int) -> None:
-        previous = self._selected_shelf_cell
-        if previous is not None and previous in self.shelf_slot_buttons:
-            self.shelf_slot_buttons[previous].configure(
-                background=self.shelf_cell_colors[previous], borderwidth=1
-            )
-        cell = (row, col)
-        self._selected_shelf_cell = cell if cell in self.shelf_slot_buttons else None
-        if self._selected_shelf_cell is not None:
-            self.shelf_slot_buttons[cell].configure(
-                background="#cfe8ff", borderwidth=2
-            )
+        self.shelf_grid.select_coordinates(row, col)
 
-    def _select_shelf_cell(self, row: int, col: int) -> None:
-        self.row_var.set(str(row))
-        self.cell_var.set(str(col))
-        self.highlight_shelf_cell(row, col)
+    def _select_shelf_cell(self, cell: GridCell) -> None:
+        self.row_var.set(str(cell.row))
+        self.cell_var.set(str(cell.cell))
+        self.highlight_shelf_cell(cell.row, cell.cell)
         self.on_load_address()
 
     def _build_contents_panel(

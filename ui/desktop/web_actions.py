@@ -8,6 +8,7 @@ from tkinter import messagebox
 
 from mapper.persistence.database import Placement
 from mapper.features.web_upload import LocationUpdate, UploadProduct
+from mapper.services.uploads import location_updates, upload_products
 
 
 class WebActions:
@@ -93,53 +94,13 @@ class WebActions:
 
     def _selected_web_placement(self, action_name: str) -> tuple[str, Placement]:
         selected = self.assignments.contents_tree.selection()
-        if len(selected) != 1:
-            raise ValueError(
-                f"Select exactly one product in Selected slot contents, then press {action_name}."
-            )
-        if getattr(self, "selected_address", None) is not None and hasattr(
-            self.assignments, "on_hand_tree"
-        ):
-            item_id = selected[0]
-            if not item_id.startswith("saved::"):
-                raise ValueError(
-                    "Select a current product from the loaded address contents."
-                )
-            product_id = item_id.removeprefix("saved::")
-            address = self.selected_address
-            for saved_id, _name, placement in self.database.get_slot_contents(
-                address.slot_id
-            ):
-                if saved_id == product_id:
-                    return product_id, placement
-            raise ValueError(
-                "That selection changed. Reload the address and select it again."
-            )
-        state, separator, product_id = selected[0].partition("::")
-        if (
-            not separator
-            or state not in {"staged", "saved"}
-            or product_id not in self.products
-        ):
-            raise ValueError("Select a current product from the slot contents list.")
-        placements = (
-            self.staged_assignments if state == "staged" else self.committed_placements
-        )
-        placement = placements.get(product_id)
-        if (
-            placement is None
-            or placement.slot_name != self.selected_slot
-            or (
-                state == "saved"
-                and (
-                    product_id in self.pending_unassignments
-                    or product_id in self.staged_assignments
-                )
-            )
-        ):
-            raise ValueError(
-                "That selection changed. Select the product in its current slot again."
-            )
+        if len(selected) != 1 or not selected[0].startswith("saved::") or self.selected_address is None:
+            raise ValueError(f"Select exactly one product in the loaded address contents, then press {action_name}.")
+        product_id = selected[0].removeprefix("saved::")
+        placement = next((placement for saved_id, _name, placement
+                          in self.database.get_slot_contents(self.selected_address.slot_id) if saved_id == product_id), None)
+        if placement is None:
+            raise ValueError("That selection changed. Reload the address and select it again.")
         return product_id, placement
 
     def _web_batch_mode_enabled(self) -> bool:
@@ -162,44 +123,11 @@ class WebActions:
             raise ValueError(f"{address.slot_name} does not contain any products.")
         return [(product_id, placement) for product_id, _name, placement in contents]
 
-    def _saved_location_sets(self, product_ids: set[str]) -> dict[str, tuple[str, ...]]:
-        locations: dict[str, list[str]] = {product_id: [] for product_id in product_ids}
-        for product_id, slot_name, _qty, _assigned_at in self.database.get_all_placement_items():
-            if product_id in locations and slot_name not in locations[product_id]:
-                locations[product_id].append(slot_name)
-        return {product_id: tuple(names) for product_id, names in locations.items()}
-
     def _upload_products(self) -> list[UploadProduct]:
-        placements = self._web_placements("Upload to web")
-        locations = self._saved_location_sets({product_id for product_id, _ in placements})
-        missing_quantities = [
-            product_id
-            for product_id, placement in placements
-            if placement.stock_qty is None
-        ]
-        if missing_quantities:
-            preview = ", ".join(missing_quantities[:3])
-            more = (
-                f" and {len(missing_quantities) - 3} more"
-                if len(missing_quantities) > 3
-                else ""
-            )
-            raise ValueError(
-                f"Cannot upload because {preview}{more} has no recorded quantity. "
-                "Return the product to on-hand and assign it again with a quantity."
-            )
-        return [
-            UploadProduct(product_id, placement.stock_qty, locations[product_id])
-            for product_id, placement in placements
-        ]
+        return upload_products(self.database, self._web_placements("Upload to web"))
 
     def _location_updates(self) -> list[LocationUpdate]:
-        placements = self._web_placements("Modify location")
-        locations = self._saved_location_sets({product_id for product_id, _ in placements})
-        return [
-            LocationUpdate(product_id, locations[product_id])
-            for product_id, _placement in placements
-        ]
+        return location_updates(self.database, (pid for pid, _placement in self._web_placements("Modify location")))
 
     def _can_start_web_update(self) -> bool:
         if self.web_upload_busy or self.chrome_connect_busy:
@@ -247,11 +175,8 @@ class WebActions:
                 parent=self.root,
             )
             return
-        locations = self._saved_location_sets({item.product_id for item in updates})
-        self._start_web_update(
-            [LocationUpdate(item.product_id, locations[item.product_id]) for item in updates],
-            location_only=True,
-        )
+        self._start_web_update(location_updates(self.database, (item.product_id for item in updates)),
+                               location_only=True)
 
     def resync_web_locations(self, updates: list[LocationUpdate]) -> None:
         """Upload only mismatches from the imported KiotViet snapshot."""
@@ -347,7 +272,8 @@ class WebActions:
                 tab_count=tab_count,
             )
         except Exception as error:
-            events.put(("error", str(error)))
+            # The third field says whether Chrome is still reachable for the next task.
+            events.put(("error", str(error), "Cannot attach to Chrome" not in str(error)))
         else:
             events.put(("done", result))
 

@@ -236,7 +236,7 @@ Barcode and typed input use the same canonical SKU spelling.
 View: [location_assignment_view.py](ui/desktop/location_assignment_view.py).
 Moves and stock/address actions: [assignment_actions.py](ui/desktop/assignment_actions.py).
 Search and catalog transfers: [catalog_actions.py](ui/desktop/catalog_actions.py).
-Quantity entry uses `StockQuantityDialog` in the shared `assignment_view.py`;
+Quantity entry uses `StockQuantityDialog` in `dialogs.py`;
 [source sections and callbacks](instruction.md#tab-2-assign-locations) are listed
 in the source guide.
 
@@ -254,9 +254,8 @@ lookup to browse a shelf, then click a cell to inspect its products. These
 search and selection actions do not move inventory.
 
 View and handlers: [primal_queue_view.py](ui/desktop/primal_queue_view.py).
-Shelf lookup uses `ShelfAddressLookup`; cell styling and row refresh use
-`shelf_cell_visual` / `sync_tree_rows` in `widgets.py`. The older `lookup_view.py`
-is not the active numbered tab. See [Tab 3 source sections](instruction.md#tab-3-primal-queue--shelves).
+Shelf lookup uses `ShelfAddressLookup`; the shelf drawing and row refresh use
+`ShelfGridCanvas` / `sync_tree_rows` in `widgets.py`. See [Tab 3 source sections](instruction.md#tab-3-primal-queue--shelves).
 
 ## Tab 4: Browse Shelves
 
@@ -268,11 +267,9 @@ Tab 1 also sends its unsaved layout preview here. Check the summary:
 **Committed SQLite data** describes a saved shelf; **Uncommitted shelf preview**
 describes pending designer changes. Return to Tab 1 and commit to save a preview.
 
-View: [shelf_browser.py](ui/desktop/shelf_browser.py). The common shelf renderer
-is `AssignmentView.render_shelf` / `refresh_cell` in
-[assignment_view.py](ui/desktop/assignment_view.py), while the preview producer
-is `ShelfActions.render_shelf`. This renderer is separate from the stock dialog
-used by Tab 2. See [Tab 4 source sections](instruction.md#tab-4-browse-shelves).
+View: [shelf_browser.py](ui/desktop/shelf_browser.py). Every shelf drawing is a
+`ShelfGridCanvas` (`widgets.py`) fed by the `ShelfGrid` model in
+`mapper/services/shelf_grid.py`; the preview producer is `ShelfActions.render_shelf`. See [Tab 4 source sections](instruction.md#tab-4-browse-shelves).
 
 ## Tab 5: Switch / Combine Cells
 
@@ -374,10 +371,10 @@ includes persistence and retained handlers.
 | --- | --- |
 | `app.py`: `_build_ui`, `on_tab_changed`, `on_global_barcode_scan` | All tabs: wiring, activation, scans. |
 | `catalog_actions.py`: import methods vs. search/transfer methods | Imports on 1; search/transfers on 2. Imported data is also read by 3 and 6. |
-| `assignment_view.py`: `StockQuantityDialog` vs. `AssignmentView.render_shelf` / `refresh_cell` | Quantity dialog on 2; shelf rendering on 4, including previews from 1. |
+| `dialogs.py`: `StockQuantityDialog` | Quantity dialog on 2. |
 | `shelf_actions.py`: preview/commit vs. `can_change_cells` | Editor/preview on 1 and 4; pending-change guard on 5. |
 | `state_actions.py`: `reconcile_inventory_products`, `refresh_visible_cells`, `on_exception_data_changed` | Writes from 2/5; visible cells on 2/3/4/5; exception callback from 6. |
-| `widgets.py`: `ScrollableFrame`, `sync_tree_rows`, `shelf_cell_visual` | Scrolling on 1-5; row updates on 2-5; common cell styling on 3-5. Tab 2 has its own compact styling. |
+| `widgets.py`: `ShelfGridCanvas`, `sync_tree_rows`, `ScrollableFrame` | Canvas shelf drawing on 2-5 (Tab 2 uses a compact style); row updates on 2-6; scrolling in the row editor and quantity dialog. |
 | `shelf_address_lookup.py`: `ShelfAddressLookup` | 3, 4, 5. Tabs 2/6 use their own address fields. |
 | `mapper/core/common.py`: `clean_location_segment`, `make_slot_name`, `normalize_search` | Address/search consumers in 1-6; 7 reads saved location names and has separate comparison rules. |
 | `utils/barcode_scanner.py`: scan detection and ID/entry helpers | Main scan/search flows on 2, 3, 5, 6. |

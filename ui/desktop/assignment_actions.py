@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-from mapper.core.common import vietnam_time
-
 from datetime import datetime
 from tkinter import messagebox, simpledialog
 
-from .assignment_view import StockQuantityDialog
-from mapper.core.common import clean_location_segment
-from mapper.persistence.database import (
-    OnHandProduct,
-    Placement,
-    validate_stock_quantity,
+from mapper.core.common import clean_location_segment, vietnam_time
+from mapper.persistence.database import OnHandProduct
+from mapper.services.assignment import (
+    SHIFT_CONFIRM_CLICKS, SHIFT_CONFIRM_SECONDS, needs_shift_confirmation, shift_prefix_error, shift_transfer,
 )
+from mapper.services.shelf_grid import load_grid
+from .dialogs import StockQuantityDialog
 from .widgets import sync_tree_rows
 
 
@@ -65,7 +63,13 @@ class AssignmentActions:
                 self.root.after_cancel(self.queue_shift_timer)
             except Exception:  # noqa: BLE001, S110
                 pass
-        self.queue_shift_timer = self.root.after(3000, self._reset_queue_shift_clicks)
+        self.queue_shift_timer = self.root.after(SHIFT_CONFIRM_SECONDS * 1000, self._reset_queue_shift_clicks)
+
+    def _show_search_refusal(self, message: str) -> None:
+        if hasattr(self.assignments, "search_location_text"):
+            self.assignments.search_location_text.set(message)
+        if hasattr(self.assignments, "search_location_label"):
+            self.assignments.search_location_label.configure(foreground="#c62828")
 
     def _reset_queue_shift_clicks(self) -> None:
         if self.queue_shift_timer is not None:
@@ -135,31 +139,16 @@ class AssignmentActions:
             self._reset_queue_shift_clicks()
             return
 
-        # Constraint: All products in queue must share the same first 5 characters
-        clean_prefixes = set()
-        for pid in queue_pids:
-            compact = pid.replace("-", "").strip().upper()
-            if len(compact) < 5:
-                clean_prefixes.add(compact)
-            else:
-                clean_prefixes.add(compact[:5])
-
-        if len(clean_prefixes) != 1 or any(len(p) < 5 for p in clean_prefixes):
-            if hasattr(self.assignments, "search_location_text"):
-                self.assignments.search_location_text.set(
-                    "Cannot transfer: Products in queue must share the same first 5 characters."
-                )
-            if hasattr(self.assignments, "search_location_label"):
-                self.assignments.search_location_label.configure(foreground="#c62828")
+        refusal = shift_prefix_error(queue_pids)
+        if refusal:
+            self._show_search_refusal(refusal)
             self._reset_queue_shift_clicks()
             return
 
-        # Triple click requirement if > 1 product; single product bypasses
-        if len(queue_pids) > 1:
+        if needs_shift_confirmation(len(queue_pids)):
             self.queue_shift_clicks += 1
-            if self.queue_shift_clicks < 3:
-                remaining = 3 - self.queue_shift_clicks
-                self.assignments.set_queue_button_clicks(remaining)
+            if self.queue_shift_clicks < SHIFT_CONFIRM_CLICKS:
+                self.assignments.set_queue_button_clicks(SHIFT_CONFIRM_CLICKS - self.queue_shift_clicks)
                 self._start_queue_shift_timer()
                 return
 
@@ -172,16 +161,8 @@ class AssignmentActions:
                 name = self.catalog_products[pid][0]
             records[pid] = (name, "")
 
-        transfer_data = self.database.capture_shift_transfer(queue_pids,self.selected_address.slot_id)
-
-        assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
         try:
-            moved = self.database.assign_catalog_direct_to_slot(
-                self.selected_address.slot_id,
-                assigned_at,
-                records,
-                default_stock=999,
-            )
+            moved, transfer_data = shift_transfer(self.database, self.selected_address.slot_id, records)
         except Exception as error:
             messagebox.showerror("Transfer failed", str(error), parent=self.root)
             return
@@ -271,27 +252,21 @@ class AssignmentActions:
 
     def preview_assignment_shelf(self) -> None:
         """Show the saved shelf matching tab 2's Floor, Side, and Shelf fields."""
-        floor = clean_location_segment(self.assignments.floor_var.get())
-        side = clean_location_segment(self.assignments.side_var.get())
-        shelf_code = clean_location_segment(self.assignments.shelf_var.get())
+        floor, side, shelf_code = (clean_location_segment(var.get()) for var in
+                                   (self.assignments.floor_var, self.assignments.side_var, self.assignments.shelf_var))
         if not all((floor, side, shelf_code)):
             self.assignments.clear_shelf_preview("Enter Floor, Side, and Shelf below.")
             return
         shelf_id = self.database.get_shelf_id(floor, shelf_code, side=side)
         if shelf_id is None:
-            self.assignments.clear_shelf_preview(
-                f"No saved shelf at Floor {floor} / Side {side} / Shelf {shelf_code}."
-            )
+            self.assignments.clear_shelf_preview(f"No saved shelf at Floor {floor} / Side {side} / Shelf {shelf_code}.")
             return
         try:
-            saved_floor, saved_side, saved_code, layout = self.database.get_shelf(shelf_id)
-            contents = self.database.get_shelf_contents(shelf_id)
+            grid, _contents = load_grid(self.database, shelf_id)
         except KeyError:
             self.assignments.clear_shelf_preview("That shelf changed. Select it again.")
             return
-        self.assignments.render_shelf_preview(
-            saved_floor, saved_side, saved_code, layout, contents
-        )
+        self.assignments.render_shelf_preview(grid)
 
     def _read_address_inputs(self) -> tuple[str, str, str, int, int] | None:
         floor = clean_location_segment(self.assignments.floor_var.get())
@@ -571,194 +546,11 @@ class AssignmentActions:
             f"Moved {moved} selected product(s) from {address.slot_name} to on-hand."
         )
 
-    def assign_selected_products(self) -> None:
-        if not self.selected_slot:
-            messagebox.showinfo("Choose a slot", "Click a shelf slot first.")
-            return
-        selected_items = self.assignments.queue_tree.selection()
-        if not selected_items:
-            messagebox.showinfo(
-                "Choose products", "Select one or more products from the queue."
-            )
-            return
-
-        slot_name = self.selected_slot
-        product_ids = [item_id.removeprefix("product::") for item_id in selected_items]
-        initial_quantities = {
-            product_id: self.transferred_stock.get(product_id)
-            for product_id in product_ids
-        }
-        dialog = StockQuantityDialog(
-            self.root,
-            slot_name,
-            [
-                (product_id, self.products.get(product_id, ""))
-                for product_id in product_ids
-            ],
-            initial_quantities=initial_quantities,
-        )
-        self.root.wait_window(dialog)
-        if dialog.result is None:
-            return
-
-        # Confirming quantities is the assignment action. Commit must persist
-        # this captured value, even if the shelf is saved much later.
-        assigned_at = datetime.now().astimezone().isoformat(timespec="seconds")
-        for product_id, quantity in dialog.result.items():
-            self.staged_assignments[product_id] = Placement(
-                slot_name, quantity, assigned_at
-            )
-            self.transferred_stock.pop(product_id, None)
-
-        self.refresh_working_changes()
-        self.status_text.set(
-            f"Staged {len(selected_items)} product(s) in {self.selected_slot}. Press Commit to save."
-        )
-
-    def refresh_slot_contents(self) -> None:
-        self.assignments.contents_tree.delete(
-            *self.assignments.contents_tree.get_children()
-        )
-        if not self.selected_slot:
-            self.assignments.selected_slot_text.set("No slot selected")
-            return
-
-        saved_products = [
-            product_id
-            for product_id, slot_name in self.committed_locations.items()
-            if slot_name == self.selected_slot
-            and product_id not in self.pending_unassignments
-            and product_id not in self.staged_assignments
-        ]
-        staged_products = [
-            product_id
-            for product_id, placement in self.staged_assignments.items()
-            if placement.slot_name == self.selected_slot
-        ]
-        visible_products = [
-            ("Saved", product_id, self.committed_placements[product_id])
-            for product_id in saved_products
-        ] + [
-            ("Staged", product_id, self.staged_assignments[product_id])
-            for product_id in staged_products
-        ]
-
-        def oldest_first(item):
-            assigned_at = item[2].assigned_at
-            try:
-                timestamp = (
-                    datetime.fromisoformat(assigned_at).timestamp()
-                    if assigned_at
-                    else float("-inf")
-                )
-            except (TypeError, ValueError, OverflowError, OSError):
-                timestamp = float("-inf")
-            return timestamp, item[1].casefold()
-
-        for state, product_id, placement in sorted(visible_products, key=oldest_first):
-            self.assignments.contents_tree.insert(
-                "",
-                "end",
-                iid=f"{state.lower()}::{product_id}",
-                values=(
-                    product_id,
-                    self.products.get(product_id, ""),
-                    placement.stock_qty
-                    if placement.stock_qty is not None
-                    else "Unknown",
-                    vietnam_time(placement.assigned_at)
-                    if placement.assigned_at
-                    else "Unknown",
-                    state,
-                ),
-            )
-
     def modify_selected_stock(self) -> None:
-        if getattr(self, "selected_address", None) is not None and hasattr(
-            self.assignments, "on_hand_tree"
-        ):
-            self._modify_loaded_address_stock()
+        if self.selected_address is None:
+            messagebox.showinfo("Load an address", "Load a shelf address first.", parent=self.root)
             return
-
-        selected = self.assignments.contents_tree.selection()
-        if len(selected) != 1:
-            messagebox.showinfo(
-                "Choose one product",
-                "Select exactly one product in Selected slot contents, then press Modify selected stock.",
-                parent=self.root,
-            )
-            return
-
-        state, separator, product_id = selected[0].partition("::")
-        if (
-            not separator
-            or state not in {"staged", "saved"}
-            or product_id not in self.products
-        ):
-            messagebox.showinfo(
-                "Choose one product",
-                "Select a current product from the slot contents list.",
-                parent=self.root,
-            )
-            return
-
-        placements = (
-            self.staged_assignments if state == "staged" else self.committed_placements
-        )
-        placement = placements.get(product_id)
-        stale_saved = state == "saved" and (
-            product_id in self.pending_unassignments
-            or product_id in self.staged_assignments
-        )
-        if (
-            placement is None
-            or placement.slot_name != self.selected_slot
-            or stale_saved
-        ):
-            messagebox.showinfo(
-                "Selection changed",
-                "That product is no longer in the selected slot. Select it again.",
-                parent=self.root,
-            )
-            self.refresh_slot_contents()
-            return
-        if not placement.assigned_at:
-            messagebox.showinfo(
-                "Added time is unknown",
-                "This older record has no added-to-shelf time. Return it to the queue and assign it again.",
-                parent=self.root,
-            )
-            return
-
-        current_text = (
-            placement.stock_qty if placement.stock_qty is not None else "Unknown"
-        )
-        quantity = simpledialog.askinteger(
-            "Modify stock quantity",
-            f"Product: {product_id}\nLocation: {placement.slot_name}\n"
-            f"Current stock: {current_text}\n\nEnter the new whole-number quantity:",
-            parent=self.root,
-            initialvalue=placement.stock_qty if placement.stock_qty is not None else 0,
-            minvalue=0,
-            maxvalue=9_223_372_036_854_775_807,
-        )
-        if quantity is None:
-            return
-        validate_stock_quantity(quantity)
-        if quantity == placement.stock_qty:
-            self.status_text.set(f"{product_id} already has stock quantity {quantity}.")
-            return
-
-        self.pending_unassignments.discard(product_id)
-        self.staged_assignments[product_id] = Placement(
-            placement.slot_name,
-            quantity,
-            placement.assigned_at,
-        )
-        self.refresh_working_changes()
-        self.status_text.set(
-            f"Staged stock change for {product_id}: {current_text} → {quantity}. Press Commit to save."
-        )
+        self._modify_loaded_address_stock()
 
     def _modify_loaded_address_stock(self) -> None:
         selected = self.assignments.contents_tree.selection()
@@ -821,52 +613,4 @@ class AssignmentActions:
         )
         self.status_text.set(
             f"Updated {product_id} stock at {address.slot_name}: {current_text} → {quantity}."
-        )
-
-    def transfer_selected_products(self) -> None:
-        selected_items = self.assignments.contents_tree.selection()
-        if not selected_items:
-            messagebox.showinfo(
-                "Choose products",
-                "Select one or more products in Selected slot contents, then press Transfer product.",
-                parent=self.root,
-            )
-            return
-
-        transferred_count = 0
-        for item_id in selected_items:
-            state, separator, product_id = item_id.partition("::")
-            if (
-                not separator
-                or state not in {"staged", "saved"}
-                or product_id not in self.products
-            ):
-                continue
-
-            placements = (
-                self.staged_assignments
-                if state == "staged"
-                else self.committed_placements
-            )
-            placement = placements.get(product_id)
-            if placement is not None:
-                self.transferred_stock[product_id] = placement.stock_qty
-
-            if state == "staged":
-                self.staged_assignments.pop(product_id, None)
-            if product_id in self.committed_placements:
-                self.pending_unassignments.add(product_id)
-            transferred_count += 1
-
-        if not transferred_count:
-            messagebox.showinfo(
-                "Choose products",
-                "Select valid products from the slot contents list.",
-                parent=self.root,
-            )
-            return
-
-        self.refresh_working_changes()
-        self.status_text.set(
-            f"Transferred {transferred_count} product(s) to queue with stock retained. Select a new slot to assign."
         )
