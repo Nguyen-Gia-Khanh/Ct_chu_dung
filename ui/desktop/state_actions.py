@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from mapper.core.common import normalise_sku, make_slot_name, normalize_search, product_search_text
+from mapper.core.common import normalize_sku, make_slot_name, normalize_search, product_search_text
 from mapper.persistence.database import Placement
 
 
@@ -99,7 +99,7 @@ class StateActions:
                 else:
                     self.committed_placements[product_id] = placement
                     self.committed_locations[product_id] = placement.slot_name
-                    self.location_search[product_id] = normalize_search(normalise_sku(placement.slot_name))
+                    self.location_search[product_id] = normalize_search(normalize_sku(placement.slot_name))
                     slots.update(placement.slot_name.split(", "))
         if on_hand is not None:
             for product_id, item in on_hand.items():
@@ -192,7 +192,7 @@ class StateActions:
             product_id.casefold(): product_id for product_id in self.products
         }
         if reload_catalog or not hasattr(self, "catalog_products") or not self.catalog_products:
-            catalog_rows = self.database.get_display_catalog_products()
+            catalog_rows = self.database.get_catalog_products()
             self.catalog_products = {
                 product_id: (product_name, brand_name)
                 for product_id, product_name, brand_name in catalog_rows
@@ -231,7 +231,7 @@ class StateActions:
             for product_id, placement in self.committed_placements.items()
         }
         self.location_search = {
-            product_id: normalize_search(normalise_sku(location))
+            product_id: normalize_search(normalize_sku(location))
             for product_id, location in self.committed_locations.items()
         }
         if hasattr(self, "transferred_stock"):

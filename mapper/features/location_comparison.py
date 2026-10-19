@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import re
-import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from mapper.core.common import normalise_sku
+
+from mapper.core.common import ID_HEADERS, LOCATION_HEADERS, data_directory, normalize_sku, plain_header, split_locations
 
 
 @dataclass(frozen=True)
@@ -14,61 +15,32 @@ class LocationDifference:
     product_id: str
     wrong_location: str
     true_location: str
-    can_resync: bool
-
-
-def _plain_header(value: object) -> str:
-    text = unicodedata.normalize("NFKD", str(value or "").casefold())
-    return re.sub(
-        r"[^a-z0-9]", "", "".join(c for c in text if not unicodedata.combining(c))
-    )
-
-
-ID_HEADERS = (
-    "mahang",
-    "masanpham",
-    "masp",
-    "productid",
-    "productcode",
-    "sku",
-    "itemcode",
-    "code",
-)
-LOCATION_HEADERS = (
-    "vitri",
-    "vitrikho",
-    "vitriluutru",
-    "vitriluutrukho",
-    "locationid",
-    "location",
-    "warehouselocation",
-    "shelflocation",
-    "shelf",
-)
 
 
 def suggested_columns(headers: list[object]) -> tuple[int, int]:
-    normalized = [_plain_header(header) for header in headers]
-    product_index = next(
-        (normalized.index(name) for name in ID_HEADERS if name in normalized), 0
-    )
-    location_index = next(
-        (normalized.index(name) for name in LOCATION_HEADERS if name in normalized),
-        1 if len(headers) > 1 else 0,
-    )
+    """Best guess of (product ID, location) column indexes from a header row."""
+    keys = [plain_header(header) for header in headers]
+    product_index = next((keys.index(name) for name in ID_HEADERS if name in keys), 0)
+    location_index = next((keys.index(name) for name in LOCATION_HEADERS if name in keys), 1 if len(headers) > 1 else 0)
     return product_index, location_index
 
 
-def location_parts(value: object) -> tuple[str, ...]:
-    """KiotViet can export several shelf IDs in one cell."""
-    if value is None:
-        return ()
-    text = str(value).strip()
-    return tuple(
-        dict.fromkeys(
-            part.strip() for part in re.split(r"[,;|\n]+", text) if part.strip()
-        )
-    )
+def is_header_row(row: list[object]) -> bool:
+    """True when the row names both a product ID column and a location column."""
+    product, location = suggested_columns(row)
+    return (product != location and plain_header(row[product]) in ID_HEADERS
+            and plain_header(row[location]) in LOCATION_HEADERS)
+
+
+def export_path(directory: Path | None = None, now: datetime | None = None) -> Path:
+    """A new timestamped file in data/exports/location_comparison."""
+    directory = directory or data_directory() / "exports" / "location_comparison"
+    directory.mkdir(parents=True, exist_ok=True)
+    stem = f"kiotviet_location_comparison_{(now or datetime.now()).strftime('%Y%m%d_%H%M%S')}"
+    path, counter = directory / f"{stem}.xlsx", 2
+    while path.exists():
+        path, counter = directory / f"{stem}_{counter}.xlsx", counter + 1
+    return path
 
 
 def read_web_locations(
@@ -110,12 +82,10 @@ def read_web_locations(
                 continue
             if isinstance(product, float) and product.is_integer():
                 product = int(product)
-            product_id = normalise_sku(product)
+            product_id = normalize_sku(product)
             value = row[location_column] if location_column < len(row) else None
             location = str(value).strip() if value is not None else ""
-            if product_id in locations and set(
-                location_parts(locations[product_id])
-            ) != set(location_parts(location)):
+            if product_id in locations and set(split_locations(locations[product_id])) != set(split_locations(location)):
                 raise ValueError(
                     f"Product {product_id} has conflicting website locations at Excel row {row_number}."
                 )
@@ -130,32 +100,18 @@ def read_web_locations(
 
 
 def compare_locations(
-    local_locations: dict[str, list[str]], web_locations: dict[str, str]
+    local_locations: dict[str, Iterable[str]], web_locations: dict[str, str]
 ) -> tuple[list[LocationDifference], list[str]]:
-    """Return mismatches and local assigned IDs missing from the export."""
+    """Return mismatches and local assigned IDs missing from the export; keys are canonical SKUs."""
     differences: list[LocationDifference] = []
     missing: list[str] = []
-    local_locations = {normalise_sku(pid): locations for pid, locations in local_locations.items()}
-    web_locations = {normalise_sku(pid): locations for pid, locations in web_locations.items()}
-    for product_id in sorted(
-        set(local_locations) | set(web_locations), key=str.casefold
-    ):
-        local_slots = local_locations.get(product_id, [])
-        local = location_parts(", ".join(local_slots))
+    for product_id in sorted(local_locations.keys() | web_locations.keys(), key=str.casefold):
+        local = split_locations(local_locations.get(product_id, ()))
         if product_id not in web_locations:
             if local:
                 missing.append(product_id)
-            continue
-        web = location_parts(web_locations[product_id])
-        if set(local) != set(web):
-            differences.append(
-                LocationDifference(
-                    product_id,
-                    web_locations[product_id],
-                    ", ".join(local),
-                    True,
-                )
-            )
+        elif set(local) != set(split_locations(web_locations[product_id])):
+            differences.append(LocationDifference(product_id, web_locations[product_id], ", ".join(local)))
     return differences, missing
 
 
@@ -181,7 +137,7 @@ def export_comparison(path: Path | str, differences: list[LocationDifference]) -
             (difference.product_id, difference.wrong_location, difference.true_location)
         )
         for cell in worksheet[worksheet.max_row]:
-            cell.data_type = "s"
+            cell.data_type = "s"  # an ID such as "=SKU" must stay text, never a formula
     worksheet.column_dimensions["A"].width = 25
     worksheet.column_dimensions["B"].width = 36
     worksheet.column_dimensions["C"].width = 36

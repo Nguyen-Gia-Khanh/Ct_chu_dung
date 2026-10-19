@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from mapper.core.common import (
-    normalise_sku,
+    normalize_sku,
     MAX_VISIBLE_PRODUCTS, exact_product_search_id, make_slot_name, normalize_search,
     product_search_text,
 )
@@ -16,7 +16,6 @@ from .widgets import ScrollableFrame, shelf_cell_visual, sync_tree_rows
 from utils.barcode_scanner import (
     BarcodeScanner,
     bind_auto_highlight,
-    format_product_id,
     select_all_entry_text,
 )
 
@@ -305,7 +304,7 @@ class PrimalQueueView(ttk.Frame):
             row[0]: product_search_text(*row) for row in product_rows
         }
 
-        catalog_rows = self.database.get_display_catalog_products()
+        catalog_rows = self.database.get_catalog_products()
         self.catalog_products = {
             product_id: (product_name, brand_name)
             for product_id, product_name, brand_name in catalog_rows
@@ -353,7 +352,7 @@ class PrimalQueueView(ttk.Frame):
             self.search_after_id = None
 
         raw_query = self.search_var.get().strip()
-        query = normalize_search(normalise_sku(raw_query))
+        query = normalize_search(normalize_sku(raw_query))
 
         # 1. Primal queue filtering
         primal_matches = [
@@ -773,14 +772,14 @@ class PrimalQueueView(ttk.Frame):
         )
 
     def on_barcode_scan(self, barcode: str) -> None:
-        self._fill_search_bar(format_product_id(barcode))
+        self._fill_search_bar(normalize_sku(barcode))
 
     def format_primary_search(self, _event: tk.Event | None = None) -> str:
         if self.barcode_scanner is not None and self.barcode_scanner.is_scanner():
             code = self.barcode_scanner.pop_scanner_code()
-            formatted = format_product_id(code) if code else ""
+            formatted = normalize_sku(code) if code else ""
         else:
-            formatted = format_product_id(self.search_var.get())
+            formatted = normalize_sku(self.search_var.get())
         self._fill_search_bar(formatted)
         return "break"
 

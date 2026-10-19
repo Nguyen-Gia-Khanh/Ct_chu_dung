@@ -10,14 +10,13 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from mapper.core.common import (
-    normalise_sku,
+    normalize_sku,
     clean_location_segment, make_slot_name, normalize_search, product_search_text,
 )
 from mapper.persistence.database import SlotAddress, WarehouseDatabase
 from utils.barcode_scanner import (
     BarcodeScanner,
     bind_auto_highlight,
-    format_product_id,
     select_all_entry_text,
 )
 
@@ -333,16 +332,16 @@ class ExceptionsView(ttk.Frame):
     def _on_product_id_return(self, _event: tk.Event | None = None) -> str:
         if self.barcode_scanner is not None and self.barcode_scanner.is_scanner():
             code = self.barcode_scanner.pop_scanner_code()
-            value = format_product_id(code) if code else ""
+            value = normalize_sku(code) if code else ""
         else:
-            value = format_product_id(self.product_id_var.get())
+            value = normalize_sku(self.product_id_var.get())
         self.product_id_var.set(value)
         self.after_idle(self._select_entry)
         self.assign_exception()
         return "break"
 
     def _on_barcode_scan(self, scanned_code: str) -> None:
-        self.product_id_var.set(format_product_id(scanned_code))
+        self.product_id_var.set(normalize_sku(scanned_code))
         self.after_idle(self._select_entry)
 
     def on_barcode_scan(self, scanned_code: str) -> None:
@@ -386,7 +385,7 @@ class ExceptionsView(ttk.Frame):
             self.product_name_var.set(str(values[1]))
 
     def find_product(self) -> None:
-        product_id = format_product_id(self.product_id_var.get().strip())
+        product_id = normalize_sku(self.product_id_var.get().strip())
         self.product_id_var.set(product_id)
         if not product_id:
             self.found_locations_text.set("Enter a product ID to find its saved locations.")
@@ -419,7 +418,7 @@ class ExceptionsView(ttk.Frame):
             self.on_refresh_callback()
 
     def save_name(self) -> None:
-        product_id = format_product_id(self.product_id_var.get().strip())
+        product_id = normalize_sku(self.product_id_var.get().strip())
         name = self.product_name_var.get().strip()
         if not product_id or not name:
             messagebox.showinfo("Name required", "Select a staged product and enter its name.", parent=self)
@@ -485,7 +484,7 @@ class ExceptionsView(ttk.Frame):
             messagebox.showinfo("Missing Product ID", "Please enter or scan a product ID.", parent=self)
             return
 
-        clean_pid = format_product_id(raw_id)
+        clean_pid = normalize_sku(raw_id)
         if not self.selected_address:
             # Try to load address first
             self.load_address()
@@ -524,7 +523,7 @@ class ExceptionsView(ttk.Frame):
         self.product_id_entry.focus_set()
 
     def remove_from_loaded_cell(self) -> None:
-        product_id = format_product_id(self.product_id_var.get().strip())
+        product_id = normalize_sku(self.product_id_var.get().strip())
         if not product_id:
             messagebox.showinfo(
                 "Select a product", "Enter a product ID or select a product in the loaded cell.", parent=self
@@ -689,7 +688,7 @@ class ExceptionsView(ttk.Frame):
                 self.multi_location_tree.selection_add(product_id)
 
     def refresh_catalog_tree(self) -> None:
-        rows = self.database.get_display_catalog_products()
+        rows = self.database.get_catalog_products()
         self.catalog_records = [row[:3] for row in rows]
         self.catalog_search = {row[0]: product_search_text(*row) for row in rows}
         self._filter_catalog_tree()
@@ -697,7 +696,7 @@ class ExceptionsView(ttk.Frame):
     def _filter_catalog_tree(self, *_args) -> None:
         selected = set(self.catalog_tree.selection())
         self.catalog_tree.delete(*self.catalog_tree.get_children())
-        query = normalize_search(normalise_sku(self.catalog_search_var.get()))
+        query = normalize_search(normalize_sku(self.catalog_search_var.get()))
         shown = 0
         for product_id, name, brand_name in self.catalog_records:
             if query and query not in self.catalog_search[product_id]:
@@ -713,7 +712,7 @@ class ExceptionsView(ttk.Frame):
         self.refresh_catalog_tree()
         self.refresh_pending_tree()
         self.refresh_multi_location_tree()
-        product_id = format_product_id(self.product_id_var.get().strip())
+        product_id = normalize_sku(self.product_id_var.get().strip())
         if product_id:
             found = self.database.find_product_locations(product_id)
             if found is not None:

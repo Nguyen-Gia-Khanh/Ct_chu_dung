@@ -5,16 +5,15 @@ from pathlib import Path
 import re
 import sqlite3
 
-from mapper.core.common import normalise_sku
-from mapper.persistence.inventory import LOCATION_SQL
-from mapper.persistence.exceptions import ExceptionOperations
+from mapper.core.common import normalize_sku
+from mapper.persistence.shared import LOCATION_SQL, find_product_locations
 
 
 # Code 39 characters plus '?' for a character the phone could not read.
 PARTIAL_BARCODE = re.compile(r"[0-9A-Z. $/+%?-]{1,64}")
 
 
-class WarehouseLookup(ExceptionOperations):
+class WarehouseLookup:
     def __init__(self, path: Path):
         self.path = Path(path).resolve()
         # mode=ro fails for missing files instead of creating an empty database.
@@ -29,16 +28,16 @@ class WarehouseLookup(ExceptionOperations):
         return connection
 
     def find(self, barcode: str, *, include_cell_contents: bool = False) -> dict:
-        query = normalise_sku(barcode)
+        query = normalize_sku(barcode)
         with closing(self.connect()) as connection:
             row = connection.execute('SELECT product_id FROM catalog_products WHERE product_id=?',(query,)).fetchone()
+            found = find_product_locations(connection, row[0]) if row else None
         product_id = row[0] if row else None
         empty = {"product_id": None, "product_name": "", "locations": []}
         if include_cell_contents:
             empty["cells"] = []
         if product_id is None:
             return {**empty, "status": "not_found", "matches": []}
-        found = self.find_product_locations(product_id)
         if found is None:
             return {**empty, "status": "not_found"}
         name, locations = found
@@ -55,7 +54,7 @@ class WarehouseLookup(ExceptionOperations):
         if (not PARTIAL_BARCODE.fullmatch(pattern) or not 1 <= unknown <= 2
                 or len(pattern) - unknown < 4):
             raise ValueError("Send 4+ read characters with one or two '?' placeholders.")
-        query = normalise_sku(pattern)
+        query = normalize_sku(pattern)
         # '%' is a Code 39 character: escape LIKE wildcards, then re-check each row exactly.
         like = query.replace("!", "!!").replace("%", "!%").replace("_", "!_").replace("?", "_")
         exact = re.compile(re.escape(query).replace(r"\?", "."))

@@ -12,14 +12,15 @@ from pathlib import Path
 
 APP_TITLE = "Warehouse Shelf Mapper"
 MAX_VISIBLE_PRODUCTS = 750
+MAX_STOCK = 2**63 - 1  # SQLite INTEGER limit
 UTC_DEFAULT = "(strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))"
 VIETNAM_TIME = timezone(timedelta(hours=7))
 EXCEL_ERRORS = frozenset({'#N/A', '#VALUE!', '#REF!', '#DIV/0!', '#NAME?', '#NUM!', '#NULL!', '#SPILL!', '#CALC!'})
 
 
-def normalise_sku(value: str) -> str:
+def normalize_sku(value: object) -> str:
     """The one stored and searched SKU spelling, including scanner/import input."""
-    return str(value).strip().upper().replace('-', '').replace(' ', '')
+    return '' if value is None else str(value).strip().upper().replace('-', '').replace(' ', '')
 
 
 def clean_product_name(value: str | None) -> str | None:
@@ -73,23 +74,50 @@ def default_database_path() -> Path:
     return path
 
 
+# Combining-mark blocks; Vietnamese tone and vowel marks are all in U+0300-U+036F.
+_COMBINING_MARKS = re.compile(r'[̀-ͯ᪰-᫿᷀-᷿⃐-⃿︠-︯]')
+_LOCATION_SEPARATORS = re.compile(r'[,;|\n]+')
+
+
 def normalize_search(value: str) -> str:
     """Case- and accent-insensitive search, useful for Vietnamese names."""
-    decomposed = unicodedata.normalize("NFD", value.casefold().replace("đ", "d"))
-    return "".join(character for character in decomposed if not unicodedata.combining(character))
+    folded = value.casefold()
+    if folded.isascii():
+        return folded
+    return _COMBINING_MARKS.sub('', unicodedata.normalize("NFD", folded.replace("đ", "d")))
+
+
+# plain_header() spellings of spreadsheet columns, most specific first.
+ID_HEADERS = ("mahang", "masanpham", "masp", "productid", "productcode", "sku", "itemcode", "code")
+NAME_HEADERS = ("fullname", "productname", "tenhang", "tensanpham", "name", "title")
+LOCATION_HEADERS = ("vitri", "vitrikho", "vitriluutru", "vitriluutrukho", "locationid", "location",
+                    "warehouselocation", "shelflocation", "shelf")
+
+
+def plain_header(value: object) -> str:
+    """Spreadsheet header comparison key: accent-free lowercase letters and digits only."""
+    return re.sub(r'[^a-z0-9]', '', normalize_search(unicodedata.normalize('NFKC', str(value or ''))))
+
+
+def split_locations(value: object) -> tuple[str, ...]:
+    """One rule for location lists in cells, exports, and uploads; order kept, duplicates dropped."""
+    if value is None:
+        return ()
+    parts = _LOCATION_SEPARATORS.split(value) if isinstance(value, str) else value
+    return tuple(dict.fromkeys(part.strip() for part in parts if part and part.strip()))
 
 
 def product_search_text(
     product_id: str, name: str | None, brand_name: str | None = "",
 ) -> str:
     """Cache SKU and both catalog names with the same search normalization."""
-    return normalize_search(normalise_sku(f'{product_id} {name or ""} {brand_name or ""}'))
+    return normalize_search(normalize_sku(f'{product_id} {name or ""} {brand_name or ""}'))
 
 
 def exact_product_search_id(query: str, product_ids: Iterable[str]) -> str | None:
     """Resolve user input to a canonical SKU among the visible results."""
-    query = normalise_sku(query)
-    matches = {pid for pid in product_ids if normalise_sku(pid) == query}
+    query = normalize_sku(query)
+    matches = {pid for pid in product_ids if normalize_sku(pid) == query}
     return next(iter(matches)) if len(matches) == 1 else None
 
 
@@ -99,11 +127,16 @@ def clean_location_segment(value: str) -> str:
     return re.sub(r"[^A-Z0-9_-]", "", value)
 
 
+def shelf_prefix(floor: str, shelf_code: str, *, side: str = "1") -> str:
+    """The part of every location ID shared by one shelf: floor 1, side 1, shelf A -> L1-1A."""
+    floor_code = clean_location_segment(floor)
+    if not re.fullmatch(r"L[0-9]+", floor_code):
+        floor_code = f"L{floor_code}"
+    return f"{floor_code}-{clean_location_segment(side)}{clean_location_segment(shelf_code)}"
+
+
 def make_slot_name(
     floor: str, shelf_code: str, row_number: int, slot_number: int, *, side: str = "1",
 ) -> str:
     """Example: floor 1, side 1, shelf A, row 8, cell 10 -> L1-1A8-10."""
-    floor_code = clean_location_segment(floor)
-    if not re.fullmatch(r"L[0-9]+", floor_code):
-        floor_code = f"L{floor_code}"
-    return f"{floor_code}-{clean_location_segment(side)}{clean_location_segment(shelf_code)}{row_number}-{slot_number}"
+    return f"{shelf_prefix(floor, shelf_code, side=side)}{row_number}-{slot_number}"

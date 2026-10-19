@@ -7,7 +7,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 from .assignment_view import StockQuantityDialog
-from mapper.core.common import MAX_VISIBLE_PRODUCTS, exact_product_search_id, normalize_search, normalise_sku, clean_product_name
+from mapper.core.common import MAX_VISIBLE_PRODUCTS, exact_product_search_id, normalize_search, normalize_sku, clean_product_name
 from mapper.features.csv_import import read_csv
 from .csv_dialog import ColumnMappingDialog
 from .widgets import sync_tree_rows
@@ -185,7 +185,7 @@ class CatalogActions:
         if getattr(self, "queue_shift_clicks", 0) > 0:
             self._reset_queue_shift_clicks()
         raw_query = self.assignments.search_var.get().strip()
-        query = normalize_search(normalise_sku(raw_query))
+        query = normalize_search(normalize_sku(raw_query))
         persistent_queue = hasattr(self.assignments, "on_hand_tree")
 
         available = []
@@ -241,7 +241,7 @@ class CatalogActions:
             return
 
         raw_query = self.assignments.search_var.get().strip()
-        query = normalize_search(normalise_sku(raw_query))
+        query = normalize_search(normalize_sku(raw_query))
         matches = [
             (product_id, product_name, brand_name)
             for product_id, (
@@ -366,7 +366,7 @@ class CatalogActions:
         )
         product_id = None
         if raw_query:
-            product_id = self.product_id_lookup.get(normalise_sku(raw_query).casefold())
+            product_id = self.product_id_lookup.get(normalize_sku(raw_query).casefold())
             if product_id is None:
                 product_id = exact_product_search_id(
                     raw_query,
@@ -450,7 +450,7 @@ class CatalogActions:
             if len(row) <= required_index:
                 skipped += 1
                 continue
-            product_id = normalise_sku(row[id_index])
+            product_id = normalize_sku(row[id_index])
             product_name = clean_product_name(row[name_index])
             brand_name = clean_product_name(row[brand_name_index]) if brand_name_index >= 0 else None
             if not product_id or not row[name_index].strip():

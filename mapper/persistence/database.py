@@ -19,6 +19,11 @@ from .models import (
 from .schema import SchemaOperations
 from .shelves import ShelfOperations
 
+__all__ = [
+    "LayoutConflictError", "OnHandProduct", "Placement", "ProductLocation", "SlotAddress",
+    "WarehouseDatabase", "validate_stock_quantity",
+]
+
 
 class WarehouseDatabase(
     SchemaOperations,
@@ -32,7 +37,8 @@ class WarehouseDatabase(
         self.initialize()
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path)
+        # The phone scanner reads the same file; wait for its short reads instead of failing.
+        connection = sqlite3.connect(self.path, timeout=5)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection

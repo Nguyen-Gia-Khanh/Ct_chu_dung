@@ -6,7 +6,7 @@ from collections.abc import Callable
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-from mapper.core.common import clean_location_segment, make_slot_name, normalize_search
+from mapper.core.common import clean_location_segment, make_slot_name, normalize_search, normalize_sku
 from mapper.persistence.database import Placement, SlotAddress, WarehouseDatabase
 from mapper.features.web_upload import LocationUpdate
 from .shelf_address_lookup import ShelfAddressLookup
@@ -14,7 +14,6 @@ from .widgets import ScrollableFrame, shelf_cell_visual, sync_tree_rows
 from utils.barcode_scanner import (
     BarcodeScanner,
     bind_auto_highlight,
-    format_product_id,
     select_all_entry_text,
 )
 
@@ -316,7 +315,7 @@ class CellTransferPane(ttk.LabelFrame):
         if not raw_query:
             return "break"
 
-        query = format_product_id(raw_query)
+        query = normalize_sku(raw_query)
         address = None
         # 1. First check if it's a product ID (e.g. 91201-KVB-901 or 91201KVB901)
         product_location = self.database.get_product_location(query)
@@ -663,7 +662,7 @@ class CellTransferPane(ttk.LabelFrame):
             for product_id, product_name, placement in self.current_contents
             if placement.slot_name == self.selected_address.slot_name
         ]
-        searched_query = format_product_id(self.search_var.get().strip())
+        searched_query = normalize_sku(self.search_var.get().strip())
         target_item = None
         rows = []
         for product_id, product_name, placement in visible:
@@ -796,7 +795,7 @@ class CellTransferView(ttk.Frame):
 
     def on_barcode_scan(self, barcode: str) -> None:
         target = self.last_active_pane if self.last_active_pane is not None else self.left
-        target._set_and_select_search(format_product_id(barcode))
+        target._set_and_select_search(normalize_sku(barcode))
         target.find()
 
     def focus_search(self) -> None:

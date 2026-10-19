@@ -5,12 +5,12 @@ import tkinter as tk
 from tkinter import ttk
 import unittest
 
+from mapper.core.common import normalize_sku
 from tests.support import WorkspaceTestCase
 
 from utils.barcode_scanner import (
     BarcodeScanner,
     bind_auto_highlight,
-    format_product_id,
     process_entry_return,
     select_all_entry_text,
 )
@@ -18,40 +18,40 @@ from utils.barcode_scanner import (
 
 class BarcodeScannerFormatTests(unittest.TestCase):
     def test_formats_standard_5_3_3(self) -> None:
-        self.assertEqual(format_product_id("06410KFL850"), "06410KFL850")
-        self.assertEqual(format_product_id("12100KWW740"), "12100KWW740")
-        self.assertEqual(format_product_id("06410KFL850"), "06410KFL850")
+        self.assertEqual(normalize_sku("06410KFL850"), "06410KFL850")
+        self.assertEqual(normalize_sku("12100KWW740"), "12100KWW740")
+        self.assertEqual(normalize_sku("06410KFL850"), "06410KFL850")
 
     def test_formats_extended_5_3_5(self) -> None:
-        self.assertEqual(format_product_id("04801K0G900ZC"), "04801K0G900ZC")
-        self.assertEqual(format_product_id("52200KTL640ZB"), "52200KTL640ZB")
-        self.assertEqual(format_product_id("52200KTL640ZB"), "52200KTL640ZB")
+        self.assertEqual(normalize_sku("04801K0G900ZC"), "04801K0G900ZC")
+        self.assertEqual(normalize_sku("52200KTL640ZB"), "52200KTL640ZB")
+        self.assertEqual(normalize_sku("52200KTL640ZB"), "52200KTL640ZB")
 
     def test_formats_5_3_4(self) -> None:
-        self.assertEqual(format_product_id("08E50KVG700C"), "08E50KVG700C")
-        self.assertEqual(format_product_id("08E50-KVG-700C"), "08E50KVG700C")
+        self.assertEqual(normalize_sku("08E50KVG700C"), "08E50KVG700C")
+        self.assertEqual(normalize_sku("08E50-KVG-700C"), "08E50KVG700C")
 
     def test_formats_5_3_2(self) -> None:
-        self.assertEqual(format_product_id("9280012000"), "9280012000")
-        self.assertEqual(format_product_id("9280012000"), "9280012000")
+        self.assertEqual(normalize_sku("9280012000"), "9280012000")
+        self.assertEqual(normalize_sku("9280012000"), "9280012000")
 
     def test_formats_5_3_any_single_suffix(self) -> None:
-        self.assertEqual(format_product_id("12345ABC1"), "12345ABC1")
+        self.assertEqual(normalize_sku("12345ABC1"), "12345ABC1")
 
     def test_normalises_non_standard_hyphenated_identifiers(self) -> None:
-        self.assertEqual(format_product_id("EXC-99999-OVERSIZE"), "EXC99999OVERSIZE")
-        self.assertEqual(format_product_id("HOT-1"), "HOT1")
-        self.assertEqual(format_product_id("H06430-K56-N12"), "H06430K56N12")
+        self.assertEqual(normalize_sku("EXC-99999-OVERSIZE"), "EXC99999OVERSIZE")
+        self.assertEqual(normalize_sku("HOT-1"), "HOT1")
+        self.assertEqual(normalize_sku("H06430-K56-N12"), "H06430K56N12")
 
     def test_handles_whitespace_and_empty(self) -> None:
-        self.assertEqual(format_product_id("  04801K0G900ZC  "), "04801K0G900ZC")
-        self.assertEqual(format_product_id(""), "")
-        self.assertEqual(format_product_id(None), "")
-        self.assertEqual(format_product_id("   "), "")
+        self.assertEqual(normalize_sku("  04801K0G900ZC  "), "04801K0G900ZC")
+        self.assertEqual(normalize_sku(""), "")
+        self.assertEqual(normalize_sku(None), "")
+        self.assertEqual(normalize_sku("   "), "")
 
     def test_short_inputs_unchanged(self) -> None:
-        self.assertEqual(format_product_id("12345"), "12345")
-        self.assertEqual(format_product_id("12345678"), "12345678")
+        self.assertEqual(normalize_sku("12345"), "12345")
+        self.assertEqual(normalize_sku("12345678"), "12345678")
 
 
 class BarcodeScannerDetectionTests(unittest.TestCase):

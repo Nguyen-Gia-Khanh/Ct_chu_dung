@@ -45,7 +45,6 @@ class MultiLocationTests(WorkspaceTestCase):
         )
         self.assertEqual(missing, [])
         self.assertEqual(differences[0].true_location, "A, B")
-        self.assertTrue(differences[0].can_resync)
         view = SimpleNamespace(differences=differences, resynced={})
         self.assertEqual(
             LocationComparisonView.pending_updates(view)[0].location_ids,

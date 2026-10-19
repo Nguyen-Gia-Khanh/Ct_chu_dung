@@ -5,11 +5,11 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from mapper.core.common import clean_location_segment, make_slot_name
+from mapper.core.common import clean_location_segment, make_slot_name, normalize_sku
 from mapper.persistence.database import validate_stock_quantity
 from .widgets import ScrollableFrame, shelf_cell_visual
 
-from utils.barcode_scanner import BarcodeScanner, format_product_id
+from utils.barcode_scanner import BarcodeScanner
 
 
 class StockQuantityDialog(tk.Toplevel):
@@ -513,7 +513,7 @@ class AssignmentView(ttk.Frame):
         self._set_and_select_search(
             self.search_var,
             self.search_entry,
-            format_product_id(self.search_var.get()),
+            normalize_sku(self.search_var.get()),
         )
         # Tab 3 appends its location lookup handler to this same Enter event.
         # Tab 2 has no second handler, so stop the global scanner callback there.

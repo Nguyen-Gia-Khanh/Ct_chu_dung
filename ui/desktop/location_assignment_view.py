@@ -7,12 +7,11 @@ from collections.abc import Callable
 import tkinter as tk
 from tkinter import font as tkfont, ttk
 
-from mapper.core.common import make_slot_name
+from mapper.core.common import make_slot_name, normalize_sku
 from mapper.persistence.database import Placement
 from utils.barcode_scanner import (
     BarcodeScanner,
     bind_auto_highlight,
-    format_product_id,
     select_all_entry_text,
 )
 from .widgets import ScrollableFrame
@@ -820,15 +819,15 @@ class LocationAssignmentView(ttk.Frame):
 
     def on_barcode_scan(self, barcode: str) -> None:
         self._set_and_select_search(
-            self.search_var, self.search_entry, format_product_id(barcode)
+            self.search_var, self.search_entry, normalize_sku(barcode)
         )
 
     def format_primary_search(self, _event=None) -> str:
         if self.barcode_scanner is not None and self.barcode_scanner.is_scanner():
             code = self.barcode_scanner.pop_scanner_code()
-            value = format_product_id(code) if code else ""
+            value = normalize_sku(code) if code else ""
         else:
-            value = format_product_id(self.search_var.get())
+            value = normalize_sku(self.search_var.get())
         self._set_and_select_search(
             self.search_var,
             self.search_entry,
