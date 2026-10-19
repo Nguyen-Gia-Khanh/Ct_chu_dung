@@ -65,6 +65,27 @@ def read_csv(path: Path) -> CSVData:
     return CSVData(headers=[header.strip() for header in rows[0]], rows=rows[1:])
 
 
+# plain_header() spellings, most specific first.
+_ID_COLUMNS = ("productid", "productcode", "sku", "maso", "mahang", "code", "id")
+_FULL_NAME_COLUMNS = ("fullname", "tentiengviet", "productname", "itemname", "name", "description")
+_BRAND_NAME_COLUMNS = ("brandname", "tenhonda", "hondaname")
+
+
+def suggest_columns(headers: list[str], *, catalog: bool) -> tuple[int, int, int]:
+    """Best guess of (product ID, primary name, optional second name or -1) columns.
+    Working-product CSVs lead with the Vietnamese full name; catalog CSVs with the brand name."""
+    keys = [plain_header(header) for header in headers]
+
+    def find(candidates, fallback):
+        return next((keys.index(key) for key in candidates if key in keys), fallback)
+
+    id_index = find(_ID_COLUMNS, 0)
+    primary = _BRAND_NAME_COLUMNS + ("productname", "name") if catalog else _FULL_NAME_COLUMNS
+    name_index = find(primary, 1 if len(headers) > 1 else 0)
+    other_index = find(_FULL_NAME_COLUMNS if catalog else _BRAND_NAME_COLUMNS, -1)
+    return id_index, name_index, -1 if other_index in (id_index, name_index) else other_index
+
+
 def prepare_import(data: CSVData, id_index: int, name_index: int, second_name_index: int = -1) -> PreparedImport:
     """Normalize SKUs, skip blank or short rows, and reject SKUs that collide with different names."""
     prepared = PreparedImport()
@@ -133,4 +154,4 @@ def write_product_names(path: Path | str, names: dict[str, str]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-__all__ = ["CSVData", "PreparedImport", "prepare_import", "read_csv", "write_product_names"]
+__all__ = ["CSVData", "PreparedImport", "prepare_import", "read_csv", "suggest_columns", "write_product_names"]
