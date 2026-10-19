@@ -46,3 +46,4 @@ utils/**/*.[tT][iI][fF][fF]
 utils/**/*.[wW][eE][bB][pP]
 utils/**/*.layout.*
 utils/**/*.raw.json
+warehouse_mapper_tauri.exe

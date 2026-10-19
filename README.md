@@ -5,8 +5,9 @@
 
 # Warehouse Shelf Mapper
 
-A local Windows/Tkinter application for mapping products to irregular warehouse
-shelves. SQLite is local, so no Docker or database server is required.
+A local Windows application for mapping products to irregular warehouse
+shelves, with a Tkinter front end and a faster Tauri front end over the same
+Python code. SQLite is local, so no Docker or database server is required.
 
 For source changes, see [instruction.md](instruction.md): it maps each desktop
 tab to its view, action handlers, persistence methods, and verification steps.
@@ -47,6 +48,26 @@ app without VS Code. The small executable launches `warehouse_mapper.py` with
 database from their existing folders. The project venv and source files must
 remain in place. `warehouse_label_printer.exe` works the same way for the label
 printer.
+
+### Faster desktop app (Tauri)
+
+`warehouse_mapper_tauri.exe` is a second front end with the same seven tabs. Its
+window is a small Rust/WebView2 shell; all warehouse rules still run in Python
+(`python -m mapper.rpc`, started automatically from `.venv`). Searching the full
+catalog takes a few milliseconds per keystroke, and long lists scroll without
+loading every row. Both apps can be used; they read and write the same database.
+
+Build it once (needs Node.js and the Rust MSVC toolchain), then double-click the
+exe in the project folder:
+
+```powershell
+ui\tauri\build.cmd
+```
+
+Use `warehouse_mapper_tauri.exe --db path/to/file.db` for another database.
+Python errors from the data service are written to `data/logs/desktop-sidecar.log`.
+For development, `cd ui/tauri; npm install; npx tauri dev` reloads the interface
+on save; `npm run check` and `npm test` type-check and test it.
 
 To run the source directly from the project folder:
 
@@ -402,6 +423,9 @@ L1-1A8-10
 | `warehouse_mapper.py`, `warehouse_mapper.exe` | Root desktop script and small launcher; Python changes load on the next run. |
 | `warehouse_label_printer.py`, `warehouse_label_printer.exe` | Root label printer script and small launcher. |
 | `ui/desktop/` | Tkinter window, tabs, widgets, and action handlers. |
+| `ui/tauri/` | Tauri (Rust shell) + Svelte front end; `build.cmd` produces `warehouse_mapper_tauri.exe`. |
+| `mapper/rpc/` | JSON-over-stdio service the Tauri app starts (`python -m mapper.rpc`). |
+| `mapper/services/` | Rules shared by both front ends: Shift transfers, shelf grid model, cell lookup, web jobs. |
 | `mapper/persistence/` | SQLite schema and catalog, shelf, inventory, and exception operations. |
 | `mapper/features/` | CSV import, location comparison, and optional KiotViet integration. |
 | `mapper/core/` | Shared location and search rules. |
@@ -412,7 +436,7 @@ L1-1A8-10
 | `utils/build_exe.py`, `utils/launcher.c` | Rebuild the small desktop launchers. |
 | `data/` | Local database and generated output, ignored by Git. |
 
-The supported interface is Tkinter. Package `__init__.py` files identify Python
+Both front ends are supported. Package `__init__.py` files identify Python
 packages; they are not launchers.
 
 ## Data and backup

@@ -526,6 +526,28 @@ pipe, and newline separators for location sets. Local IDs missing from an
 export cannot be compared/uploaded by that comparison. Import a fresh website
 export to verify the result after resync.
 
+## Tauri front end
+
+The Tauri app (`ui/tauri/`) shows the same seven tabs. It holds no warehouse
+rules: each action calls one `mapper.rpc` method.
+
+| Layer | Files | Responsibility |
+| --- | --- | --- |
+| Rust shell | `ui/tauri/src-tauri/src/lib.rs` | Finds the project folder, starts `.venv\Scripts\python.exe -m mapper.rpc` without a console, forwards `rpc(method, params)` calls as JSON lines, re-emits sidecar events as `sidecar://<name>`, restarts the sidecar after a crash, and sends `shutdown` on exit. |
+| Python service | `mapper/rpc/api.py`, `server.py` | One method per user action (`products.search`, `assign.shift_queue`, `cells.combine`, `web.resync`, …). Writes return `changes` (products, cells, shelves, catalog). Search uses an in-memory `ProductIndex` patched after each write. Browser jobs run on one thread and report `job` events. |
+| Svelte tabs | `ui/tauri/src/tabs/*.svelte` | One component per tab. A tab reloads when it becomes visible after any write (`app.changes.seq`); hidden tabs wait until they are opened. |
+| Shared UI | `src/components/VirtualTable.svelte`, `ShelfGrid.svelte`, `ShelfPicker.svelte`, `CellPane.svelte`, `Modals.svelte` | Virtualized tables, shelf drawing, shelf lookup, Tab 5 panes, and in-app dialogs (stock, number, CSV columns, merge). |
+| Shared state | `src/lib/app.svelte.ts`, `web.svelte.ts`, `scanner.ts` | Active tab, status line, change counter, scanner routing, and the single Chrome task. |
+
+**Adding an action:** add the rule to `mapper/services/` (or `persistence/`),
+expose it with `@rpc("group.name")` in `mapper/rpc/api.py` returning
+`changes(...)` for writes, then call it from the tab with `call()` and pass the
+result to `applied()` so other tabs refresh.
+
+**Check:** `.venv\Scripts\python.exe -m unittest tests.test_rpc`; in `ui/tauri`,
+`npm run check` and `npm test`; then `npx tauri dev` against a copy of the
+database (`npx tauri dev -- -- --db tmp\copy.db`).
+
 ## Verification workflow
 
 `tests/` is the single root for test code. Put new tests here, named
