@@ -1,6 +1,7 @@
 <script lang="ts">
   import ShelfGrid from "../components/ShelfGrid.svelte";
   import ShelfPicker from "../components/ShelfPicker.svelte";
+  import Split from "../components/Split.svelte";
   import VirtualTable from "../components/VirtualTable.svelte";
   import { app, errorText, setStatus, stale } from "../lib/app.svelte";
   import { contentColumns } from "../lib/columns";
@@ -40,18 +41,24 @@
   }
 </script>
 
-<div class="tab-body" style:grid-template-rows="auto 1fr">
+<div class="tab-split">
   <div class="panel">
     <ShelfPicker {shelfId} onload={load} />
     {#if shelf}
       <span class="muted small">Committed SQLite data · {shelf.layout.length} rows · {shelf.layout.reduce((a, b) => a + b, 0)} cells</span>
     {/if}
   </div>
-  <div class="split">
+  <Split id="browse" sizes={[3, 2]} panes={[gridPane, contentsPane]} />
+</div>
+
+{#snippet gridPane()}
     <div class="panel">
       <h3>Saved shelf — click a cell</h3>
       <div class="fill"><ShelfGrid grid={shelf} selected={slot} onselect={(cell) => (slot = cell.slot_name)} /></div>
     </div>
+{/snippet}
+
+{#snippet contentsPane()}
     <div class="panel">
       <h3>{slot ?? "No cell selected"}</h3>
       <div class="fill">
@@ -59,9 +66,5 @@
       </div>
       <span class="muted small">Double-click a product to copy its ID.</span>
     </div>
-  </div>
-</div>
+{/snippet}
 
-<style>
-  .split { display: grid; grid-template-columns: 3fr 2fr; gap: 10px; min-height: 0; }
-</style>

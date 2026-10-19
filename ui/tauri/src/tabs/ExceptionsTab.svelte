@@ -1,11 +1,13 @@
 <script lang="ts">
+  import ShelfGrid from "../components/ShelfGrid.svelte";
+  import Split from "../components/Split.svelte";
   import VirtualTable from "../components/VirtualTable.svelte";
   import { app, applied, errorText, setStatus, stale } from "../lib/app.svelte";
   import { contentColumns, idColumn, productColumns } from "../lib/columns";
   import { confirm, fail, notify, pickFile } from "../lib/dialogs.svelte";
   import { call } from "../lib/rpc";
   import { normalizeSku } from "../lib/scanner";
-  import type { Column, ContentRow, ProductRow, SearchResult, SlotAddress, StagedRow, WriteResult } from "../lib/types";
+  import type { Column, ContentRow, GridCell, ProductRow, SearchResult, ShelfView, SlotAddress, StagedRow, WriteResult } from "../lib/types";
 
   /** Tab 6: extra locations for one product, products not yet in the catalog, and their CSV follow-up. */
   interface Multi { product_id: string; name: string; locations: string[] }
@@ -20,6 +22,7 @@
   let rowText = $state("");
   let cellText = $state("");
   let address = $state<SlotAddress | null>(null);
+  let cellShelf = $state<ShelfView | null>(null);
   let contents = $state<ContentRow[]>([]);
   let contentSelected = $state<string[]>([]);
   let catalogQuery = $state("");
@@ -73,7 +76,7 @@
         call<Multi[]>("exceptions.multi"),
         call<StagedRow[]>("exceptions.staged"),
       ]);
-      if (address) contents = await call<ContentRow[]>("cells.contents", { slot_id: address.slot_id });
+      if (address) await showCell(address);
       if (productId.trim()) await findProduct();
     } catch (problem) {
       setStatus(errorText(problem));
@@ -110,10 +113,31 @@
     if (!floor.trim() || !side.trim() || !code.trim() || !(row >= 1) || !(cell >= 1)) {
       return notify("Enter floor, side, shelf, and a positive row and cell.");
     }
-    address = await call<SlotAddress | null>("cells.address", { floor, side, code, row, cell });
-    if (!address) return notify("That shelf cell does not exist.");
-    contents = await call<ContentRow[]>("cells.contents", { slot_id: address.slot_id });
-    setStatus(`Loaded ${address.slot_name}.`);
+    const found = await call<SlotAddress | null>("cells.address", { floor, side, code, row, cell });
+    if (!found) return notify("That shelf cell does not exist.");
+    await showCell(found);
+    setStatus(`Loaded ${found.slot_name}.`);
+  }
+
+  /** Show a cell, its shelf, and its products; also fills the address fields. */
+  async function showCell(target: SlotAddress) {
+    const current = await call<SlotAddress | null>("cells.get", { slot_id: target.slot_id });
+    address = current;
+    if (!current) {
+      [cellShelf, contents] = [null, []];
+      return;
+    }
+    [floor, side, code, rowText, cellText] = [current.floor, current.side, current.shelf_code, String(current.row_number), String(current.slot_number)];
+    [cellShelf, contents] = await Promise.all([
+      call<ShelfView>("shelves.grid", { shelf_id: current.shelf_id }),
+      call<ContentRow[]>("cells.contents", { slot_id: current.slot_id }),
+    ]);
+  }
+
+  async function pickCell(cell: GridCell) {
+    if (!cellShelf) return;
+    const target = await call<SlotAddress | null>("cells.address", { floor: cellShelf.floor, side: cellShelf.side, code: cellShelf.code, row: cell.row, cell: cell.cell });
+    if (target) await showCell(target);
   }
 
   async function write(method: string, params: Record<string, unknown>, done: (result: WriteResult & { slot?: string }) => string) {
@@ -175,7 +199,11 @@
   }
 </script>
 
-<div class="tab-body" style:grid-template-columns="minmax(400px, 1fr) minmax(460px, 1.2fr)">
+<div class="tab-split">
+  <Split id="exceptions" sizes={[1, 1.2]} panes={[productPane, rightPane]} />
+</div>
+
+{#snippet productPane()}
   <div class="panel">
     <h3>Product</h3>
     <div class="row nowrap">
@@ -216,14 +244,35 @@
       </div>
     {/if}
   </div>
+{/snippet}
 
+{#snippet rightPane()}
+  <Split id="exceptions-right" direction="column" sizes={[3, 2]} minPx={140} panes={[cellPart, stagedPart]} />
+{/snippet}
+
+{#snippet cellPart()}
   <div class="panel">
     <h3>{address ? `Cell ${address.slot_name}` : "No cell loaded"}</h3>
-    <div class="cell">
+    <Split id="exceptions-cell" sizes={[3, 2]} minPx={160} panes={[cellGrid, cellContents]} />
+  </div>
+{/snippet}
+
+{#snippet cellGrid()}
+  <ShelfGrid grid={cellShelf} selected={address?.slot_name ?? null} message="Load an address to see its shelf." onselect={pickCell} />
+{/snippet}
+
+{#snippet cellContents()}
+  <div class="cell-contents">
+    <div class="fill">
       <VirtualTable columns={contentColumns.slice(0, 3)} rows={contents} rowKey={(row) => row.product_id} bind:selected={contentSelected}
-        onselect={([id]) => id && pick(id, contents.find((row) => row.product_id === id)?.name)} />
+        empty="No products in this cell." onselect={([id]) => id && pick(id, contents.find((row) => row.product_id === id)?.name)} />
     </div>
     <button class="danger" onclick={removeFromCell}>Remove product exception from this cell</button>
+  </div>
+{/snippet}
+
+{#snippet stagedPart()}
+  <div class="panel">
     <h3>Staged exceptions</h3>
     <div class="fill">
       <VirtualTable columns={stagedColumns} rows={staged} rowKey={(row) => row.product_id} multi bind:selected={stagedSelected}
@@ -236,10 +285,10 @@
       <button class="danger" onclick={wipe}>Wipe</button>
     </div>
   </div>
-</div>
+{/snippet}
 
 <style>
   .address { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) auto; gap: 6px; align-items: end; }
   .address input { width: 100%; }
-  .cell { flex: 1 1 0; min-height: 0; }
+  .cell-contents { display: flex; flex-direction: column; gap: 8px; height: 100%; }
 </style>

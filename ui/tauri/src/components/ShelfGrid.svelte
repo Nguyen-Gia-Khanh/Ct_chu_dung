@@ -14,15 +14,25 @@
   let { grid, selected = null, compact = false, message = "Choose a shelf.", label, onselect }: Props = $props();
 
   const widest = $derived(grid ? Math.max(1, ...grid.rows.map((row) => row.length)) : 1);
-  const cellWidth = $derived(compact ? 68 : 84);
+  const cellWidth = $derived(compact ? 44 : 64);
   const defaultLabel = (cell: GridCell) => (compact ? `${cell.row}-${String(cell.cell).padStart(2, "0")}` : `${grid?.code ?? ""}${cell.row}-${cell.cell}`);
   const countText = (count: number) => (compact ? String(count) : `${count} product${count === 1 ? "" : "s"}`);
   let element = $state<HTMLDivElement>();
 
-  // Bring the selected cell into view when it changes.
+  // Centre the selected cell inside this grid's own scroll area after each redraw.
   $effect(() => {
-    if (!selected || !element) return;
-    element.querySelector<HTMLElement>(`[data-slot="${CSS.escape(selected)}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    void grid;
+    const box = element;
+    if (!selected || !box) return;
+    const slot = selected;
+    requestAnimationFrame(() => {
+      const cell = box.querySelector<HTMLElement>(`[data-slot="${CSS.escape(slot)}"]`);
+      if (!cell) return;
+      const view = box.getBoundingClientRect();
+      const target = cell.getBoundingClientRect();
+      box.scrollTop += target.top + target.height / 2 - (view.top + view.height / 2);
+      box.scrollLeft += target.left + target.width / 2 - (view.left + view.width / 2);
+    });
   });
 </script>
 
@@ -33,7 +43,7 @@
     {#if !compact}
       <div class="title">FLOOR {grid.floor} · SIDE {grid.side} · SHELF {grid.code}</div>
     {/if}
-    <div class="rows" style:min-width="{widest * cellWidth + 70}px">
+    <div class="rows" style:min-width="{widest * cellWidth + (compact ? 40 : 70)}px">
       {#each grid.rows as row, index (index)}
         <div class="line">
           <div class="row-label">R{row[0]?.row ?? ""}{row[0]?.row === 1 && !compact ? " · ground" : ""}</div>

@@ -104,14 +104,15 @@
 <Modals />
 
 <style>
-  .shell { height: 100%; display: grid; grid-template-rows: auto auto 1fr auto; }
+  .shell { height: 100%; display: flex; flex-direction: column; }
+  nav, .banner, footer { flex: none; }
   .tabs { display: flex; gap: 2px; padding: 6px 10px 0; background: var(--panel); border-bottom: 1px solid var(--line); align-items: flex-end; }
   .tabs > button { border: 1px solid transparent; border-bottom: 0; border-radius: var(--radius) var(--radius) 0 0; background: transparent; padding: 6px 12px; }
   .tabs > button.active { background: var(--bg); border-color: var(--line); font-weight: 600; color: var(--accent); }
   .tabs > button.chrome { margin-bottom: 4px; border: 1px solid var(--line-strong); border-radius: var(--radius); }
   .tabs > button.chrome.ok { color: var(--ok); border-color: var(--ok); }
   .banner { padding: 6px 12px; background: var(--danger-soft); color: var(--danger); display: flex; gap: 10px; align-items: center; }
-  main { min-height: 0; }
+  main { flex: 1 1 auto; min-height: 0; }
   section { height: 100%; }
   section[hidden] { display: none; }
   footer { display: flex; gap: 12px; padding: 4px 12px; border-top: 1px solid var(--line); background: var(--panel); font-size: 12px; }

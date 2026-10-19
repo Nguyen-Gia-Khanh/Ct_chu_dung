@@ -1,5 +1,6 @@
 <script lang="ts">
   import ShelfGrid from "../components/ShelfGrid.svelte";
+  import Split from "../components/Split.svelte";
   import { app, applied, errorText, setStatus } from "../lib/app.svelte";
   import { askColumns, confirm, fail, notify, pickFile } from "../lib/dialogs.svelte";
   import { call } from "../lib/rpc";
@@ -137,8 +138,8 @@
   }
 </script>
 
-<div class="tab-body" style:grid-template-columns="minmax(360px, 2fr) 3fr" style:grid-template-rows="auto 1fr">
-  <div class="panel toolbar">
+<div class="tab-split">
+  <div class="panel">
     <div class="row">
       <button onclick={() => importCsv(false)}>Import working products CSV</button>
       <button onclick={() => importCsv(true)}>Import full catalog CSV</button>
@@ -153,6 +154,10 @@
       <button class="primary" onclick={commit}>Commit shelf design</button>
     </div>
   </div>
+  <Split id="designer" sizes={[2, 3]} minPx={300} panes={[editorPane, previewPane]} />
+</div>
+
+{#snippet editorPane()}
   <div class="panel">
     <h3>{shelfId === null ? "New shelf" : "Editing saved shelf"}{app.designerDirty ? " · not committed" : ""}</h3>
     <div class="row nowrap">
@@ -175,15 +180,17 @@
       {/each}
     </div>
   </div>
+{/snippet}
+
+{#snippet previewPane()}
   <div class="panel">
     <h3>Preview</h3>
     {#if problem}<span class="error">{problem}</span>{/if}
     <div class="fill"><ShelfGrid grid={preview} message="The shelf preview appears here." /></div>
   </div>
-</div>
+{/snippet}
 
 <style>
-  .toolbar { grid-column: 1 / -1; }
   .editor { overflow: auto; display: flex; flex-direction: column; gap: 4px; min-height: 0; flex: 1; }
   .line { display: grid; grid-template-columns: 120px 90px auto; gap: 8px; align-items: center; }
 </style>

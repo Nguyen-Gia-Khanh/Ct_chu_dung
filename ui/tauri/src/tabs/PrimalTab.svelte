@@ -1,6 +1,7 @@
 <script lang="ts">
   import ShelfGrid from "../components/ShelfGrid.svelte";
   import ShelfPicker from "../components/ShelfPicker.svelte";
+  import Split from "../components/Split.svelte";
   import VirtualTable from "../components/VirtualTable.svelte";
   import { app, errorText, setStatus, stale } from "../lib/app.svelte";
   import { contentColumns, idColumn, productColumns } from "../lib/columns";
@@ -101,7 +102,15 @@
   }
 </script>
 
-<div class="tab-body" style:grid-template-columns="minmax(420px, 5fr) 6fr">
+<div class="tab-split">
+  <Split id="primal" sizes={[5, 6]} panes={[listsPane, shelfPane]} />
+</div>
+
+{#snippet listsPane()}
+  <Split id="primal-lists" direction="column" sizes={[1, 1]} minPx={140} panes={[hotPart, catalogPart]} />
+{/snippet}
+
+{#snippet hotPart()}
   <div class="panel">
     <h3>Search hot sellers and catalog</h3>
     <input
@@ -119,6 +128,11 @@
         onselect={([id]) => id && showProduct(id)} onactivate={(row) => fill(row.product_id)} />
     </div>
     <span class="muted small">{primal ? `${primal.total.toLocaleString()} matching hot seller(s) · showing ${primal.rows.length}` : ""}</span>
+  </div>
+{/snippet}
+
+{#snippet catalogPart()}
+  <div class="panel">
     <h3>Full catalog</h3>
     <div class="fill">
       <VirtualTable columns={catalogColumns} rows={catalog?.rows ?? []} rowKey={(row) => row.product_id}
@@ -126,16 +140,26 @@
     </div>
     <span class="muted small">{catalog ? `${catalog.total.toLocaleString()} matching catalog product(s) · showing ${catalog.rows.length}` : ""}</span>
   </div>
+{/snippet}
+
+{#snippet shelfPane()}
+  <Split id="primal-shelf" direction="column" sizes={[3, 2]} minPx={120} panes={[gridPart, cellPart]} />
+{/snippet}
+
+{#snippet gridPart()}
   <div class="panel">
     <ShelfPicker {shelfId} onload={(id) => loadShelf(id)} />
-    <div class="grid-area"><ShelfGrid grid={shelf} selected={slot} message="Choose a shelf above or search a product on the left." onselect={(cell) => (slot = cell.slot_name)} /></div>
-    <h3>{slot ? `${slot} — ${cellRows.length} product${cellRows.length === 1 ? "" : "s"}` : "No cell selected"}</h3>
-    <div class="contents"><VirtualTable columns={contentColumns.slice(0, 3)} rows={cellRows} rowKey={(row) => row.product_id} onactivate={(row) => fill(row.product_id)} /></div>
+    <div class="fill"><ShelfGrid grid={shelf} selected={slot} message="Choose a shelf above or search a product on the left." onselect={(cell) => (slot = cell.slot_name)} /></div>
   </div>
-</div>
+{/snippet}
+
+{#snippet cellPart()}
+  <div class="panel">
+    <h3>{slot ? `${slot} — ${cellRows.length} product${cellRows.length === 1 ? "" : "s"}` : "No cell selected"}</h3>
+    <div class="fill"><VirtualTable columns={contentColumns.slice(0, 3)} rows={cellRows} rowKey={(row) => row.product_id} onactivate={(row) => fill(row.product_id)} /></div>
+  </div>
+{/snippet}
 
 <style>
   .status { min-height: 18px; }
-  .grid-area { flex: 3 1 0; min-height: 0; }
-  .contents { flex: 2 1 0; min-height: 0; }
 </style>

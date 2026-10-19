@@ -1,5 +1,6 @@
 <script lang="ts">
   import ShelfGrid from "../components/ShelfGrid.svelte";
+  import Split from "../components/Split.svelte";
   import VirtualTable from "../components/VirtualTable.svelte";
   import { app, applied, errorText, setStatus, stale } from "../lib/app.svelte";
   import { idColumn, productColumns, stockText } from "../lib/columns";
@@ -334,7 +335,15 @@
 
 <svelte:window onkeydown={keys} onkeyup={keys} onblur={() => ((whole = false), resetClicks())} />
 
-<div class="tab-body" style:grid-template-columns="minmax(380px, 5fr) minmax(300px, 4fr) minmax(360px, 5fr)">
+<div class="tab-split">
+  <Split id="assign" sizes={[5, 4, 5]} panes={[productsPane, handPane, cellPane]} />
+</div>
+
+{#snippet productsPane()}
+  <Split id="assign-lists" direction="column" sizes={[1, 1]} minPx={140} panes={[queuePart, catalogPart]} />
+{/snippet}
+
+{#snippet queuePart()}
   <div class="panel">
     <h3>Products</h3>
     <input bind:value={query} oninput={typed} placeholder="Search code, full name, or brand name"
@@ -349,6 +358,11 @@
     </div>
     <span class="muted small">{queue ? `${queue.total.toLocaleString()} matching · ${queue.ready?.toLocaleString()} ready · showing ${queue.rows.length}` : ""}</span>
     <button class:whole onclick={assignQueue}>{queueLabel}</button>
+  </div>
+{/snippet}
+
+{#snippet catalogPart()}
+  <div class="panel">
     <h3>Full catalog</h3>
     <div class="fill">
       <VirtualTable columns={catalogColumns} rows={catalog?.rows ?? []} rowKey={(row) => row.product_id} multi bind:selected={catalogSelected}
@@ -360,7 +374,9 @@
       <button disabled={!canRevert} onclick={revert}>Revert Shift transfer</button>
     </div>
   </div>
+{/snippet}
 
+{#snippet handPane()}
   <div class="panel">
     <div class="segmented">
       <button class:active={handView === "queue"} onclick={() => (handView = "queue")}>On-hand queue</button>
@@ -392,7 +408,9 @@
     <span class="muted small">{addressMessage}</span>
     <button class="primary" class:whole onclick={assignOnHand}>{whole ? "Shift: all on-hand → loaded address" : "Assign selected on-hand → loaded address"}</button>
   </div>
+{/snippet}
 
+{#snippet cellPane()}
   <div class="panel">
     <h3>{address?.slot_name ?? "No address loaded"}</h3>
     <div class="fill">
@@ -407,7 +425,7 @@
     <label class="row small"><input type="checkbox" bind:checked={wholeCell} /> Process and save all products in the loaded address</label>
     <button disabled={app.webBusy} onclick={modifyWebLocation}>{wholeCell ? "Modify all web locations in this address" : "Modify selected web location"}</button>
   </div>
-</div>
+{/snippet}
 
 <style>
   .address { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) auto; gap: 6px; align-items: end; }

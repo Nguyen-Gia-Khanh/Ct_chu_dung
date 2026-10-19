@@ -1,5 +1,6 @@
 <script lang="ts">
   import CellPane from "../components/CellPane.svelte";
+  import Split from "../components/Split.svelte";
   import { app, applied, errorText, setStatus } from "../lib/app.svelte";
   import { askMerge, confirm, fail, notify } from "../lib/dialogs.svelte";
   import { call } from "../lib/rpc";
@@ -81,8 +82,15 @@
   }
 </script>
 
-<div class="tab-body" style:grid-template-columns="1fr auto 1fr">
+<div class="tab-split">
+  <Split id="transfer" sizes={[5, 1.6, 5]} minPx={190} panes={[leftSide, actionsPane, rightSide]} />
+</div>
+
+{#snippet leftSide()}
   <CellPane bind:this={leftPane} title="Left cell" bind:address={left} onfocus={() => (active = "left")} />
+{/snippet}
+
+{#snippet actionsPane()}
   <div class="actions">
     <button class="primary" onclick={swap}>Switch cells ↔</button>
     <button onclick={() => combine("right")}>Combine left → right</button>
@@ -91,11 +99,14 @@
     <button disabled={app.webBusy || !moved.length} onclick={modifyWeb}>Modify location ID on web</button>
     <p class="muted small">{status}</p>
   </div>
+{/snippet}
+
+{#snippet rightSide()}
   <CellPane bind:this={rightPane} title="Right cell" bind:address={right} onfocus={() => (active = "right")} />
-</div>
+{/snippet}
 
 <style>
-  .actions { display: flex; flex-direction: column; gap: 8px; justify-content: center; width: 190px; }
+  .actions { display: flex; flex-direction: column; gap: 8px; justify-content: center; height: 100%; }
   hr { width: 100%; border: 0; border-top: 1px solid var(--line); }
   p { margin: 0; }
 </style>
