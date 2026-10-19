@@ -14,6 +14,72 @@ from tests.support import WorkspaceTestCase
 
 
 class BarcodeBrowserTest(WorkspaceTestCase):
+    def test_compact_preview_preserves_original_decode_pixels(self):
+        server = ScannerServer(("127.0.0.1", 0), ScanStore(self.folder), "crop-test", {})
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        url = f"http://127.0.0.1:{server.server_port}/scan#crop-test"
+        with sync_playwright() as playwright:
+            with playwright.chromium.launch(channel="chrome", headless=True) as browser:
+                for viewport in [(393, 851), (320, 568), (393, 600), (851, 393)]:
+                    for sensor in [(1920, 1080), (1080, 1920)]:
+                        with self.subTest(viewport=viewport, sensor=sensor):
+                            page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
+                            page.goto(url)
+                            page.evaluate("""async ([width, height]) => {
+                                const source = document.createElement('canvas');
+                                source.width = width; source.height = height;
+                                const ctx = source.getContext('2d');
+                                const gradient = ctx.createLinearGradient(0, 0, width, height);
+                                gradient.addColorStop(0, 'red'); gradient.addColorStop(1, 'blue');
+                                ctx.fillStyle = gradient; ctx.fillRect(0, 0, width, height);
+                                ctx.fillStyle = 'white';
+                                for (let x = 0; x < width; x += 37) ctx.fillRect(x, 0, 9, height);
+                                video.srcObject = source.captureStream(1);
+                                await video.play();
+                            }""", sensor)
+                            snapshot = """() => {
+                                const crop = windowCrop();
+                                const pixels = (canvas, context, maxWidth) => {
+                                    draw(canvas, context, crop, maxWidth);
+                                    const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
+                                    let hash = 2166136261;
+                                    for (const byte of data) hash = Math.imul(hash ^ byte, 16777619);
+                                    return [canvas.width, canvas.height, hash];
+                                };
+                                return {crop, phone: pixels(phoneCanvas, phoneContext, MAX_PHONE_WIDTH),
+                                    laptop: pixels(laptopCanvas, laptopContext, MAX_UPLOAD_WIDTH)};
+                            }"""
+                            compact = page.evaluate(snapshot)
+                            camera = page.locator(".camera").bounding_box()
+                            guide = page.locator("#window").bounding_box()
+                            self.assertGreater(camera["height"], 0)
+                            self.assertGreaterEqual(guide["y"], camera["y"])
+                            self.assertLessEqual(guide["y"] + guide["height"], camera["y"] + camera["height"])
+
+                            # Recreate the camera markup/CSS before the compact-layout change.
+                            page.evaluate("""() => {
+                                const inner = document.querySelector('.camera-view');
+                                inner.replaceWith(...inner.childNodes);
+                            }""")
+                            page.add_style_tag(content="""
+                                .camera { aspect-ratio: 4 / 3; max-height: 42dvh; }
+                                @media (orientation: landscape) and (max-height: 520px) {
+                                    .camera { aspect-ratio: auto; max-height: none; }
+                                }
+                            """)
+                            original = page.evaluate(snapshot)
+                            for key, value in original["crop"].items():
+                                self.assertAlmostEqual(compact["crop"][key], value, places=7)
+                            self.assertEqual(compact["phone"], original["phone"])
+                            self.assertEqual(compact["laptop"], original["laptop"])
+                            if viewport[0] < viewport[1]:
+                                self.assertLess(camera["height"], page.locator(".camera").bounding_box()["height"])
+                            page.evaluate("video.srcObject.getTracks().forEach(track => track.stop())")
+                            page.close()
+
     def test_phone_access_survives_server_restart_and_restored_tab(self):
         token = load_token(self.folder)
         info = {"phone_urls": [], "setup_urls": []}
