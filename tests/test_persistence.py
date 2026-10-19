@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
-from mapper.api.read_routes import ReadRoutes
-from mapper.api.write_routes import WriteRoutes
 from mapper.persistence.database import Placement, WarehouseDatabase
 from tests.support import WorkspaceTestCase
 
@@ -98,61 +94,16 @@ class PersistenceTests(WorkspaceTestCase):
         self.db.add_to_on_hand({"P1": 12}, FIRST)
         self.db.assign_on_hand_to_slot(self.first.slot_id, SECOND, ["P1"])
 
-        route = WriteRoutes()
-        replies = []
-        route._send_json = replies.append
-        route._send_error_json = lambda error: self.fail(str(error))
-        mapping = {"code_col": "code", "name_col": "name"}
-        with patch("mapper.api.write_routes._get_database", return_value=self.db):
-            route._handle_api_post("/api/import-csv", {
-                "mode": "new", "mapping": mapping,
-                "data": {"rows": [
-                    {"code": "P1", "name": "Formatted queue name"},
-                    {"code": "P3", "name": "New queue name"},
-                ]},
-            })
-            self.assertTrue(replies[-1]["success"])
-            self.assertEqual(self.db.get_placement_details()["P1"], Placement(self.first.slot_name, 12, SECOND))
-            self.assertEqual(dict((pid, name) for pid, name, _ in self.db.get_catalog_products()), {
-                "P1": "Formatted queue name", "P2": "Washers", "P3": "New queue name", "W1": "Warehouse name",
-            })
-            self.assertEqual(dict((pid, name) for pid, name, _ in self.db.get_display_catalog_products()), {
-                "P1": "Formatted queue name", "P2": "Washers",
-                "P3": "New queue name", "W1": "Warehouse name",
-            })
+        self.db.import_products({"P1": ("Formatted queue name", ''), "P3": ("New queue name", '')})
+        self.assertEqual(self.db.get_placement_details()["P1"], Placement(self.first.slot_name, 12, SECOND))
+        self.assertEqual(dict((pid, name) for pid, name, _ in self.db.get_catalog_products()), {
+            "P1": "Formatted queue name", "P2": "Washers", "P3": "New queue name", "W1": "Warehouse name",
+        })
 
-            reader = ReadRoutes()
-            responses = []
-            reader._send_json = responses.append
-            with patch("mapper.api.read_routes._get_database", return_value=self.db):
-                reader._handle_api_get("/api/products/catalog", {})
-            self.assertEqual({item["product_id"]: item["product_name"] for item in responses[-1]}, {
-                "P1": "Formatted queue name", "P2": "Washers",
-                "P3": "New queue name", "W1": "Warehouse name",
-            })
-
-            route._handle_api_post("/api/import-csv", {
-                "mode": "return", "mapping": mapping,
-                "data": {"rows": [
-                    {"code": "P1", "name": "Final warehouse name"},
-                    {"code": "W1", "name": "Renamed warehouse item"},
-                ]},
-            })
-        self.assertTrue(replies[-1]["success"])
-        display = {pid: name for pid, name, _ in self.db.get_display_catalog_products()}
+        self.db.import_catalog_products({
+            "P1": ("Final warehouse name", ''), "W1": ("Renamed warehouse item", ''),
+        })
+        display = {pid: name for pid, name, _ in self.db.get_catalog_products()}
         self.assertEqual(display["P1"], "Formatted queue name")
         self.assertEqual(display["W1"], "Renamed warehouse item")
         self.assertEqual(self.db.get_placement_details()["P1"], Placement(self.first.slot_name, 12, SECOND))
-
-    def test_web_csv_import_rejects_blank_names(self) -> None:
-        route = WriteRoutes()
-        errors = []
-        route._send_json = lambda response: self.fail(str(response))
-        route._send_error_json = errors.append
-        with patch("mapper.api.write_routes._get_database", return_value=self.db):
-            route._handle_api_post("/api/import-csv", {
-                "mode": "new", "mapping": {"code_col": "code", "name_col": "name"},
-                "data": {"rows": [{"code": "P1", "name": " "}]},
-            })
-        self.assertEqual(len(errors), 1)
-        self.assertEqual(dict(self.db.get_products())["P1"], "Bolts")

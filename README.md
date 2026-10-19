@@ -76,8 +76,7 @@ code, or other app resources.
 `requirements.txt` contains only libraries used by the desktop apps and existing
 tools: `openpyxl`, `playwright`, `reportlab`, `pypdf`, `beautifulsoup4`, `pandas`,
 `requests`, and `tqdm`. Their required dependencies are installed automatically.
-The optional Laya model fallback and deprecated web UI's optional native wrapper
-are excluded; the existing rule-based extraction and browser fallback remain available.
+The optional Laya model fallback is excluded; the existing rule-based extraction and browser fallback remain available.
 
 Playwright is used for the optional Chrome/KiotViet integration. The existing
 Chrome connection uses port 9222 and does not need ChromeDriver or a downloaded
@@ -405,13 +404,10 @@ L1-1A8-10
 | --- | --- |
 | `warehouse_mapper.py`, `warehouse_mapper.exe` | Root desktop script and small launcher; Python changes load on the next run. |
 | `warehouse_label_printer.py`, `warehouse_label_printer.exe` | Root label printer script and small launcher. |
-| `warehouse_web.py` | Root launcher for the deprecated web UI. |
 | `ui/desktop/` | Tkinter window, tabs, widgets, and action handlers. |
 | `mapper/persistence/` | SQLite schema and catalog, shelf, inventory, and exception operations. |
 | `mapper/features/` | CSV import, location comparison, and optional KiotViet integration. |
 | `mapper/core/` | Shared location and search rules. |
-| `mapper/api/` | Local HTTP API for the deprecated web UI. |
-| `ui/web/` | Deprecated React/TypeScript UI, retained for reference. |
 | `utils/labels/` | Label printer implementation. |
 | `tests/` | Test code; start with the file map and verification workflow in `instruction.md`. |
 | `utils/laya/` | Laya extraction tools. |
@@ -419,9 +415,8 @@ L1-1A8-10
 | `utils/build_exe.py`, `utils/launcher.c` | Rebuild the small desktop launchers. |
 | `data/` | Local database and generated output, ignored by Git. |
 
-The supported interface is Tkinter. The web UI and its API remain available as
-deprecated code. Package `__init__.py` files identify Python packages; they
-are not launchers.
+The supported interface is Tkinter. Package `__init__.py` files identify Python
+packages; they are not launchers.
 
 ## Data and backup
 

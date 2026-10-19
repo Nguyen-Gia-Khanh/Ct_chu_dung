@@ -21,7 +21,7 @@ preserves empty rows. Cell counts come from `slots`. `shelf_rows` and
 
 Use this file to locate the code for a requested desktop change. [README.md](README.md)
 explains how to launch the app and perform warehouse workflows. The supported UI
-is Tkinter; `ui/web/` and `mapper/api/` are retained as deprecated code.
+is Tkinter.
 
 ## Tab index
 

@@ -29,7 +29,6 @@ run.ps1
 data/*
 !data/README.md
 tmp/
-ui/web/node_modules/
 
 # Local statement photos and OCR artifacts (utils only)
 utils/images/
