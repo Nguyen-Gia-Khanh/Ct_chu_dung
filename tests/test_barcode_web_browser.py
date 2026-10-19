@@ -118,11 +118,17 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 errors = []
                 uploaded_frames = []
                 requested_workers = []
+                # 393: frames are decoded on the phone. 375: the phone decoder cannot load, so the
+                # page falls back to uploading frames to the laptop (and retries a failed upload).
+                on_phone = width == 393
                 page.on("pageerror", lambda error: errors.append(str(error)))
-                page.on("request", lambda request: requested_workers.append(request.url) if "/worker.js" in request.url else None)
+                page.on("request", lambda request: requested_workers.append(request.url)
+                        if "/decoder-worker.js" in request.url else None)
+                if not on_phone:
+                    page.route("**/decoder-worker.js", lambda route: route.fulfill(status=404, body="blocked"))
                 def frame_upload(route):
                     uploaded_frames.append(route.request.post_data_buffer)
-                    if width == 393 and len(uploaded_frames) == 1:
+                    if not on_phone and len(uploaded_frames) == 1:
                         route.abort()
                     else:
                         route.continue_()
@@ -151,7 +157,7 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 page.goto(base + "/scan#browser-test")
                 cell_option = page.get_by_role("checkbox", name="Include cell contents")
                 self.assertFalse(cell_option.is_checked())
-                if width == 393:
+                if on_phone:
                     cell_option.check()
                     attempts = []
                     def fail_first_post(route):
@@ -163,24 +169,31 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                         route.continue_()
                     page.route("**/api/scans", fail_first_post)
                 page.get_by_role("button", name="Start camera").click()
-                if width == 393:
+                if on_phone:
                     page.get_by_role("button", name="Retry sending").wait_for(state="visible")
                     self.assertFalse(store.recent(), "failed network delivery cannot be acknowledged")
                     page.get_by_role("button", name="Retry sending").click()
                 page.wait_for_function("document.querySelector('#delivery').textContent === 'Received by laptop.'")
-                if width == 393:
+                if on_phone:
                     self.assertEqual(attempts[0], attempts[1], "retry must reuse the delivery ID and text")
                 self.assertEqual(page.locator("#result").inner_text(), "001234567890")
-                self.assertTrue(uploaded_frames)
-                self.assertTrue(all(frame.startswith(b"\xff\xd8") for frame in uploaded_frames))
-                self.assertFalse(requested_workers, "the phone must not load its old WASM decoding worker")
+                self.assertTrue(requested_workers, "the phone decoder worker is loaded")
+                if on_phone:
+                    self.assertFalse(uploaded_frames, "decoded on the phone: no camera frames leave it")
+                    self.assertEqual(page.locator("#link-state").inner_text(), "Scanning on phone")
+                else:
+                    self.assertGreaterEqual(len(uploaded_frames), 2, "first upload failed, a later one decoded")
+                    self.assertTrue(all(frame.startswith(b"\xff\xd8") for frame in uploaded_frames))
+                    self.assertEqual(page.locator("#link-state").inner_text(), "Scanning on laptop")
+                self.assertEqual(page.locator("#badge").inner_text(), "Found")
                 self.assertIn("001234567890", page.locator("#product").inner_text())
                 self.assertEqual(page.locator("#locations").inner_text(), "L1-1A2-3\nL2-2B4-5")
-                if width == 393:
+                self.assertEqual(page.locator("#locations .loc").count(), 2)
+                if on_phone:
                     self.assertTrue(attempts[0]["include_cell_contents"])
                     self.assertEqual(page.locator("#cells caption").all_text_contents(), ["L1-1A2-3", "L2-2B4-5"])
                     self.assertEqual(page.locator("#cells tbody tr").count(), 3)
-                    self.assertIn("CAT-001", page.locator("#cells").inner_text())
+                    self.assertIn("CAT001", page.locator("#cells").inner_text())
                     self.assertIn("Catalog exception", page.locator("#cells").inner_text())
                 else:
                     self.assertTrue(page.locator("#cells").is_hidden())

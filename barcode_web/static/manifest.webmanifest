@@ -1,0 +1,11 @@
+{
+  "name": "Warehouse scanner",
+  "short_name": "Scanner",
+  "start_url": "/scan",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#123A5E",
+  "theme_color": "#123A5E",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

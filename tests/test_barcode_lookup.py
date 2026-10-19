@@ -71,6 +71,21 @@ class WarehouseLookupTests(WorkspaceTestCase):
             WarehouseLookup(missing)
         self.assertFalse(missing.exists())
 
+    def test_partial_barcode_completion_never_guesses(self):
+        self.assertEqual(self.lookup.resolve_pattern("0012345678?0"), {"status": "unique", "product_id": "001234567890"})
+        self.assertEqual(self.lookup.resolve_pattern("cat0?1"), {"status": "unique", "product_id": "CAT001"})
+        self.assertEqual(self.lookup.resolve_pattern("STAGE??"), {"status": "unique", "product_id": "STAGE01"})
+        self.assertEqual(self.lookup.resolve_pattern("NOL?CX")["status"], "none", "length must match exactly")
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            connection.executemany("INSERT INTO catalog_products(product_id,full_name) VALUES (?,?)",
+                                   [("CAT002", "Second"), ("A%BXC1", "Percent sign"), ("AYBXC1", "Letter")])
+        self.assertEqual(self.lookup.resolve_pattern("CAT00?"), {"status": "ambiguous"})
+        # '%' is a Code 39 character, never a SQL wildcard (which would also match AYBXC1).
+        self.assertEqual(self.lookup.resolve_pattern("A%BXC?"), {"status": "unique", "product_id": "A%BXC1"})
+        for invalid in ("CAT001", "C?T?0?1", "AB?", "CAT0?1;", "x" * 65 + "?"):
+            with self.assertRaises(ValueError):
+                self.lookup.resolve_pattern(invalid)
+
     def test_optional_cell_contents_include_all_barcodes_and_names(self):
         from unittest.mock import patch
         with patch.object(self.lookup, "cell_contents", wraps=self.lookup.cell_contents) as contents:

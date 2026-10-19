@@ -1,27 +1,29 @@
 # Phone barcode scanner
 
-This is a standalone LAN website. The phone sends camera frames to the laptop
-for image processing and decoding. The laptop queries the existing warehouse
+This is a standalone LAN website. **The phone decodes barcodes itself** and sends
+only the decoded text to the laptop. The laptop queries the existing warehouse
 database read-only and returns the product name, stored ID, and all saved
-locations to the phone. It uses the project's existing `.venv`, OpenCV and
-native ZXing. Run `setup_venv.cmd` after updating dependencies, then restart
-the scanner launcher and reload the phone page.
+locations to the phone. The laptop's OpenCV/ZXing frame pipeline remains as a
+fallback. It uses the project's existing `.venv`, OpenCV and native ZXing. Run
+`setup_venv.cmd` after updating dependencies, then restart the scanner launcher
+and reload the phone page.
 
 ## Start and stop
 
 1. Connect laptop and phone to the same local network.
 2. Double-click **`start_barcode_server.cmd`** at the repository root. If the
    repository `.venv` is missing, run the existing `setup_venv.cmd` first.
-3. The laptop receiver opens at `http://localhost:8766/receiver`. It shows one
-   phone link and its first-use certificate setup link. Windows prefers an
+3. The laptop receiver opens at `http://localhost:8766/receiver`. It shows two
+   QR codes: **1. Trust this laptop** (the phone setup page) and **2. Open the
+   scanner** (the HTTPS phone link with its access key). Windows prefers an
    active Private network with a gateway, prioritizing the interface selected
    with `configure_network.ps1`. Virtual adapters are not advertised when a
    suitable Private network is available. Other platforms/fallbacks use the
    default route. To override selection, pass `--lan-ip 192.168.1.13` with an
    address currently assigned to the laptop.
-4. On each phone, open the HTTP certificate setup link once and follow the
-   Android/Chrome or iPhone/Safari instructions. Then open the corresponding
-   **HTTPS phone link**, press **Start camera**, and allow camera access.
+4. On each phone, scan QR 1 once and follow its steps until its box turns green
+   (see below). Then scan QR 2, press **Start camera**, and allow camera access.
+   Add the scanner to the home screen to reopen it directly next time.
 5. Scanned content appears in the phone, the laptop receiver, the terminal,
    and `data/barcode_web/scans.jsonl`. The receiver displays the last 200 scans;
    the log keeps older scans. Barcode text is preserved, including leading
@@ -33,41 +35,52 @@ Closing the receiver's browser tab does not stop the server. There are no
 background services, containers, scheduled tasks, or automatic startup.
 Only one server can own its ports: close the old launcher before starting again.
 
-Normal browser disconnects and abandoned connections are quiet. If a phone
-rejects the HTTPS certificate, the terminal shows one short setup instruction
-at most once per minute instead of repeated tracebacks. This message does not
-mean the server stopped; the phone must still install and trust the local CA
-if its scanner page cannot open. Unexpected application faults retain their
-tracebacks for diagnosis.
+To test the scanner on the laptop itself, use the receiver's **Open the scanner
+here** link (`http://localhost:8766/scan#TOKEN`). Localhost may use the camera
+without HTTPS, so it shows no certificate warning. Do not open the phone's
+`https://192.168…` link on the laptop: Windows does not trust the local CA.
 
-The first launch downloads the pinned mkcert 1.4.4 Windows x64 executable and
-verifies its SHA-256 before running it to create a local CA and HTTPS certificate.
-It does **not** install a trusted root in Windows. The laptop receiver works
-over localhost HTTP and does not require certificate installation. If you want
-to test the scanner on the laptop itself, open
-`http://localhost:8766/scan#TOKEN`, replacing TOKEN with the fragment from a
-current phone link. Localhost is allowed to use the camera without HTTPS.
-Subsequent launches need no internet; JavaScript is served locally and decoding
-runs on the laptop. Use Chrome or Safari directly, rather than a messaging app's
-embedded browser.
+## Removing the browser certificate warning
 
-## Phone certificates and network access
+Camera access from `http://192.168...` is blocked by browsers, so the scanner
+uses HTTPS with a local certificate authority (CA) made by mkcert. A phone shows
+"connection not private" **until that CA is installed and trusted**; clicking
+through the warning is not the same as trusting it, which is why the warning
+came back on every visit.
 
-Camera access from `http://192.168...` is blocked by browsers. The setup page
-downloads **only** the public `rootCA.cer`; no private keys are served. Merely
-bypassing an HTTPS warning is not a substitute for trusting the CA.
+The setup page (`http://LAN-IP:8766/setup`) now checks trust live: it requests
+`https://LAN-IP:8765/trust-check`, which only succeeds when the phone's browser
+accepts the certificate. The box at the top turns green ("This phone trusts the
+laptop") with an **Open scanner** button, or stays orange with the remaining
+step. It rechecks every few seconds and when you return from Settings.
 
-- **Android:** Settings → install a certificate → **CA certificate**. Select
-  the downloaded certificate. The exact Settings path varies by manufacturer.
+- **Android:** download the certificate (choose **Keep** if Chrome warns about
+  an insecure download), then Settings → search **CA certificate** → Install
+  anyway → pick the file. "VPN & app user certificate" and "Wi-Fi certificate"
+  do **not** work for Chrome. Menu names vary by manufacturer.
 - **iPhone:** use Safari to download; install the profile under Settings →
   General → VPN & Device Management. Then enable full trust under General →
-  About → Certificate Trust Settings.
+  About → Certificate Trust Settings. Skipping full trust keeps the warning.
 
-Only trust the certificate from your own laptop. Keep
-`data/barcode_web/certs/rootCA-key.pem` and `server-key.pem` private. A trusted
-CA can issue other certificates accepted by that device. Remove the phone's
-CA/profile in Settings when it is no longer needed. Keys, executable, and logs
-are under the repository's already ignored `data/` directory.
+When a phone's browser rejects the certificate, the laptop receiver names that
+phone ("Phone 192.168.1.40 does not trust this laptop yet") until it connects
+successfully. The terminal still prints one short note at most once per minute.
+
+The first launch downloads the pinned mkcert 1.4.4 Windows x64 executable and
+verifies its SHA-256 before running it to create the CA and HTTPS certificate.
+It does **not** install a trusted root in Windows. The setup page downloads
+**only** the public `rootCA.cer`; no private keys are served. Only trust the
+certificate from your own laptop. Keep `data/barcode_web/certs/rootCA-key.pem`
+and `server-key.pem` private: a trusted CA can issue other certificates accepted
+by that device. Remove the phone's CA/profile when it is no longer needed. Keys,
+executable, and logs are under the repository's already ignored `data/` directory.
+
+Normal browser disconnects and abandoned connections are quiet. Unexpected
+application faults retain their tracebacks for diagnosis. Subsequent launches
+need no internet: JavaScript, WASM and fonts are local (system fonts only).
+Use Chrome or Safari directly, rather than a messaging app's embedded browser.
+
+## Network access
 
 If Windows asks about Python network access, allow it on your **private**
 network. If the phone cannot even open the HTTP setup link, check Windows
@@ -90,14 +103,12 @@ If the laptop's LAN IP changes, restart the launcher: it regenerates the server
 certificate using the same local CA. The phone does not need to reinstall that
 CA. The phone link stays the same across server restarts while the laptop's LAN
 IP and ports stay the same. The phone remembers its access key in this browser's
-local storage, so restoring a tab or reopening its address after a browser restart
-does not require pasting the full phone link again. Existing tabs migrate their
-old temporary key when refreshed. If a tab has already lost that key, open the
-receiver's full phone link once to save it. On later server restarts, refresh the
-phone tab and press **Start camera**. If the camera is still running, frame
-uploads retry automatically. Pending scans survive a reload in the same tab;
-use **Retry sending**. Clearing this site's browser data or using a new private
-browsing session requires opening the full phone link again.
+local storage, so restoring a tab, reopening its address, or the home-screen
+icon does not require the full phone link again. If a tab has already lost that
+key, scan the receiver's phone QR code once to save it. On later server restarts,
+refresh the phone tab and press **Start camera**. Pending scans survive a reload
+in the same tab; use **Retry sending**. Clearing this site's browser data or
+using a new private browsing session requires opening the full phone link again.
 
 The random access token is created once and saved in
 `data/barcode_web/session-token.txt`, which is ignored by Git and is not served
@@ -121,157 +132,148 @@ assignment changes occur. Missing databases fail with a startup message.
 
 The raw barcode remains unchanged in the scan log. Lookup trims surrounding
 whitespace and accepts exact stored IDs or their dashless spellings, ignoring
-ASCII case. It reuses `exact_product_search_id` to prefer a literal match and
-reject ambiguous aliases instead of guessing. Matches include working products,
-catalog-only products, and staged exception products. Product names and all
-distinct regular/exception locations use the existing `find_product_locations`
-query. Saved location labels are returned as stored, one per line on the phone.
+ASCII case. Matches include working products, catalog-only products, and staged
+exception products. Product names and all distinct regular/exception locations
+use the existing `find_product_locations` query. Saved location labels are
+returned as stored and shown on the phone as yellow bin labels.
 
-Enable **Include cell contents** on the phone before scanning to request a table
+Enable **Cell contents** on the phone before scanning to request a table
 for every saved location. Each table lists all barcodes in that cell, their
 product names, and stock, including catalog-only and staged exceptions. Each
 barcode appears once per cell; quantities across regular/exception placements
-in the same cell are summed, with unknown stock shown as a dash. The checkbox
-starts unchecked. When unchecked, the server skips cell-content queries and
-returns only the normal product/location lookup. Changing the checkbox applies
-to the next scan or retry; it clears any previous cell tables immediately.
-Cell data and this request option are not saved in the scan log.
+in the same cell are summed, with unknown stock shown as a dash. The toggle
+starts off. When off, the server skips cell-content queries and returns only
+the normal product/location lookup. Changing it applies to the next scan or
+retry; it clears any previous cell tables immediately. Cell data and this
+request option are not saved in the scan log.
 
 Each scan/retry queries current SQLite data; assignments saved in the desktop
 app become visible on the next lookup without restarting the web server.
 Unknown products and known products without a saved location are separate
 results. A database failure keeps the scan pending on the phone for retry.
 
-## Frame processing
+**Catalog completion** (`POST /api/resolve`): when the phone has read a Code 39
+label's full length but one or two characters stayed unreadable for half a
+second, it sends a pattern such as `53205K?L640ZC`. The server answers with a
+product only if **exactly one** catalog ID of that exact length matches every
+read character; otherwise the phone keeps scanning. A completed read is shown
+as "completed from catalog" and logged with format `Code 39 · catalog`.
+At least four characters must be read; `%` and `_` are matched literally.
 
-The phone requests a rear camera preview at 30 FPS, with a 15 FPS minimum.
-Scanning targets **15 selected frames per second**, independently of preview.
-The top camera window is a **3.5:1 horizontal strip**, including when the phone
-is held vertically. The video uses a centered cover crop, and capture uses the
-same source coordinates: pixels outside that window are never uploaded. The
-strip is scaled uniformly to at most 1280 pixels wide and encoded as JPEG at
-92% quality. The phone sends it to authenticated `POST /api/frames` over local
-HTTPS. Processing runs on the laptop, with no phone app to install.
+## Decoding
 
-The default preview is live color, with a faint white horizontal center line
-and a red rectangle around the candidate barcode. The rectangle is an aiming
-hint, not confirmation of a successful read; only valid decoder results are
-accepted. It clears when the candidate disappears, capture fails or scanning
-stops. The compact strip and page layout are unchanged.
+The scanner page shows a 4:3 camera preview with a **3:1 scan frame**; only the
+frame's pixels are decoded. Each camera frame the decoder is free for is copied
+at full resolution (up to 1920 px wide, no JPEG) to a Web Worker on the phone
+(`static/decoder-worker.js`). One frame is in flight; others are skipped, so
+slow phones drop frames instead of lagging. The worker tries, in order:
 
-**Mask** is optional and starts off: the window is white everywhere except
-thresholded black ink inside a likely barcode region. This is a diagnostic
-image returned as an in-memory PNG, not the image used for decoding.
-OpenCV's built-in `barcode_BarcodeDetector`
-replaces the hand-written Sobel/contour tag locator. It runs at reduced width
-with white padding for the shallow strip. A successful ZXing position is a
-fallback when OpenCV finds no candidate; a scanline-only position is shown as
-a narrow band. Candidate masks can still be incomplete or mistaken.
+1. **Native `BarcodeDetector`** when the browser provides it (Android Chrome,
+   backed by the platform's ML Kit engine). Not available in iPhone Safari.
+   A native Code 39 read must repeat on two frames within 0.6 s.
+2. **zxing-wasm 3.1.5** (already vendored) with `tryHarder` and two agreeing
+   scanlines. The original frame is tried every other frame with all formats; in
+   between, a light-flattened (horizontal closing + division, sharpened across
+   bars) or local-threshold copy is tried for linear codes only. These mirror the
+   laptop's "local contrast" and "local threshold" stages.
+3. **Code 39 recovery** (`static/robust39.js`) for labels ZXing cannot read: see below.
 
-The decoder tries the original strip first. It calls ZXing-C++'s **single-code
-reader**, stopping at the first valid barcode instead of searching for more
-symbols. Rotation and native downscale attempts remain enabled. On a miss,
-an OpenCV horizontal grayscale closing estimates local illumination; division
-by that background compensates for uneven light. A gentle horizontal
-convolution `[-0.25, 1.5, -0.25]` then sharpens across the vertical bars before
-one retry. If both full-strip attempts miss, a final retry uses the native
-candidate's angle to rotate the **entire strip** on an expanded white canvas,
-then applies adaptive local thresholding. It preserves both barcode ends and
-the clear rows above/below a glare patch, even when glare splits the locator's
-candidate into fragments. If no candidate exists, this retry thresholds the
-unrotated full strip. Expanded rotations obey the camera pixel-allocation cap.
-The more sensitive local threshold helps low-contrast ink that the native
-scanline contrast threshold can reject. There are at most **three decoder calls
-per frame**. No decoder attempt is cropped to an unconfirmed candidate. Retry
-positions are mapped back into source coordinates. The old `red_regions` and
-`straighten` helpers remain inactive.
+The rectangle on the preview is an aiming hint from the decoder, not a
+confirmation. A read flashes the frame green, vibrates, and beeps (speaker
+button toggles the beep). Torch and zoom buttons appear when the phone's camera
+exposes them; zoom gives the sensor's real detail when labels are small.
 
-A localized reflection does not have to prevent reading if a complete bar
-sequence remains visible on other rows. A generated 3.5:1 scan-strip regression
-reproduced a failure at 8/12 degrees of tilt with a small central glare patch:
-the old final retry cropped to a partial candidate. Full-strip rotation recovers
-all 12 tested angle/patch combinations, including six previously missed cases.
-This verifies the reproduced failure, not every reflection on real packaging.
+**Laptop fallback.** If the worker fails to load or keeps failing, or has not
+become ready after 4 s, the page uploads JPEG frames to `POST /api/frames` at up
+to 15 per second, exactly as before (`processing.py`, unchanged). While the
+phone decodes, it also sends one frame every ~350 ms to the laptop as a second
+opinion when it has seen a barcode-like pattern for 1.2 s without a read. The
+**Mask** toggle still requests the laptop's thresholded diagnostic image. The
+status pill says "Scanning on phone" or "Scanning on laptop".
 
-**Mask** only changes the preview; lighting/angle retries stay enabled in the
-normal color view. `X-Mask: 1` requests the in-memory PNG; the normal API response
-has `mask: null`, saving encoding and transfer work. Normalized `box` coordinates
-are returned independently of the debug mask. `X-Enhance: 0` is still available
-to API clients for an original-only decode.
+### Code 39 recovery
 
-The page fits the phone viewport without page scrolling: it keeps the scanned
-barcode, product ID/name, locations and compact controls. Routine status and
-FPS text are hidden; failures and retry controls remain visible when needed.
-Optional cell tables scroll inside the remaining space. FPS remains available
-in the hidden `#rate` element for browser diagnostics.
+The warehouse labels are Code 39, which has no check digit, so this module is
+built to miss rather than misread:
 
-This is not a guarantee for folded or reflective packaging. Synthetic shadow,
-partial-glare and mild-curve checks exercise the pipeline; actual tags still
-need camera testing. The geometric retry corrects a candidate's angle; it does
-not estimate or undo arbitrary nonlinear warping of crumpled packaging. Saturated glare
-or a fold can remove required bar detail.
+- **Many scanlines.** Up to 48 lines across the frame, along the bars' estimated
+  angle (handles tilt up to about 25°), read in both directions (upside-down labels).
+- **Threshold-free edges.** Sub-pixel edges from intensity-gradient peaks relative
+  to local contrast, so shadows, low contrast and glare edges do not need one
+  global threshold.
+- **Per-character normalisation.** Each 9-element character is classified by its
+  own bar and space widths separately (robust to ink spread), then re-checked after
+  correcting the stretch measured from its neighbours. Curved packaging and
+  perspective compress characters smoothly, which this cancels; a character that
+  changes under correction casts no vote.
+- **Fragments and anchors.** A line interrupted by glare or missing ink still yields
+  character runs. Runs touching the start or stop character with a quiet zone are
+  anchors; the others are placed by measured pitch across the gap.
+- **Voting across lines and frames.** Characters vote for slots counted from the
+  start and from the stop, across a rolling ~1 s of frames, so the left half from
+  one frame and the right half from another complete one code. The length comes
+  from complete lines, or from aligning start- and stop-counted votes when no line
+  sees both ends.
+- **Acceptance.** Every character needs ≥2.5 weighted votes from **at least two
+  frames** and a 2:1 margin, and start- and stop-counted votes must agree. In a
+  600-trial random heavy-damage benchmark, accepting single-frame reads produced 2
+  wrong codes; requiring two frames produced 0 with more correct reads.
 
-There is at most **one frame in flight per phone** and one concurrent decode
-across phones. Slower capture, Wi-Fi or decoding skips frames rather than
-building a queue. A 15 FPS target is not a hardware guarantee. The camera stops
-when the tab becomes hidden and needs
-an explicit restart when you return.
+Synthetic checks (in `tests/test_barcode_web.js`) cover blur and noise, tilt to 25°,
+shadow, curved packaging with bowed bars, perspective, ink spread, low contrast,
+2.5 px modules, upside-down labels, glare on some rows, and a missing chunk that
+moves between frames. ZXing reads none of the moving-chunk frames; recovery
+reads the code within a few frames. If three or more characters are hidden in
+every frame, nothing is accepted. Code 128 labels and random bar texture produce
+no Code 39 reads. These are generated images: real packaging, camera focus and
+phone speed still need testing on actual phones.
 
-Supported decoder selection: linear barcodes (including Code 128, Code 39,
-EAN/UPC and ITF), QR and Data Matrix. Keep the whole code plus its blank margins
-inside the horizontal strip. Move a barcode out for about 1.2
-seconds before deliberately scanning the same value again.
+Supported formats: Code 39, Code 128, QR and Data Matrix. Keep the whole code plus
+its blank margins inside the frame. Move a barcode out for about 1.2 seconds
+before deliberately scanning the same value again.
 
-JPEG frames are processed in memory and discarded without logging. Frame byte
-size and dimensions are bounded before native decoding. Only decoded
-`{id, text, format}` JSON is saved through `/api/scans`. A failed delivery stays pending on the
-phone and blocks accepting another barcode until retried. Retries reuse the
-same ID; the server suppresses duplicate delivery IDs in its last 2,000 records.
-Each request uses the current session token from the phone-link fragment.
+Frames never leave the phone during phone decoding. In fallback, JPEG frames are
+processed in memory on the laptop and discarded without logging. Only decoded
+`{id, text, format}` JSON is saved through `/api/scans`. A failed delivery stays
+pending on the phone and blocks accepting another barcode until retried. Retries
+reuse the same ID; the server suppresses duplicate delivery IDs in its last
+2,000 records. Each request uses the session token from the phone link.
 
-## Scanner framework check (2026-10-16)
-
-- [ZXing-C++](https://github.com/zxing-cpp/zxing-cpp) is the existing native
-  decoder, with Python and WebAssembly bindings; it is already an established
-  scanner engine, not a custom decoder. This change uses its single-code API.
-- [OpenCV's barcode detector](https://docs.opencv.org/4.x/dc/df7/classcv_1_1barcode_1_1BarcodeDetector.html)
-  is already installed and returns candidate quadrangles. Only localization
-  is used; ZXing continues to decode Code 128 and the other supported formats.
-- [Quagga2](https://github.com/ericblade/quagga2) is a browser alternative with
-  localization and configurable sampling. Its documentation recommends a
-  restricted scan area when users can aim through a rectangle. It has not
-  been benchmarked against this pipeline on real packaging, so a speed or
-  accuracy advantage is unproven.
-- [Dynamsoft's browser samples](https://github.com/Dynamsoft/barcode-reader-javascript-samples)
-  demonstrate a commercial browser SDK. Its vendor advertises curved/damaged
-  barcode support, but that is not verified here. Integration requires a
-  license; no trial, paid SDK, or external image-upload service was added.
+The camera stops when the tab becomes hidden and needs an explicit restart
+when you return. The page fits the phone viewport without page scrolling;
+cell tables scroll inside the result sheet. Decode rate and time are kept in
+the hidden `#rate` element for browser diagnostics.
 
 ## Source navigation and checks
 
 - `server.py`: certificate generation, two foreground HTTP servers, bounded
-  frame/text APIs, local receiver session, JSONL recording and shutdown.
-- `processing.py`: JPEG validation, native barcode localization, binary mask,
-  illumination compensation, final geometric/local-threshold retry and single-code decoding.
-- `lookup.py`: read-only SQLite connection, exact/dashless matching, and reuse
-  of the desktop persistence lookup for regular and exception locations.
-- `static/scanner.js`: camera lifecycle, JPEG upload, 15 FPS scheduling, one-frame
-  backpressure, duplicate suppression and acknowledged/retryable delivery.
-- `static/worker.js` and `processing.js`: legacy phone-side decoder and
-  convolution, unused by the current scanner page.
-- `static/index.html`, `receiver.html`, `setup.html`, `style.css`: small scanner,
-  laptop receiver and phone certificate instructions.
+  frame/text APIs, `/trust-check`, receiver QR codes, untrusted-phone alerts,
+  catalog completion endpoint, JSONL recording and shutdown.
+- `processing.py`: laptop fallback: JPEG validation, native barcode localization,
+  binary mask, illumination compensation, geometric/local-threshold retry.
+- `lookup.py`: read-only SQLite connection, exact/dashless matching, location
+  lookup, and unique-only completion of partly read barcodes.
+- `static/scanner.js`: camera lifecycle, scan-frame crop, phone decoder worker,
+  laptop fallback, catalog completion, torch/zoom/beep, duplicate suppression and
+  acknowledged/retryable delivery.
+- `static/decoder-worker.js`: native detector, zxing-wasm variants and recovery.
+- `static/robust39.js`: damaged/curved/partial Code 39 recovery (no DOM; also
+  runs in Node tests).
+- `static/index.html`, `receiver.html`, `setup.html`, `style.css`, `icon.svg`,
+  `manifest.webmanifest`: scanner, laptop receiver, phone setup with trust check.
 - `static/vendor/`: unmodified zxing-wasm 3.1.5 reader assets and licenses. npm
   archive integrity verified before extraction; no CDN requests at runtime.
+- `../tests/test_barcode_web.js` and `code39_scenes.js`: the real worker on Code
+  128/QR/Code 39, ZXing agreement with the Code 39 generator, damage scenarios,
+  catalog patterns, false-positive and random-damage (zero wrong reads) checks.
 - `../tests/test_barcode_web.py`: live HTTP validation, persistence, retries,
-  unauthorized requests and private-key/path access checks.
-- `../tests/test_barcode_lookup.py`: exact/dashless IDs, alias collisions,
-  catalog/staged exceptions, multiple locations and enforced read-only access.
-- `../tests/test_barcode_processing.py`: generated red component labels on white
-  packaging with black contents, rotation/perspective/low contrast, QR fallback,
-  blank frames and rejection of invalid/oversized images.
-- `../tests/test_barcode_web.js`: bundled WASM/worker decoding of synthetic
-  Code 128 and QR images, filter correctness, and 15-frame workload timing.
+  trust check, QR/session loopback limits, resolve validation, private files.
+- `../tests/test_barcode_lookup.py`: exact/dashless IDs, catalog/staged
+  exceptions, read-only access and unique-only pattern completion.
+- `../tests/test_barcode_processing.py`: laptop fallback pipeline.
+- `../tests/test_barcode_web_browser.py`: headless Chrome with a fake camera at
+  phone sizes: phone-side decoding with no frame uploads, and laptop fallback
+  when the worker is blocked.
 
 Run from the repository root:
 
@@ -281,62 +283,13 @@ node tests/test_barcode_web.js
 & '.\.venv\Scripts\python.exe' -m unittest tests.test_barcode_web_browser
 ```
 
-For the temporary mask/lighting path, this focused check uses generated images
-and does not access the warehouse database:
+The browser check needs the already installed Playwright package, Node, and
+Chrome. It is not a real Safari or phone camera test: camera focus, real FPS,
+native `BarcodeDetector` behaviour and LAN firewall reachability must be checked
+on actual Android and iPhone hardware.
 
-```powershell
-@'
-import base64, cv2, numpy as np, zxingcpp
-from unittest.mock import patch
-from barcode_web import processing as p
-from tests.test_barcode_processing import packaging, jpeg
-bars = np.asarray(zxingcpp.write_barcode(zxingcpp.BarcodeFormat.Code128, '06410KFL850', 660, 240))
-label = cv2.cvtColor(bars, cv2.COLOR_GRAY2BGR)
-shadow = (label * np.linspace(.25, 1, label.shape[1])[None, :, None]).astype(np.uint8)
-flare = (235 + bars.astype(np.float32) / 255 * 20).astype(np.uint8)
-tilted = np.full((260, 800), 255, np.uint8)
-tilted[95:165, 70:730] = cv2.resize(bars, (660, 70))
-tilted = cv2.warpAffine(tilted, cv2.getRotationMatrix2D((400, 130), 15, 1), (800, 260), borderValue=255)
-for scene in (label, shadow, packaging(label)[180:540], flare, tilted):
-    with patch.object(p, 'read', wraps=p.read) as reader:
-        answer = p.decode_frame(jpeg(scene), include_mask=True)
-        assert reader.call_count <= 3
-    assert answer['results'][0]['text'] == '06410KFL850'
-    raw = base64.b64decode(answer['mask'].split(',')[1])
-    mask = cv2.imdecode(np.frombuffer(raw, np.uint8), 0)
-    y, x = np.where(mask == 0)
-    assert set(np.unique(mask)) == {0, 255} and y.max() - y.min() > 10
-assert p.decode_frame(jpeg(shadow))['stage'] == 'local contrast'
-assert p.decode_frame(jpeg(flare))['stage'] == 'local threshold'
-assert p.decode_frame(jpeg(tilted))['stage'] == 'angle / local threshold'
-assert p.decode_frame(jpeg(label))['mask'] is None
-print('Decode budget, shadow/flare/angle recovery, mask and default color path passed.')
-for angle in (0, 8, 12):
-    for glare in (0, 12, 24, 36):
-        scene = np.full((228, 800), 255, np.uint8)
-        scene[69:159, 70:730] = cv2.resize(bars, (660, 90))
-        if glare:
-            cv2.ellipse(scene, (400, 114), (90, glare // 2), 0, 0, 360, 255, -1)
-        scene = cv2.warpAffine(scene, cv2.getRotationMatrix2D((400, 114), angle, 1), (800, 228), borderValue=255)
-        with patch.object(p, 'read', wraps=p.read) as reader:
-            answer = p.decode_frame(jpeg(scene))
-            assert reader.call_count <= 3
-        assert answer['results'][0]['text'] == '06410KFL850', (angle, glare)
-wide = np.full((16, p.MAX_FRAME_PIXELS // 16), 255, np.uint8)
-assert p.deskew_strip(wide, np.float32([[0, 0], [10, 10], [9, 11], [-1, 1]])) == (None, None)
-print('Partial central glare at 0/8/12 degrees and rotated-allocation guard passed.')
-'@ | & '.\.venv\Scripts\python.exe' -
-```
-
-Browser camera performance and focus must still be tested on real Android and
-iPhone hardware. Synthetic/local checks cannot establish phone FPS or LAN
-firewall reachability.
-
-The optional browser check needs the already installed Playwright package,
-Node, and Chrome. It uses fake video in an isolated headless Chrome process
-at Android/iPhone viewport sizes; it is not a real Safari or phone camera test.
-
-Upstream references: [ZXing Python](https://github.com/zxing-cpp/zxing-cpp/tree/master/wrappers/python),
+Upstream references: [ZXing-C++](https://github.com/zxing-cpp/zxing-cpp),
+[zxing-wasm](https://github.com/Sec-ant/zxing-wasm),
+[Barcode Detection API](https://developer.mozilla.org/docs/Web/API/Barcode_Detection_API),
 [OpenCV filtering](https://docs.opencv.org/4.13.0/d4/d86/group__imgproc__filter.html),
-[legacy ZXing WASM](https://github.com/Sec-ant/zxing-wasm),
 [mkcert mobile trust instructions](https://github.com/FiloSottile/mkcert#mobile-devices).

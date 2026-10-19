@@ -2,15 +2,110 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Scanner HTTPS setup</title>
+<meta name="theme-color" content="#123A5E">
+<title>Scanner phone setup</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
-<h1>First-use phone setup</h1>
-<p>The camera requires a trusted HTTPS connection to your laptop. Install this laptop's local certificate once on each phone.</p>
-<p><a href="/rootCA.cer">Download laptop CA certificate</a></p>
-<p><strong>Android / Chrome</strong></p>
-<ol><li>Download the certificate above.</li><li>In Settings, search for “Install a certificate”. Choose <strong>CA certificate</strong> (usually Security → Encryption &amp; credentials → Install a certificate). Select the downloaded file and confirm. Menu names vary by phone.</li><li>Open the current <strong>HTTPS phone link</strong> from the laptop receiver in Chrome. Press Start camera and allow camera access.</li></ol>
-<p><strong>iPhone / Safari</strong></p>
-<ol><li>Open this setup page in Safari and download the certificate. Allow the configuration profile.</li><li>Open Settings → General → VPN &amp; Device Management (or Profile Downloaded). Install the mkcert profile.</li><li>Open Settings → General → About → Certificate Trust Settings. Enable full trust for this mkcert root.</li><li>Open the current <strong>HTTPS phone link</strong> from the laptop receiver in Safari. Press Start camera and allow camera access.</li></ol>
-<p>Only install the certificate from your own laptop. A trusted CA can issue certificates your phone accepts; protect the laptop's private keys. You can remove the certificate from Settings when you stop using this scanner.</p>
-<p class="muted">This HTTP page is only for certificate setup. Camera scanning and sending barcode text use HTTPS. The server never serves private keys.</p>
+<body class="page setup">
+<header class="masthead"><div class="inner"><h1>Phone setup</h1></div></header>
+<div class="content">
+  <section class="trust" id="trust" data-state="checking" aria-live="polite">
+    <h2 id="trust-title">Checking this phone…</h2>
+    <p id="trust-text">Testing whether this phone trusts the laptop's certificate.</p>
+    <a class="primary" id="open-scanner" hidden>Open scanner</a>
+  </section>
+
+  <div class="tabs" role="tablist" aria-label="Phone type">
+    <button role="tab" id="tab-android" aria-controls="android" aria-selected="true" type="button">Android</button>
+    <button role="tab" id="tab-iphone" aria-controls="iphone" aria-selected="false" type="button">iPhone</button>
+  </div>
+
+  <section class="panel" id="android" role="tabpanel" aria-labelledby="tab-android">
+    <ol class="steps">
+      <li><div>
+        <h3>Download the certificate</h3>
+        <p>Chrome may warn that the file is downloaded over an insecure connection. Choose <strong>Keep</strong>: it is only this laptop's public certificate.</p>
+        <a class="download" href="/rootCA.cer">Download certificate</a>
+      </div></li>
+      <li><div>
+        <h3>Install it as a CA certificate</h3>
+        <p>Open Settings and search for <strong>CA certificate</strong> (often Security → Encryption &amp; credentials → Install a certificate → CA certificate). Choose <strong>Install anyway</strong>, then pick the downloaded file.</p>
+        <p>Do not choose “VPN &amp; app user certificate” or “Wi-Fi certificate”. Chrome ignores those, and the warning stays.</p>
+      </div></li>
+      <li><div>
+        <h3>Come back to this page</h3>
+        <p>The box at the top turns green within a few seconds. If it stays orange, restart Chrome and check again.</p>
+      </div></li>
+    </ol>
+  </section>
+
+  <section class="panel" id="iphone" role="tabpanel" aria-labelledby="tab-iphone" hidden>
+    <ol class="steps">
+      <li><div>
+        <h3>Download the profile in Safari</h3>
+        <p>This page must be open in Safari, not another browser. Tap the button and choose <strong>Allow</strong>.</p>
+        <a class="download" href="/rootCA.cer">Download certificate</a>
+      </div></li>
+      <li><div>
+        <h3>Install the profile</h3>
+        <p>Open Settings → General → VPN &amp; Device Management (or “Profile Downloaded” at the top of Settings). Tap the <strong>mkcert</strong> profile and install it.</p>
+      </div></li>
+      <li><div>
+        <h3>Turn on full trust</h3>
+        <p>Open Settings → General → About → Certificate Trust Settings and switch on the mkcert certificate. Without this step Safari still shows the warning.</p>
+      </div></li>
+      <li><div>
+        <h3>Come back to this page</h3>
+        <p>The box at the top turns green within a few seconds.</p>
+      </div></li>
+    </ol>
+  </section>
+
+  <p class="footnote">Only install the certificate from your own laptop. A trusted certificate authority can vouch for other sites on this phone, so the laptop keeps its private key secret and never serves it. Remove the profile in Settings when you stop using the scanner.</p>
+</div>
+<script>
+const trust = document.querySelector('#trust');
+const title = document.querySelector('#trust-title');
+const text = document.querySelector('#trust-text');
+const open = document.querySelector('#open-scanner');
+const iphone = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let port = 8765, timer;
+
+function selectTab(name) {
+  for (const tab of ['android', 'iphone']) {
+    document.querySelector(`#tab-${tab}`).setAttribute('aria-selected', String(tab === name));
+    document.querySelector(`#${tab}`).hidden = tab !== name;
+  }
+}
+document.querySelector('#tab-android').addEventListener('click', () => selectTab('android'));
+document.querySelector('#tab-iphone').addEventListener('click', () => selectTab('iphone'));
+selectTab(iphone ? 'iphone' : 'android');
+
+function show(state, heading, body) {
+  trust.dataset.state = state;
+  title.textContent = heading;
+  text.textContent = body;
+  open.hidden = state !== 'ok';
+}
+
+async function check() {
+  clearTimeout(timer);
+  const base = `https://${location.hostname}:${port}`;
+  try {
+    // An untrusted certificate makes this request fail; a trusted one completes it.
+    await fetch(`${base}/trust-check?${Date.now()}`, { mode: 'no-cors', cache: 'no-store', signal: AbortSignal.timeout(4000) });
+    open.href = `${base}/scan`;
+    show('ok', 'This phone trusts the laptop',
+         'The scanner opens without a warning. If it asks for a phone link, scan the second QR code on the laptop.');
+  } catch (_) {
+    show('bad', 'Not trusted yet',
+         iphone ? 'Finish the iPhone steps below, including full trust. This box rechecks automatically.'
+                : 'Finish the Android steps below. This box rechecks automatically.');
+    timer = setTimeout(check, 4000);
+  }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+fetch('/api/trust-info').then(response => response.json()).then(info => { if (info.https_port) port = info.https_port; })
+  .catch(() => {}).finally(check);
+</script>
 </html>

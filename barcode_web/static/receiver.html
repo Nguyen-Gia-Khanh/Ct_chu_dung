@@ -2,54 +2,128 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Received barcodes</title>
+<title>Scanner receiver</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
-<h1>Received barcodes</h1>
-<p>Open a phone link below on the same Wi-Fi. First install the HTTPS certificate on that phone using its setup link.</p>
-<ul id="links"></ul>
-<p id="status" role="status">Connecting…</p>
-<table><thead><tr><th>Time</th><th>Barcode content</th></tr></thead><tbody id="scans"></tbody></table>
-<p class="muted">Close the server's terminal tab/window to stop it. Closing this browser tab leaves the server running. Scans are saved to data/barcode_web/scans.jsonl.</p>
+<body class="page">
+<header class="masthead"><div class="inner">
+  <h1>Scanner receiver</h1>
+  <span id="status" class="pill" role="status" data-state="off">Connecting…</span>
+</div></header>
+<div class="content receiver-grid">
+  <section class="panel" aria-labelledby="connect-title">
+    <h2 id="connect-title">Connect a phone</h2>
+    <p class="muted">Phone and laptop must be on the same Wi-Fi.</p>
+    <div id="alerts"></div>
+    <ol class="steps" id="steps">
+      <li>
+        <div>
+          <h3>Trust this laptop (once per phone)</h3>
+          <p>Scan with the phone camera and follow the steps. The page turns green when the phone is ready.</p>
+          <div class="qr-row">
+            <img class="qr" id="setup-qr" alt="QR code for the phone setup page" hidden>
+            <a id="setup-link"></a>
+          </div>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Open the scanner</h3>
+          <p>Scan to open the scanner with this laptop's access key. On the phone, add it to the home screen to skip this next time.</p>
+          <div class="qr-row">
+            <img class="qr" id="phone-qr" alt="QR code for the phone scanner link" hidden>
+            <a id="phone-link"></a>
+          </div>
+        </div>
+      </li>
+    </ol>
+    <p class="footnote" id="local-test" hidden>Testing on this laptop? <a id="local-link">Open the scanner here</a>; localhost needs no certificate.</p>
+    <p class="footnote" id="no-address" hidden>No LAN address found. Connect the laptop to your network and restart the scanner.</p>
+  </section>
+  <section class="panel" aria-labelledby="scans-title">
+    <div class="scans-head">
+      <h2 id="scans-title">Received barcodes</h2>
+      <span class="muted" id="count"></span>
+    </div>
+    <table class="scans">
+      <thead><tr><th>Time</th><th>Barcode content</th><th>Format</th></tr></thead>
+      <tbody id="scans"></tbody>
+    </table>
+    <p class="footnote">Scans are saved to data/barcode_web/scans.jsonl. Closing this tab leaves the server running; close the server's terminal window to stop it.</p>
+  </section>
+</div>
 <script>
 const status = document.querySelector('#status');
-let token;
+let token, newest = null;
+function setStatus(state, text) { status.dataset.state = state; status.textContent = text; }
+function showLink(id, url) {
+  const link = document.querySelector(id);
+  link.href = url;
+  link.textContent = url.replace(/#.*/, '');
+}
+function showAlerts(phones) {
+  const alerts = document.querySelector('#alerts');
+  alerts.replaceChildren(...phones.map(phone => {
+    const box = document.createElement('p');
+    box.className = 'alert';
+    const title = document.createElement('strong');
+    title.textContent = `Phone ${phone.address} does not trust this laptop yet`;
+    box.append(title, 'Its browser rejected the certificate. On that phone, do step 1 again and make sure the setup page turns green.');
+    return box;
+  }));
+}
 async function refresh() {
   try {
-    if (!token) {
-      const response = await fetch('/api/session');
-      if (!response.ok) throw new Error('Open this receiver on the laptop.');
-      const session = await response.json();
+    const response = await fetch('/api/session');
+    if (!response.ok) throw new Error('Open this receiver on the laptop.');
+    const session = await response.json();
+    if (session.token !== token) {
       token = session.token;
-      const links = document.querySelector('#links');
-      links.replaceChildren();
-      session.phone_urls.forEach((url, i) => {
-        const item = document.createElement('li');
-        const phone = document.createElement('a');
-        phone.href = url; phone.textContent = url;
-        const setup = document.createElement('a');
-        setup.href = session.setup_urls[i]; setup.textContent = 'First-use certificate setup';
-        const line = document.createElement('small'); line.append(setup);
-        item.append(phone, line); links.append(item);
-      });
-      if (!session.phone_urls.length) links.textContent = 'No LAN address found. Connect the laptop to your network and restart.';
+      const hasLinks = session.phone_urls.length > 0;
+      document.querySelector('#no-address').hidden = hasLinks;
+      document.querySelector('#steps').hidden = !hasLinks;
+      if (hasLinks) {
+        showLink('#setup-link', session.setup_urls[0]);
+        showLink('#phone-link', session.phone_urls[0]);
+        for (const target of ['setup', 'phone']) {
+          const image = document.querySelector(`#${target}-qr`);
+          image.src = `/api/qr?target=${target}`;
+          image.hidden = false;
+        }
+      }
+      if (session.local_scanner_url) {
+        document.querySelector('#local-link').href = session.local_scanner_url;
+        document.querySelector('#local-test').hidden = false;
+      }
     }
-    const response = await fetch('/api/scans', { headers: { Authorization: `Bearer ${token}` } });
-    if (response.status === 403) token = null;
-    if (!response.ok) throw new Error('Could not read scans.');
-    const scans = await response.json();
+    showAlerts(session.untrusted_phones || []);
+    const scansResponse = await fetch('/api/scans', { headers: { Authorization: `Bearer ${token}` } });
+    if (scansResponse.status === 403) token = null;
+    if (!scansResponse.ok) throw new Error('Could not read scans.');
+    const scans = await scansResponse.json();
+    const latest = scans[0]?.id ?? null;
     const rows = scans.map(scan => {
       const row = document.createElement('tr');
-      const time = document.createElement('td'); time.textContent = new Date(scan.received_at).toLocaleTimeString();
+      if (newest !== null && scan.id === latest && latest !== newest) row.className = 'fresh';
+      const time = document.createElement('td'); time.className = 'time';
+      time.textContent = new Date(scan.received_at).toLocaleTimeString();
       const value = document.createElement('td'); value.className = 'value'; value.textContent = scan.text;
-      const format = document.createElement('small'); format.textContent = scan.format;
-      value.append(format); row.append(time, value); return row;
+      const format = document.createElement('td'); format.className = 'format'; format.textContent = scan.format;
+      row.append(time, value, format);
+      return row;
     });
+    if (!rows.length) {
+      const row = document.createElement('tr'); row.className = 'empty-row';
+      const cell = document.createElement('td'); cell.colSpan = 3;
+      cell.textContent = 'No scans yet. Scanned barcodes appear here as they arrive.';
+      row.append(cell); rows.push(row);
+    }
     document.querySelector('#scans').replaceChildren(...rows);
-    status.textContent = scans.length ? 'Connected. Latest scans appear first.' : 'Connected. Waiting for a barcode.';
-    status.className = 'success';
+    document.querySelector('#count').textContent = scans.length ? `Latest ${scans.length}, newest first` : '';
+    newest = latest;
+    setStatus('live', 'Server running');
   } catch (error) {
-    status.textContent = `Disconnected: ${error.message}`;
-    status.className = 'error';
+    setStatus('offline', `Disconnected: ${error.message}`);
   } finally { setTimeout(refresh, 1500); }
 }
 refresh();

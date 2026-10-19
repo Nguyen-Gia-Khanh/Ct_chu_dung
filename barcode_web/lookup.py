@@ -2,11 +2,16 @@
 
 from contextlib import closing
 from pathlib import Path
+import re
 import sqlite3
 
 from mapper.core.common import normalise_sku
 from mapper.persistence.inventory import LOCATION_SQL
 from mapper.persistence.exceptions import ExceptionOperations
+
+
+# Code 39 characters plus '?' for a character the phone could not read.
+PARTIAL_BARCODE = re.compile(r"[0-9A-Z. $/+%?-]{1,64}")
 
 
 class WarehouseLookup(ExceptionOperations):
@@ -42,6 +47,27 @@ class WarehouseLookup(ExceptionOperations):
         if include_cell_contents:
             result["cells"] = self.cell_contents(locations)
         return result
+
+    def resolve_pattern(self, pattern: str) -> dict:
+        """Complete a partly read barcode only when exactly one catalog ID fits; never guess."""
+        pattern = pattern.strip().upper()
+        unknown = pattern.count("?")
+        if (not PARTIAL_BARCODE.fullmatch(pattern) or not 1 <= unknown <= 2
+                or len(pattern) - unknown < 4):
+            raise ValueError("Send 4+ read characters with one or two '?' placeholders.")
+        query = normalise_sku(pattern)
+        # '%' is a Code 39 character: escape LIKE wildcards, then re-check each row exactly.
+        like = query.replace("!", "!!").replace("%", "!%").replace("_", "!_").replace("?", "_")
+        exact = re.compile(re.escape(query).replace(r"\?", "."))
+        with closing(self.connect()) as connection:
+            rows = connection.execute(
+                "SELECT product_id FROM catalog_products"
+                " WHERE length(product_id)=? AND product_id LIKE ? ESCAPE '!' LIMIT 3",
+                (len(query), like)).fetchall()
+        matches = sorted({row[0] for row in rows if exact.fullmatch(row[0])})
+        if len(matches) == 1:
+            return {"status": "unique", "product_id": matches[0]}
+        return {"status": "ambiguous" if matches else "none"}
 
     def cell_contents(self, locations: tuple[str, ...]) -> list[dict]:
         """One row per barcode in each cell, including catalog/staged exceptions."""

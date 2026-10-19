@@ -97,11 +97,43 @@ class BarcodeWebTests(WorkspaceTestCase):
         self.assertFalse(self.store.path.exists())
 
     def test_assets_session_and_private_files(self):
-        for path in ("/scan", "/receiver", "/worker.js", "/processing.js", "/vendor/reader.js", "/vendor/zxing_reader.wasm"):
+        for path in ("/scan", "/receiver", "/setup", "/decoder-worker.js", "/robust39.js", "/icon.svg",
+                     "/manifest.webmanifest", "/vendor/reader.js", "/vendor/zxing_reader.wasm"):
             self.assertEqual(self.request("GET", path)[0], 200, path)
-        self.assertEqual(json.loads(self.request("GET", "/api/session")[1])["token"], "test-token")
-        for path in ("/../data/warehouse_locations.db", "/certs/rootCA-key.pem", "/rootCA-key.pem", "/scans.jsonl", "/server.py"):
+        session = json.loads(self.request("GET", "/api/session")[1])
+        self.assertEqual(session["token"], "test-token")
+        self.assertEqual(session["untrusted_phones"], [])
+        for path in ("/../data/warehouse_locations.db", "/certs/rootCA-key.pem", "/rootCA-key.pem", "/scans.jsonl",
+                     "/server.py", "/worker.js", "/processing.js"):
             self.assertEqual(self.request("GET", path)[0], 404, path)
+
+    def test_trust_check_qr_codes_and_trust_info(self):
+        status, body = self.request("GET", "/trust-check", token="")
+        self.assertEqual((status, body), (204, b""))
+        self.server.info["https_port"] = 8765
+        self.assertEqual(json.loads(self.request("GET", "/api/trust-info", token="")[1]), {"https_port": 8765})
+        for target in ("phone", "setup"):
+            status, body = self.request("GET", f"/api/qr?target={target}", token="")
+            self.assertEqual(status, 200)
+            self.assertIn(b"<svg viewBox=", body)
+        self.assertEqual(self.request("GET", "/api/qr?target=token", token="")[0], 404)
+        from unittest.mock import patch
+        with patch("barcode_web.server.ipaddress.ip_address") as address:
+            address.return_value.is_loopback = False
+            self.assertEqual(self.request("GET", "/api/qr?target=phone", token="")[0], 403)
+            self.assertEqual(self.request("GET", "/api/session", token="")[0], 403)
+
+    def test_partial_barcode_resolves_only_a_unique_catalog_id(self):
+        def resolve(pattern, **kwargs):
+            status, body = self.request("POST", "/api/resolve", {"pattern": pattern}, **kwargs)
+            return status, json.loads(body)
+        self.assertEqual(resolve("0012345678?0"), (200, {"ok": True, "status": "unique", "product_id": "001234567890"}))
+        self.assertEqual(resolve("ZZZZ?")[1]["status"], "none")
+        for invalid in ("0012345678", "00?2?4?678", "AB?", "0012345678?0'--"):
+            self.assertEqual(resolve(invalid)[0], 400, invalid)
+        self.assertEqual(resolve("0012345678?0", token="wrong")[0], 403)
+        self.assertEqual(self.request("POST", "/api/resolve", {"pattern": "0012?", "extra": 1})[0], 400)
+        self.assertFalse(self.store.path.exists(), "resolving must not record a scan")
 
     def test_failed_save_is_not_acknowledged(self):
         from unittest.mock import patch
@@ -207,7 +239,11 @@ class BarcodeWebTests(WorkspaceTestCase):
         self.assertEqual(output.getvalue().count("needs certificate trust setup"), 2)
         self.assertIn("http://192.168.1.2:8766/setup", output.getvalue())
         self.assertEqual(errors.getvalue(), "")
-        self.assertEqual(self.request("GET", "/api/session")[0], 200)
+        session = json.loads(self.request("GET", "/api/session")[1])
+        self.assertEqual([phone["address"] for phone in session["untrusted_phones"]], ["192.168.1.19"],
+                         "the receiver names each phone whose browser rejected the certificate")
+        self.server.alerts.clear("192.168.1.19")
+        self.assertEqual(json.loads(self.request("GET", "/api/session")[1])["untrusted_phones"], [])
 
     def test_unexpected_application_errors_keep_diagnostics(self):
         from unittest.mock import patch, Mock

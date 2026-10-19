@@ -20,7 +20,7 @@ import subprocess
 import sys
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 import urllib.request
 import webbrowser
 
@@ -31,6 +31,21 @@ STATIC = Path(__file__).with_name("static")
 DATA = ROOT / "data" / "barcode_web"
 MKCERT_URL = "https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-windows-amd64.exe"
 MKCERT_SHA256 = "d2660b50a9ed59eada480750561c96abc2ed4c9a38c6a24d93e30e0977631398"
+UNTRUSTED_CA = ("SSLV3_ALERT_CERTIFICATE_UNKNOWN", "TLSV1_ALERT_UNKNOWN_CA",
+                "SSLV3_ALERT_BAD_CERTIFICATE", "CERTIFICATE_VERIFY_FAILED")
+STATIC_FILES = {
+    "/scan": ("index.html", "text/html"),
+    "/receiver": ("receiver.html", "text/html"),
+    "/setup": ("setup.html", "text/html"),
+    "/scanner.js": ("scanner.js", "text/javascript"),
+    "/decoder-worker.js": ("decoder-worker.js", "text/javascript"),
+    "/robust39.js": ("robust39.js", "text/javascript"),
+    "/style.css": ("style.css", "text/css"),
+    "/icon.svg": ("icon.svg", "image/svg+xml"),
+    "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+    "/vendor/reader.js": ("vendor/reader.js", "text/javascript"),
+    "/vendor/zxing_reader.wasm": ("vendor/zxing_reader.wasm", "application/wasm"),
+}
 
 
 def load_token(folder: Path) -> str:
@@ -170,6 +185,42 @@ class ScanStore:
             return list(reversed(self.scans))
 
 
+class TrustAlerts:
+    """Phones whose HTTPS handshake rejected the local CA, until they connect successfully."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.phones: dict[str, float] = {}
+
+    def add(self, address: str) -> None:
+        with self.lock:
+            self.phones[address] = time.time()
+            for stale in sorted(self.phones, key=self.phones.get)[:-20]:
+                del self.phones[stale]
+
+    def clear(self, address: str) -> None:
+        with self.lock:
+            self.phones.pop(address, None)
+
+    def recent(self, seconds: float = 600) -> list[dict]:
+        now = time.time()
+        with self.lock:
+            return [{"address": address, "seconds_ago": round(now - seen)}
+                    for address, seen in sorted(self.phones.items(), key=lambda item: -item[1])
+                    if now - seen < seconds]
+
+
+def qr_svg(text: str) -> bytes:
+    import zxingcpp
+    svg = zxingcpp.write_barcode_to_svg(zxingcpp.create_barcode(text, zxingcpp.BarcodeFormat.QRCode))
+    # Scale with its container: the writer emits a fixed pixel size without a viewBox.
+    size = re.search(r'<svg width="(\d+)" height="(\d+)"', svg)
+    if size:
+        svg = svg.replace(size.group(0), f'<svg viewBox="0 0 {size.group(1)} {size.group(2)}" '
+                          'shape-rendering="crispEdges"', 1)
+    return svg.encode("utf-8")
+
+
 class ScannerServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = os.name != "nt"
@@ -180,9 +231,10 @@ class ScannerServer(ThreadingHTTPServer):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         super().server_bind()
 
-    def __init__(self, address, store, token, info, *, secure=False, lookup=None):
+    def __init__(self, address, store, token, info, *, secure=False, lookup=None, alerts=None):
         self.store, self.token, self.info, self.secure = store, token, info, secure
         self.lookup = lookup
+        self.alerts = alerts or TrustAlerts()
         self.frame_slot = threading.BoundedSemaphore(1)
         self.connection_note_lock = threading.Lock()
         self.last_connection_note = None
@@ -199,13 +251,15 @@ class ScannerServer(ThreadingHTTPServer):
         reason = getattr(error, "reason", "")
         if reason in ("UNEXPECTED_EOF_WHILE_READING", "EOF_OCCURRED_IN_VIOLATION_OF_PROTOCOL"):
             return
+        if reason in UNTRUSTED_CA:
+            # Shown on the laptop receiver until this phone connects with a trusted CA.
+            self.alerts.add(client_address[0])
         with self.connection_note_lock:
             now = time.monotonic()
             if self.last_connection_note is not None and now - self.last_connection_note < 60:
                 return
             self.last_connection_note = now
-            if reason in ("SSLV3_ALERT_CERTIFICATE_UNKNOWN", "TLSV1_ALERT_UNKNOWN_CA",
-                          "SSLV3_ALERT_BAD_CERTIFICATE", "CERTIFICATE_VERIFY_FAILED"):
+            if reason in UNTRUSTED_CA:
                 setup = self.info.get("setup_urls", [])
                 instruction = (f"Open {setup[0]} on that phone." if setup else
                                "Open the phone certificate setup link in the laptop receiver.")
@@ -222,14 +276,17 @@ class Handler(BaseHTTPRequestHandler):
         self.connection.settimeout(10)
         if isinstance(self.connection, ssl.SSLSocket):
             self.connection.do_handshake()
+            self.server.alerts.clear(self.client_address[0])
 
     def log_message(self, *_args):
         pass
 
-    def reply(self, status, body, content_type="application/json; charset=utf-8"):
+    def reply(self, status, body, content_type="application/json; charset=utf-8", headers=()):
         if not isinstance(body, bytes):
             body = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
+        for name, value in headers:
+            self.send_header(name, value)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
@@ -242,6 +299,13 @@ class Handler(BaseHTTPRequestHandler):
     def authorized(self):
         provided = self.headers.get("Authorization", "")
         if not secrets.compare_digest(provided.encode("utf-8"), ("Bearer " + self.server.token).encode("utf-8")):
+            try:
+                # Closing with an unread body makes Windows reset the connection before the 403 arrives.
+                length = int(self.headers.get("Content-Length", "0"))
+                if 0 < length <= 1_000_000:
+                    self.rfile.read(length)
+            except (ValueError, OSError):
+                pass
             self.reply(403, {"error": "Use the current phone link from the laptop receiver."})
             return False
         return True
@@ -252,7 +316,21 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/session":
             if not local:
                 return self.reply(403, {"error": "Open the receiver on the laptop."})
-            return self.reply(200, {**self.server.info, "token": self.server.token})
+            return self.reply(200, {**self.server.info, "token": self.server.token,
+                                    "untrusted_phones": self.server.alerts.recent()})
+        if path == "/api/qr":
+            if not local:
+                return self.reply(403, {"error": "Open the receiver on the laptop."})
+            target = parse_qs(urlsplit(self.path).query).get("target", [""])[0]
+            urls = self.server.info.get({"phone": "phone_urls", "setup": "setup_urls"}.get(target, ""), [])
+            if not urls:
+                return self.reply(404, {"error": "No link for that QR code."})
+            return self.reply(200, qr_svg(urls[0]), "image/svg+xml")
+        if path == "/trust-check":
+            # Reachable only once the phone trusts the CA; the HTTP setup page probes it.
+            return self.reply(204, b"", "text/plain", headers=[("Access-Control-Allow-Origin", "*")])
+        if path == "/api/trust-info":
+            return self.reply(200, {"https_port": self.server.info.get("https_port")})
         if path == "/api/scans":
             if self.authorized():
                 self.reply(200, self.server.store.recent())
@@ -264,18 +342,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, public_cert.read_bytes(), "application/x-x509-ca-cert")
         if path == "/receiver" and not local:
             return self.reply(403, {"error": "Open the receiver on the laptop."})
-        files = {
-            "/": ("index.html" if self.server.secure else "setup.html", "text/html"),
-            "/scan": ("index.html", "text/html"),
-            "/receiver": ("receiver.html", "text/html"),
-            "/setup": ("setup.html", "text/html"),
-            "/scanner.js": ("scanner.js", "text/javascript"),
-            "/worker.js": ("worker.js", "text/javascript"),
-            "/processing.js": ("processing.js", "text/javascript"),
-            "/style.css": ("style.css", "text/css"),
-            "/vendor/reader.js": ("vendor/reader.js", "text/javascript"),
-            "/vendor/zxing_reader.wasm": ("vendor/zxing_reader.wasm", "application/wasm"),
-        }
+        files = {**STATIC_FILES, "/": ("index.html" if self.server.secure else "setup.html", "text/html")}
         if path not in files:
             return self.reply(404, {"error": "Not found"})
         name, mime = files[path]
@@ -283,7 +350,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
-        if path not in ("/api/scans", "/api/frames"):
+        if path not in ("/api/scans", "/api/frames", "/api/resolve"):
             return self.reply(404, {"error": "Not found"})
         if not self.server.secure and not ipaddress.ip_address(self.client_address[0]).is_loopback:
             return self.reply(403, {"error": "Send scans over HTTPS."})
@@ -293,6 +360,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.process_frame()
         if self.headers.get_content_type() != "application/json":
             return self.reply(415, {"error": "Only barcode JSON is accepted."})
+        if path == "/api/resolve":
+            return self.resolve_partial()
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if not 0 < length <= 32768:
@@ -318,6 +387,24 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, {**self.server.store.add(payload), "lookup": lookup})
         except OSError:
             self.reply(503, {"error": "Could not save the scan. Check the laptop's disk."})
+
+    def resolve_partial(self):
+        """Catalog completion for a Code 39 read with one or two unreadable characters."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 1024:
+                return self.reply(413, {"error": "Request is too large or empty."})
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict) or set(payload) != {"pattern"} or not isinstance(payload["pattern"], str):
+                return self.reply(400, {"error": "Invalid pattern."})
+            if self.server.lookup is None:
+                return self.reply(200, {"ok": True, "status": "unavailable"})
+            answer = self.server.lookup.resolve_pattern(payload["pattern"])
+        except (ValueError, UnicodeError) as error:
+            return self.reply(400, {"error": str(error) or "Invalid pattern."})
+        except sqlite3.Error:
+            return self.reply(503, {"error": "Warehouse lookup failed."})
+        self.reply(200, {"ok": True, **answer})
 
     def process_frame(self):
         from barcode_web.processing import MAX_FRAME_BYTES, decode_frame
@@ -370,15 +457,19 @@ def main():
         prepare_tls(addresses)
         token = load_token(DATA)
         info = {"phone_urls": [f"https://{address}:{args.port}/#{token}"] if address else [],
-                "setup_urls": [f"http://{address}:{args.setup_port}/setup"] if address else []}
+                "setup_urls": [f"http://{address}:{args.setup_port}/setup"] if address else [],
+                "local_scanner_url": f"http://localhost:{args.setup_port}/scan#{token}",
+                "https_port": args.port}
         store = ScanStore(DATA)
-        secure = ScannerServer(("0.0.0.0", args.port), store, token, info, secure=True, lookup=lookup)
+        alerts = TrustAlerts()
+        secure = ScannerServer(("0.0.0.0", args.port), store, token, info, secure=True, lookup=lookup,
+                               alerts=alerts)
         try:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(DATA / "certs/server.pem", DATA / "certs/server-key.pem")
             secure.socket = context.wrap_socket(secure.socket, server_side=True, do_handshake_on_connect=False)
-            setup = ScannerServer(("0.0.0.0", args.setup_port), store, token, info, lookup=lookup)
+            setup = ScannerServer(("0.0.0.0", args.setup_port), store, token, info, lookup=lookup, alerts=alerts)
         except Exception:
             secure.server_close()
             raise

@@ -2,25 +2,58 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Warehouse barcode scanner</title>
+<meta name="theme-color" content="#123A5E">
+<title>Warehouse scanner</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
 <link rel="stylesheet" href="/style.css">
 <body class="scanner">
-<div class="camera"><video id="video" autoplay muted playsinline></video><img id="mask" alt="Detected barcode bars" hidden><div class="aim" hidden></div><div id="barcode-box" hidden aria-hidden="true"></div></div>
+<header class="bar">
+  <span id="link-state" class="pill" data-state="off">Camera off</span>
+  <div class="tools">
+    <button id="torch" class="icon" type="button" aria-pressed="false" aria-label="Flashlight" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2h8v4l-2 3v13h-4V9L8 6z"/><path d="M11 12h2v3h-2z" class="cut"/></svg>
+    </button>
+    <button id="sound" class="icon" type="button" aria-pressed="true" aria-label="Beep on scan">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" class="wave"/></svg>
+    </button>
+  </div>
+</header>
+<div class="camera">
+  <video id="video" autoplay muted playsinline></video>
+  <div class="window" id="window">
+    <img id="mask" alt="Detected barcode bars" hidden>
+    <div id="barcode-box" hidden aria-hidden="true"></div>
+  </div>
+  <p id="hint" class="hint">Press Start camera, then fit the whole label inside the frame.</p>
+  <label class="zoom" id="zoom-control" hidden>
+    <span>Zoom</span><input id="zoom" type="range" min="1" max="1" step="0.1" value="1">
+  </label>
+</div>
 <div class="controls">
-  <button id="start" class="primary" aria-label="Start camera">Start</button>
-  <button id="stop" disabled>Stop</button>
-  <label><input id="filter" type="checkbox"> Mask</label>
-  <label><input id="cell-data" type="checkbox" aria-label="Include cell contents"> Cell contents</label>
+  <button id="start" class="primary" type="button" aria-label="Start camera">Start camera</button>
+  <button id="stop" class="secondary" type="button" hidden>Stop</button>
+  <label class="toggle"><input id="cell-data" type="checkbox" aria-label="Include cell contents"><span>Cell contents</span></label>
+  <label class="toggle"><input id="filter" type="checkbox" aria-label="Mask"><span>Mask</span></label>
 </div>
 <p id="status" role="status" aria-live="polite" hidden></p>
 <p id="rate" hidden></p>
-<output id="result" aria-label="Last barcode">—</output>
-<section id="lookup" hidden aria-live="polite">
-  <p id="product"></p>
-  <output id="locations" aria-label="Warehouse locations"></output>
-  <div id="cells" hidden></div>
-</section>
-<p id="delivery" role="status" aria-live="polite" hidden></p>
-<button id="retry" hidden>Retry sending</button>
+<main class="sheet">
+  <div class="read">
+    <output id="result" aria-label="Last barcode">—</output>
+    <span id="badge" class="badge" hidden></span>
+  </div>
+  <p id="empty" class="empty">Scanned parts appear here with their shelf locations.</p>
+  <section id="lookup" hidden aria-live="polite">
+    <p id="product"></p>
+    <output id="locations" aria-label="Warehouse locations"></output>
+    <div id="cells" hidden></div>
+  </section>
+  <div class="delivery">
+    <p id="delivery" role="status" aria-live="polite" hidden></p>
+    <button id="retry" class="secondary" type="button" hidden>Retry sending</button>
+  </div>
+</main>
 <script src="/scanner.js" defer></script>
 </html>
