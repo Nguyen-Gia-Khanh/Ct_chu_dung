@@ -1,7 +1,6 @@
 """Offline checks for store persistence, tab ownership, and partial batches."""
 
 from threading import Barrier, Event, get_ident
-from contextlib import nullcontext
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -12,6 +11,11 @@ from tests.support import WorkspaceTestCase
 
 
 URL = "https://hondaminhdung.kiotviet.vn/man/#/Products"
+
+
+def responding_page(response, **attributes):
+    """A page whose response listener receives `response` as soon as it is added."""
+    return SimpleNamespace(on=lambda _event, listen: listen(response), remove_listener=Mock(), **attributes)
 
 
 class PlaywrightUploadTests(WorkspaceTestCase):
@@ -37,9 +41,8 @@ class PlaywrightUploadTests(WorkspaceTestCase):
     def test_empty_edit_form_reloads_once_before_retrying_without_saving(self):
         uploader = WebsiteUploader(store_url=URL, timeout=0, step_delay=0)
         response = SimpleNamespace(url="https://api-man1.kiotviet.vn/api/products/1/initialdata",
-                                   ok=True, body=lambda: b"{}")
-        uploader.page = SimpleNamespace(reload=Mock(), expect_response=lambda *_args, **_kwargs:
-                                        nullcontext(SimpleNamespace(value=response)))
+                                   request=SimpleNamespace(method="GET"), ok=True, body=lambda: b"{}")
+        uploader.page = responding_page(response, reload=Mock())
         ready_checks = iter((False, True))
 
         def dom(action, *_args):
@@ -184,10 +187,10 @@ class PlaywrightUploadTests(WorkspaceTestCase):
                     order.append("response body")
                     return {"Data": saved}
 
-                response = SimpleNamespace(ok=status == 200, status=status,
-                                           json=response_body)
-                uploader.page = SimpleNamespace(expect_response=lambda *_args, **_kwargs:
-                                                nullcontext(SimpleNamespace(value=response)))
+                response = SimpleNamespace(url="https://api-man1.kiotviet.vn/api/products/photo",
+                                           request=SimpleNamespace(method="POST"),
+                                           ok=status == 200, status=status, json=response_body)
+                uploader.page = responding_page(response)
                 with patch.object(uploader, "_click", side_effect=lambda *_args: order.append("save")) as click, \
                         patch.object(uploader, "_dom", return_value=False):
                     if status == 200 and saved == {"Id": 1, "Code": "P1"}:

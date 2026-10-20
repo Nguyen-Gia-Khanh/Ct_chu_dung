@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
@@ -215,6 +216,35 @@ class WebsiteUploader:
                 raise WaitExpired(f"Timed out while {description}. Inspect the open Chrome tab.")
             sleep(0.2)
 
+    @contextmanager
+    def _watch_responses(self, predicate):
+        """Collect this tab's matching responses into a list.
+
+        Used instead of page.expect_response: leaving that block with an error
+        cancels its waiter, which breaks the next Playwright call (even stop())
+        with "This event loop is already running" and hides the real error.
+        """
+        seen = []
+
+        def listen(response):
+            if predicate(response):
+                seen.append(response)
+
+        page = self.page
+        page.on("response", listen)
+        try:
+            yield seen
+        finally:
+            page.remove_listener("response", listen)
+
+    def _first_response(self, seen, description):
+        deadline = monotonic() + self.timeout
+        while not seen:
+            if monotonic() >= deadline:
+                raise WaitExpired(f"Timed out while {description}. Inspect the open Chrome tab.")
+            self.page.wait_for_timeout(100)  # lets Playwright deliver response events
+        return seen[0]
+
     def _pause(self) -> None:
         if self.step_delay:
             sleep(self.step_delay)
@@ -393,17 +423,16 @@ class WebsiteUploader:
             try:
                 # Listen before injecting; the controller's callback only
                 # starts loading the editor. Await this tab's edit-data response.
-                with self.page.expect_response(
+                with self._watch_responses(
                     lambda response: response.request.method == "GET"
-                    and re.fullmatch(r"/api/products/\d+/initialdata", urlsplit(response.url).path) is not None,
-                    timeout=self.timeout * 1000,
-                ) as edit_response:
+                    and re.fullmatch(r"/api/products/\d+/initialdata", urlsplit(response.url).path) is not None
+                ) as edit_responses:
                     result = self._evaluate_async(OPEN_PRODUCT_SCRIPT, product.product_id)
                     if not isinstance(result, dict) or not result.get("ok"):
                         detail = result.get("error") if isinstance(result, dict) else repr(result)
                         raise UploadError(f"Could not open product {product.product_id}: {detail}")
-                response = edit_response.value
-                response.body()  # expect_response alone only waits for headers.
+                    response = self._first_response(edit_responses, "loading the product edit data")
+                response.body()  # the response event alone only means headers arrived.
                 self._kiotviet_id = str(result.get("kiotviet_id") or "")
                 if (not response.ok
                         or urlsplit(response.url).path != f"/api/products/{self._kiotviet_id}/initialdata"):
@@ -556,13 +585,12 @@ class WebsiteUploader:
 
         try:
             # From this call onward a timeout has an uncertain outcome. Never retry Save.
-            with self.page.expect_response(
+            with self._watch_responses(
                 lambda response: response.request.method == "POST"
-                and urlsplit(response.url).path == "/api/products/photo",
-                timeout=self.timeout * 1000,
-            ) as save_response:
+                and urlsplit(response.url).path == "/api/products/photo"
+            ) as save_responses:
                 self._click(SAVE_XPATH, "pressing Save")
-            response = save_response.value
+                response = self._first_response(save_responses, "waiting for the Save response")
             if not response.ok:
                 raise UploadError(f"KiotViet Save returned HTTP {response.status}.")
             # Download the response body, not just the headers or a UI toast.
