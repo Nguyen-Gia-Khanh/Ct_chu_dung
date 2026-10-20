@@ -40,6 +40,30 @@ class LocationComparisonTests(unittest.TestCase):
                 {"SKU1": "L1-1A1-1", "SKU2": "", "WEBONLY": "L9-9Z9-9"},
             )
 
+    def test_duplicate_ids_ignore_blank_rows_but_reject_conflicts(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "kiotviet.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(("Mã hàng", "Vị trí"))
+            sheet.append(("45133MA3006SS", None))
+            sheet.append(("45133-MA3-006SS", "L1-3E4-6"))
+            sheet.append(("BLANKLAST", "L1-1A1-2"))
+            sheet.append(("BLANKLAST", None))
+            sheet.append(("BOTHBLANK", None))
+            sheet.append(("BOTHBLANK", None))
+            workbook.save(path)
+
+            self.assertEqual(
+                read_web_locations(path, sheet.title, 1, 0, 1),
+                {"45133MA3006SS": "L1-3E4-6", "BLANKLAST": "L1-1A1-2", "BOTHBLANK": ""},
+            )
+
+            sheet.append(("45133MA3006SS", "L2-2B2-2"))
+            workbook.save(path)
+            with self.assertRaisesRegex(ValueError, "45133MA3006SS has conflicting website locations at Excel row 8"):
+                read_web_locations(path, sheet.title, 1, 0, 1)
+
     def test_web_code_restores_kiotviet_dashes(self):
         self.assertEqual(web_code("06451961405"), "06451-961-405")
         self.assertEqual(web_code("04801K0G900ZC"), "04801-K0G-900ZC")

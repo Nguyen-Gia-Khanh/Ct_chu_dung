@@ -119,12 +119,16 @@ def read_web_locations(
             product_id = normalize_sku(product)
             value = row[location_column] if location_column < len(row) else None
             location = str(value).strip() if value is not None else ""
-            if product_id in locations and set(
-                location_parts(locations[product_id])
-            ) != set(location_parts(location)):
-                raise ValueError(
-                    f"Product {product_id} has conflicting website locations at Excel row {row_number}."
-                )
+            if product_id in locations:
+                # KiotViet can list one code twice (e.g. the old dashed product and the
+                # dashless one); a duplicate row with a blank location adds nothing.
+                if not location:
+                    continue
+                previous = locations[product_id]
+                if previous and set(location_parts(previous)) != set(location_parts(location)):
+                    raise ValueError(
+                        f"Product {product_id} has conflicting website locations at Excel row {row_number}."
+                    )
             locations[product_id] = location
         if not locations:
             raise ValueError(

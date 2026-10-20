@@ -123,9 +123,12 @@ const searchProducts = async (term, auth) => {
 const lookupProduct = async (skuValue, auth) => {
     const wanted = skuValue.replace(/[- ]/g, '').toUpperCase();
     // KiotViet's search misses a dashless code saved with dashes (06451961405 vs
-    // 06451-961-405); the digits without leading zeros still find it by barcode.
+    // 06451-961-405), so it also searches the web's 5-3-rest spelling; the digits
+    // without leading zeros still find it by barcode.
     // Either way only a code equal to the full SKU is accepted.
-    const terms = [...new Set([skuValue, skuValue.replace(/^0+/, '')])].filter(Boolean);
+    const dashed = wanted.length > 8
+        ? wanted.slice(0, 5) + '-' + wanted.slice(5, 8) + '-' + wanted.slice(8) : wanted;
+    const terms = [...new Set([skuValue, dashed, skuValue.replace(/^0+/, '')])].filter(Boolean);
     for (const term of terms) {
         const matches = (await searchProducts(term, auth)).filter(item =>
             String(item && item.Code || '').trim().replace(/[- ]/g, '').toUpperCase() === wanted
