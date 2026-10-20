@@ -93,9 +93,9 @@ const waitForUpdateProductScope = async timeoutMs => {
     return null;
 };
 
-const lookupProduct = async (skuValue, auth) => {
+const searchProducts = async (term, auth) => {
     const url = 'https://api-man1.kiotviet.vn/api/products/suggest' +
-        '?tearm=' + encodeURIComponent(skuValue) +
+        '?tearm=' + encodeURIComponent(term) +
         '&IncludeCombo=true&ShowAllItem=false&IsShowOnHand=true' +
         '&ExcludeProductIds=&IsGetTotalOnhand=false';
 
@@ -117,14 +117,23 @@ const lookupProduct = async (skuValue, auth) => {
             .find(Array.isArray);
 
     if (!products) throw Error('KiotViet returned an unexpected product-search response.');
+    return products;
+};
 
+const lookupProduct = async (skuValue, auth) => {
     const wanted = skuValue.replace(/[- ]/g, '').toUpperCase();
-    const matches = products.filter(item =>
-        String(item && item.Code || '').trim().replace(/[- ]/g, '').toUpperCase() === wanted
-    );
-
-    if (matches.length !== 1) throw Error('Exact unique SKU not found: ' + skuValue);
-    return matches[0];
+    // KiotViet's search misses a dashless code saved with dashes (06451961405 vs
+    // 06451-961-405); the digits without leading zeros still find it by barcode.
+    // Either way only a code equal to the full SKU is accepted.
+    const terms = [...new Set([skuValue, skuValue.replace(/^0+/, '')])].filter(Boolean);
+    for (const term of terms) {
+        const matches = (await searchProducts(term, auth)).filter(item =>
+            String(item && item.Code || '').trim().replace(/[- ]/g, '').toUpperCase() === wanted
+        );
+        if (matches.length === 1) return matches[0];
+        if (matches.length > 1) break;
+    }
+    throw Error('Exact unique SKU not found: ' + skuValue);
 };
 
 (async () => {

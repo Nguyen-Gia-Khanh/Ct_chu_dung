@@ -95,10 +95,29 @@ def read_web_locations(
         workbook.close()
 
 
+def _restore_leading_zeros(local_ids: Iterable[str], web_locations: dict[str, str]) -> dict[str, str]:
+    """KiotViet exports digit-only codes as numbers, so 06451961405 arrives as 6451961405.
+
+    Such a website ID takes the saved spelling when exactly one unmatched local ID
+    is the same digits with leading zeros.
+    """
+    local_ids = set(local_ids)
+    padded: dict[str, str | None] = {}
+    for product_id in local_ids:
+        if product_id.isdigit() and product_id.startswith("0") and product_id not in web_locations:
+            stripped = product_id.lstrip("0")
+            padded[stripped] = None if stripped in padded else product_id
+    return {
+        (padded.get(product_id) or product_id) if product_id not in local_ids else product_id: location
+        for product_id, location in web_locations.items()
+    }
+
+
 def compare_locations(
     local_locations: dict[str, Iterable[str]], web_locations: dict[str, str]
 ) -> tuple[list[LocationDifference], list[str]]:
     """Return mismatches and local assigned IDs missing from the export; keys are canonical SKUs."""
+    web_locations = _restore_leading_zeros(local_locations, web_locations)
     differences: list[LocationDifference] = []
     missing: list[str] = []
     for product_id in sorted(local_locations.keys() | web_locations.keys(), key=str.casefold):
