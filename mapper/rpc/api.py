@@ -8,19 +8,22 @@ another program changed SQLite.
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from mapper.core.common import APP_TITLE, MAX_VISIBLE_PRODUCTS, iso_timestamp, normalize_sku, split_locations, vietnam_time
+from mapper.core.common import APP_TITLE, MAX_VISIBLE_PRODUCTS, data_directory, iso_timestamp, normalize_sku, split_locations, vietnam_time
 from mapper.core.search import ProductIndex
 from mapper.features import kiotviet_settings
 from mapper.features.csv_import import prepare_import, read_csv, suggest_columns
 from mapper.features.location_comparison import (
-    LocationDifference, compare_locations, export_comparison, export_path, is_header_row, read_web_locations,
+    ID_HEADERS, LOCATION_HEADERS, LocationDifference, _plain_header, compare_locations, export_comparison,
+    location_parts, read_web_locations, suggested_columns, web_code,
 )
 from mapper.features.web_upload import LocationUpdate, UploadError, WebsiteUploader
 from mapper.persistence.database import WarehouseDatabase
@@ -102,6 +105,13 @@ class ProductState:
             "stock": placement.stock_qty if placement else hand.stock_qty if hand else None,
             "on_hand": hand is not None,
         }
+
+
+def _is_header_row(row: list[object]) -> bool:
+    """Tab 7's header rule: the suggested ID and location columns both carry known headers."""
+    product, location = suggested_columns(row)
+    return (product != location and bool(row[product]) and bool(row[location])
+            and _plain_header(row[product]) in ID_HEADERS and _plain_header(row[location]) in LOCATION_HEADERS)
 
 
 class Api:
@@ -444,7 +454,7 @@ class Api:
         finally:
             workbook.close()
         guess = next(((name, number) for name, rows in sheets.items()
-                      for number, row in enumerate(rows, 1) if row and is_header_row(row)),
+                      for number, row in enumerate(rows, 1) if row and _is_header_row(row)),
                      (next(iter(sheets), ""), 1))
         return {"sheets": sheets, "sheet": guess[0], "header_row": guess[1]}
 
@@ -458,13 +468,25 @@ class Api:
             raise ValueError("Import website data before comparing locations.")
         local = self.db.get_location_sets()
         differences, missing = compare_locations(local, self.web_locations)
-        return {"web_products": len(self.web_locations), "differences": differences,
-                "missing": [{"product_id": pid, "local": ", ".join(local[pid])} for pid in missing]}
+        return {"web_products": len(self.web_locations),
+                "differences": [{**dataclasses.asdict(row), "web_code": web_code(row.product_id)} for row in differences],
+                "missing": [{"product_id": pid, "web_code": web_code(pid), "local": ", ".join(local[pid])}
+                            for pid in missing]}
 
     @rpc("compare.export")
-    def export(self, differences: list[dict[str, str]]) -> str:
-        destination = export_path()
-        export_comparison(destination, [LocationDifference(**row) for row in differences])
+    def export(self, differences: list[dict[str, Any]]) -> str:
+        result_dir = data_directory() / "exports" / "location_comparison"
+        result_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        destination = result_dir / f"kiotviet_location_comparison_{timestamp}.xlsx"
+        counter = 2
+        while destination.exists():
+            destination = result_dir / f"kiotviet_location_comparison_{timestamp}_{counter}.xlsx"
+            counter += 1
+        export_comparison(destination, [
+            LocationDifference(row["product_id"], row["wrong_location"], row["true_location"], row["can_resync"])
+            for row in differences
+        ])
         return str(destination)
 
     def _start_browser_job(self, work: Callable[[Callable, Callable], str]) -> int:
@@ -515,6 +537,7 @@ class Api:
         return self._run_batch(upload_products(self.db, placements), location_only=False, save=True if save_each else None)
 
     @rpc("web.resync")
-    def resync(self, differences: list[dict[str, str]]) -> int:
-        updates = [LocationUpdate(row["product_id"], split_locations(row["true_location"])) for row in differences]
+    def resync(self, differences: list[dict[str, Any]]) -> int:
+        updates = [LocationUpdate(row["product_id"], location_parts(row["true_location"]))
+                   for row in differences if row["can_resync"]]
         return self._run_batch(updates, location_only=True, save=True, tab_count=kiotviet_settings.load_settings()[1])

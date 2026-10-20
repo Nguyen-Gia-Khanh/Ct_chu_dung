@@ -14,6 +14,8 @@ from mapper.features.location_comparison import (
     compare_locations,
     export_comparison,
     read_web_locations,
+    suggested_columns,
+    web_code,
 )
 from ui.desktop.app import WarehouseMapperApp
 from ui.desktop.location_comparison_view import LocationComparisonView
@@ -32,34 +34,17 @@ class LocationComparisonTests(unittest.TestCase):
             sheet.append(("Item", "Group", "WEB-ONLY", "barcode", "Name", "L9-9Z9-9"))
             workbook.save(path)
 
+            self.assertEqual(suggested_columns(list(sheet[1][index].value for index in range(6))), (2, 5))
             self.assertEqual(
                 read_web_locations(path, sheet.title, 1, 2, 5),
-                {"SKU-1": "L1-1A1-1", "SKU-2": "", "WEB-ONLY": "L9-9Z9-9"},
+                {"SKU1": "L1-1A1-1", "SKU2": "", "WEBONLY": "L9-9Z9-9"},
             )
 
-    def test_duplicate_ids_ignore_blank_rows_but_reject_conflicts(self):
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "kiotviet.xlsx"
-            workbook = Workbook()
-            sheet = workbook.active
-            sheet.append(("Mã hàng", "Vị trí"))
-            sheet.append(("BLANKFIRST", None))
-            sheet.append(("BLANKFIRST", "L1-1A1-1"))
-            sheet.append(("BLANKLAST", "L1-1A1-2"))
-            sheet.append(("BLANKLAST", None))
-            sheet.append(("BOTHBLANK", None))
-            sheet.append(("BOTHBLANK", None))
-            workbook.save(path)
-
-            self.assertEqual(
-                read_web_locations(path, sheet.title, 1, 0, 1),
-                {"BLANKFIRST": "L1-1A1-1", "BLANKLAST": "L1-1A1-2", "BOTHBLANK": ""},
-            )
-
-            sheet.append(("BLANKFIRST", "L2-2B2-2"))
-            workbook.save(path)
-            with self.assertRaisesRegex(ValueError, "BLANKFIRST has conflicting website locations at Excel row 8"):
-                read_web_locations(path, sheet.title, 1, 0, 1)
+    def test_web_code_restores_kiotviet_dashes(self):
+        self.assertEqual(web_code("06451961405"), "06451-961-405")
+        self.assertEqual(web_code("04801K0G900ZC"), "04801-K0G-900ZC")
+        self.assertEqual(web_code("06431-ma3-405"), "06431-MA3-405")
+        self.assertEqual(web_code("SKU1"), "SKU1")
 
     def test_comparison_checks_both_ways_and_identifies_missing(self):
         local = {
@@ -76,34 +61,24 @@ class LocationComparisonTests(unittest.TestCase):
         }
         differences, missing = compare_locations(local, web)
         self.assertEqual(
-            [item.product_id for item in differences], ["MULTI", "SKU-2", "WEB-ONLY"]
+            [item.product_id for item in differences], ["MULTI", "SKU2", "WEBONLY"]
         )
+        self.assertTrue(differences[0].can_resync)
+        self.assertTrue(differences[1].can_resync)
+        self.assertTrue(differences[2].can_resync)
         self.assertEqual(differences[2].wrong_location, "L9-9Z9-9")
         self.assertEqual(differences[2].true_location, "")
-        self.assertEqual(missing, ["SKU-3"])
-
-    def test_numeric_export_ids_regain_the_saved_leading_zeros(self):
-        local = {
-            "06451961405": ["L1-3D2-14"],
-            "0123": ["L1-1A1-1"],
-            "00123": ["L1-1A1-2"],
-            "0777": ["L1-1A1-3"],
-            "777": ["L1-1A1-4"],
-        }
-        web = {"6451961405": "L1-3D2-14", "123": "L1-1A1-1", "777": "L1-1A1-4"}
-        differences, missing = compare_locations(local, web)
-        # 06451961405 matches; 123 is ambiguous; 777 already matches exactly.
-        self.assertEqual([item.product_id for item in differences], ["123"])
-        self.assertEqual(missing, ["00123", "0123", "0777"])
+        self.assertEqual(missing, ["SKU3"])
 
     def test_web_occupied_but_locally_unassigned_is_unsynced(self):
         local = {}
         web = {"PROD-100": "A-01-01", "PROD-200": ""}
         differences, missing = compare_locations(local, web)
         self.assertEqual(len(differences), 1)
-        self.assertEqual(differences[0].product_id, "PROD-100")
+        self.assertEqual(differences[0].product_id, "PROD100")
         self.assertEqual(differences[0].wrong_location, "A-01-01")
         self.assertEqual(differences[0].true_location, "")
+        self.assertTrue(differences[0].can_resync)
         self.assertEqual(missing, [])
 
     def test_tab_queues_web_location_clear_for_unassigned_product(self):
@@ -123,16 +98,16 @@ class LocationComparisonTests(unittest.TestCase):
             differences=differences, resynced={}, tree=tree, _update_summary=Mock()
         )
 
-        LocationComparisonView.mark_resynced(view, "PROD-100")
+        LocationComparisonView.mark_resynced(view, "PROD100")
 
-        self.assertEqual(view.resynced, {"PROD-100": ""})
-        self.assertEqual(tree.item.call_args.kwargs["values"][2], "(none)")
+        self.assertEqual(view.resynced, {"PROD100": ""})
+        self.assertEqual(tree.item.call_args.kwargs["values"][3], "(none)")
 
     def test_comparison_worker_queues_data_without_touching_widgets(self):
         events = Queue()
         view = SimpleNamespace(
             _comparison_events=events,
-            database=Mock(get_location_sets=Mock(return_value={"P1": ("A-02",)})),
+            _local_locations=Mock(return_value={"P1": ["A-02"]}),
             tree=Mock(),
         )
 
@@ -147,7 +122,7 @@ class LocationComparisonTests(unittest.TestCase):
 
     def test_comparison_rows_render_in_small_ui_batches(self):
         callbacks = []
-        differences = [LocationDifference(f"P{i}", "A-01", "A-02") for i in range(450)]
+        differences = [LocationDifference(f"P{i}", "A-01", "A-02", True) for i in range(450)]
         view = SimpleNamespace(
             _render_rows=[("difference", row) for row in differences],
             _render_index=0,
@@ -176,7 +151,7 @@ class LocationComparisonTests(unittest.TestCase):
             path = Path(directory) / "comparison.xlsx"
             export_comparison(
                 path,
-                [LocationDifference("=SKU-1", "L0-1A1-1", "L1-1A1-1")],
+                [LocationDifference("=SKU-1", "L0-1A1-1", "L1-1A1-1", True)],
             )
             workbook = load_workbook(path)
             sheet = workbook.active

@@ -92,8 +92,11 @@ export interface StagedRow {
 
 export interface Difference {
   product_id: string;
+  /** The same ID in KiotViet's 5-3-rest spelling, e.g. 06451-961-405. */
+  web_code: string;
   wrong_location: string;
   true_location: string;
+  can_resync: boolean;
 }
 
 export interface JobEvent {

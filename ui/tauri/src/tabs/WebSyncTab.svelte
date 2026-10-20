@@ -9,7 +9,7 @@
   import type { Column, Difference } from "../lib/types";
 
   /** Tab 7: compare a KiotViet location export with saved locations and resync the differences. */
-  interface Row { product_id: string; web: string; local: string; status: string; missing: boolean }
+  interface Row { product_id: string; web_code: string; web: string; local: string; status: string; missing: boolean }
   interface Workbook { sheets: Record<string, string[][]>; sheet: string; header_row: number }
 
   let url = $state("");
@@ -17,7 +17,7 @@
   let maxTabs = $state(10);
   let fileName = $state("");
   let differences = $state<Difference[]>([]);
-  let missing = $state<{ product_id: string; local: string }[]>([]);
+  let missing = $state<{ product_id: string; web_code: string; local: string }[]>([]);
   let imported = $state(false);
   let busy = $state(false);
   let workbook = $state<Workbook | null>(null);
@@ -33,15 +33,16 @@
   const header = $derived(workbook?.sheets[sheet]?.[headerRow - 1] ?? []);
   const rows = $derived<Row[]>([
     ...differences.map((row) => ({
-      product_id: row.product_id, web: row.wrong_location, local: row.true_location || "(none)", missing: false,
+      product_id: row.product_id, web_code: row.web_code, web: row.wrong_location, local: row.true_location || "(none)", missing: false,
       status: resynced.has(row.product_id) ? "Saved; re-export to verify"
         : !row.true_location ? "Ready to clear web location"
         : row.true_location.includes(",") ? `Ready to sync ${row.true_location.split(",").length} locations` : "Unsynced",
     })),
-    ...missing.map((row) => ({ product_id: row.product_id, web: "(not in export)", local: row.local, status: "Cannot compare", missing: true })),
+    ...missing.map((row) => ({ product_id: row.product_id, web_code: row.web_code, web: "(not in export)", local: row.local, status: "Cannot compare", missing: true })),
   ]);
   const columns: Column<Row>[] = [
     idColumn<Row>(),
+    { key: "web_code", label: "Web code (5-3-x)", width: "160px", value: (row) => row.web_code },
     { key: "web", label: "Website location", width: "minmax(140px, 1fr)", value: (row) => row.web },
     { key: "local", label: "Local location", width: "minmax(140px, 1fr)", value: (row) => row.local },
     { key: "status", label: "Status", width: "220px", value: (row) => row.status },
@@ -93,7 +94,7 @@
       const params = importing
         ? { path: workbookPath, sheet, header_row: headerRow, id_column: idColumn_, location_column: locationColumn }
         : {};
-      const result = await call<{ web_products: number; differences: Difference[]; missing: { product_id: string; local: string }[] }>("compare.run", params);
+      const result = await call<{ web_products: number; differences: Difference[]; missing: { product_id: string; web_code: string; local: string }[] }>("compare.run", params);
       [differences, missing, imported] = [result.differences, result.missing, true];
       if (importing) {
         fileName = `${workbookPath.split(/[\\/]/).pop()}: ${result.web_products.toLocaleString()} website product IDs`;
