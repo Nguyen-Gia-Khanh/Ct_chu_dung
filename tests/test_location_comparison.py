@@ -37,6 +37,30 @@ class LocationComparisonTests(unittest.TestCase):
                 {"SKU-1": "L1-1A1-1", "SKU-2": "", "WEB-ONLY": "L9-9Z9-9"},
             )
 
+    def test_duplicate_ids_ignore_blank_rows_but_reject_conflicts(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "kiotviet.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(("Mã hàng", "Vị trí"))
+            sheet.append(("BLANKFIRST", None))
+            sheet.append(("BLANKFIRST", "L1-1A1-1"))
+            sheet.append(("BLANKLAST", "L1-1A1-2"))
+            sheet.append(("BLANKLAST", None))
+            sheet.append(("BOTHBLANK", None))
+            sheet.append(("BOTHBLANK", None))
+            workbook.save(path)
+
+            self.assertEqual(
+                read_web_locations(path, sheet.title, 1, 0, 1),
+                {"BLANKFIRST": "L1-1A1-1", "BLANKLAST": "L1-1A1-2", "BOTHBLANK": ""},
+            )
+
+            sheet.append(("BLANKFIRST", "L2-2B2-2"))
+            workbook.save(path)
+            with self.assertRaisesRegex(ValueError, "BLANKFIRST has conflicting website locations at Excel row 8"):
+                read_web_locations(path, sheet.title, 1, 0, 1)
+
     def test_comparison_checks_both_ways_and_identifies_missing(self):
         local = {
             "SKU-1": ["L1-1A1-1"],
