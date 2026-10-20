@@ -139,6 +139,23 @@ def read_web_locations(
         workbook.close()
 
 
+def _restore_leading_zeros(local_ids: set[str], web_locations: dict[str, str]) -> dict[str, str]:
+    """KiotViet's Excel export writes digit-only codes as numbers, so 06451-961-405
+    arrives as 6451961405. Such a website ID takes the local spelling when exactly one
+    local ID absent from the export is the same digits with leading zeros."""
+    padded: dict[str, str | None] = {}
+    for product_id in local_ids:
+        if product_id.isdigit() and product_id.startswith("0") and product_id not in web_locations:
+            stripped = product_id.lstrip("0")
+            padded[stripped] = None if stripped in padded else product_id
+    restored: dict[str, str] = {}
+    for product_id, location in web_locations.items():
+        if product_id not in local_ids and padded.get(product_id):
+            product_id = padded[product_id]
+        restored[product_id] = location
+    return restored
+
+
 def compare_locations(
     local_locations: dict[str, list[str]], web_locations: dict[str, str]
 ) -> tuple[list[LocationDifference], list[str]]:
@@ -146,7 +163,10 @@ def compare_locations(
     differences: list[LocationDifference] = []
     missing: list[str] = []
     local_locations = {normalize_sku(pid): locations for pid, locations in local_locations.items()}
-    web_locations = {normalize_sku(pid): locations for pid, locations in web_locations.items()}
+    web_locations = _restore_leading_zeros(
+        set(local_locations),
+        {normalize_sku(pid): locations for pid, locations in web_locations.items()},
+    )
     for product_id in sorted(
         set(local_locations) | set(web_locations), key=str.casefold
     ):

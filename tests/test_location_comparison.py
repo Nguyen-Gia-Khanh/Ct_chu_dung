@@ -94,6 +94,20 @@ class LocationComparisonTests(unittest.TestCase):
         self.assertEqual(differences[2].true_location, "")
         self.assertEqual(missing, ["SKU3"])
 
+    def test_numeric_export_ids_regain_the_saved_leading_zeros(self):
+        local = {
+            "06451961405": ["L1-3D2-14"],
+            "0123": ["L1-1A1-1"],
+            "00123": ["L1-1A1-2"],
+            "0777": ["L1-1A1-3"],
+            "777": ["L1-1A1-4"],
+        }
+        web = {"6451961405": "L1-3D2-14", "123": "L1-1A1-1", "777": "L1-1A1-4"}
+        differences, missing = compare_locations(local, web)
+        # 06451961405 matches; 123 is ambiguous; 777 already matches exactly.
+        self.assertEqual([item.product_id for item in differences], ["123"])
+        self.assertEqual(missing, ["00123", "0123", "0777"])
+
     def test_web_occupied_but_locally_unassigned_is_unsynced(self):
         local = {}
         web = {"PROD-100": "A-01-01", "PROD-200": ""}
