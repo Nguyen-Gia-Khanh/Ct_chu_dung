@@ -88,9 +88,8 @@ class WorkbookColumnDialog(tk.Toplevel):
         self.product_column.configure(values=labels)
         self.location_column.configure(values=labels)
         if labels:
-            product, location = suggested_columns(list(row))
-            self.product_column.current(product)
-            self.location_column.current(location)
+            self.product_column.current(0)
+            self.location_column.current(1 if len(labels) > 1 else 0)
 
     def _confirm(self) -> None:
         try:

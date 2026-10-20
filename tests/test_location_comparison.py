@@ -14,7 +14,6 @@ from mapper.features.location_comparison import (
     compare_locations,
     export_comparison,
     read_web_locations,
-    suggested_columns,
 )
 from ui.desktop.app import WarehouseMapperApp
 from ui.desktop.location_comparison_view import LocationComparisonView
@@ -33,7 +32,6 @@ class LocationComparisonTests(unittest.TestCase):
             sheet.append(("Item", "Group", "WEB-ONLY", "barcode", "Name", "L9-9Z9-9"))
             workbook.save(path)
 
-            self.assertEqual(suggested_columns(list(sheet[1][index].value for index in range(6))), (2, 5))
             self.assertEqual(
                 read_web_locations(path, sheet.title, 1, 2, 5),
                 {"SKU-1": "L1-1A1-1", "SKU-2": "", "WEB-ONLY": "L9-9Z9-9"},

@@ -10,7 +10,7 @@
 
   /** Tab 7: compare a KiotViet location export with saved locations and resync the differences. */
   interface Row { product_id: string; web: string; local: string; status: string; missing: boolean }
-  interface Workbook { sheets: Record<string, string[][]>; sheet: string; header_row: number; columns: [number, number] }
+  interface Workbook { sheets: Record<string, string[][]>; sheet: string; header_row: number }
 
   let url = $state("");
   let tabs = $state(1);
@@ -79,7 +79,7 @@
       busy = true;
       workbook = await call<Workbook>("workbook.inspect", { path });
       workbookPath = path;
-      [sheet, headerRow, idColumn_, locationColumn] = [workbook.sheet, workbook.header_row, ...workbook.columns];
+      [sheet, headerRow, idColumn_, locationColumn] = [workbook.sheet, workbook.header_row, 0, 1];
     } catch (problem) {
       await fail(errorText(problem), "Excel import failed");
     } finally {

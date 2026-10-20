@@ -21,7 +21,6 @@ from mapper.features import kiotviet_settings
 from mapper.features.csv_import import prepare_import, read_csv, suggest_columns
 from mapper.features.location_comparison import (
     LocationDifference, compare_locations, export_comparison, export_path, is_header_row, read_web_locations,
-    suggested_columns,
 )
 from mapper.features.web_upload import LocationUpdate, UploadError, WebsiteUploader
 from mapper.persistence.database import WarehouseDatabase
@@ -435,7 +434,7 @@ class Api:
 
     @rpc("workbook.inspect")
     def inspect_workbook(self, path: str) -> dict[str, Any]:
-        """Each sheet's first rows plus a guessed header row and columns for the column dialog."""
+        """Each sheet's first rows plus a guessed header row for the column dialog."""
         from openpyxl import load_workbook
         workbook = load_workbook(path, read_only=True, data_only=True)
         try:
@@ -447,9 +446,7 @@ class Api:
         guess = next(((name, number) for name, rows in sheets.items()
                       for number, row in enumerate(rows, 1) if row and is_header_row(row)),
                      (next(iter(sheets), ""), 1))
-        header = sheets.get(guess[0], [[]])[guess[1] - 1] if sheets.get(guess[0]) else []
-        return {"sheets": sheets, "sheet": guess[0], "header_row": guess[1],
-                "columns": suggested_columns(header) if header else (0, 1)}
+        return {"sheets": sheets, "sheet": guess[0], "header_row": guess[1]}
 
     @rpc("compare.run")
     def compare(self, path: str | None = None, sheet: str | None = None, header_row: int = 1,

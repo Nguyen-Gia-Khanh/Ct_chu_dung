@@ -17,19 +17,10 @@ class LocationDifference:
     true_location: str
 
 
-def suggested_columns(headers: list[object]) -> tuple[int, int]:
-    """Best guess of (product ID, location) column indexes from a header row."""
-    keys = [plain_header(header) for header in headers]
-    product_index = next((keys.index(name) for name in ID_HEADERS if name in keys), 0)
-    location_index = next((keys.index(name) for name in LOCATION_HEADERS if name in keys), 1 if len(headers) > 1 else 0)
-    return product_index, location_index
-
-
 def is_header_row(row: list[object]) -> bool:
     """True when the row names both a product ID column and a location column."""
-    product, location = suggested_columns(row)
-    return (product != location and plain_header(row[product]) in ID_HEADERS
-            and plain_header(row[location]) in LOCATION_HEADERS)
+    keys = [plain_header(value) for value in row]
+    return any(key in ID_HEADERS for key in keys) and any(key in LOCATION_HEADERS for key in keys)
 
 
 def export_path(directory: Path | None = None, now: datetime | None = None) -> Path:
