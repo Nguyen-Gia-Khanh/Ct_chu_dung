@@ -167,6 +167,9 @@
       addressMessage = "The loaded address changed or was removed. Enter and load it again.";
       return;
     }
+    if (current.slot_name !== address.slot_name) {
+      [floor, side, code, rowText, cellText] = [current.floor, current.side, current.shelf_code, String(current.row_number), String(current.slot_number)];
+    }
     address = current;
     await loadContents();
   }

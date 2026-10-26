@@ -113,7 +113,9 @@ immediately through `catalog.py` rather than waiting for the shelf commit.
 **Check:** preview then commit a new shelf; reload it for editing; verify that
 occupied cells cannot be removed. **Reverse location ID (right to left)** is a
 per-shelf setting (`shelves.revert_location_id`) saved on Commit; it changes only
-the horizontal order of existing cell IDs. New shelves default to unchecked.
+cell numbers and location names while every product stays in the same physical
+position. Exception staging names update atomically on Commit. New shelves
+default to unchecked. Existing version-5 data needs no additional migration.
 CSV reimport preservation is covered by `tests/test_persistence.py`.
 `tests/test_csv_import.py` covers both desktop import modes, short CSV rows,
 duplicate IDs, and fresh catalog names when returning to Tab 3.
@@ -205,7 +207,9 @@ so narrow the search before using the visible-queue Shift shortcut.
 Row 1 is the ground row. Layout arrays are ordered from the ground upward;
 renderers position the highest row first on screen. Cells display left to right by default;
 `revert_location_id` displays each row in descending cell ID order, independently
-of side. Saved IDs, product placements, and row order stay the same.
+of side. On Commit, cells keep their stable `slot_id` and product bindings,
+while `slot_number`, `slot_name`, and copied exception staging names flip.
+Row order and physical product positions stay the same.
 
 The compact Tab 2 cell label uses bold row/column text and a numeric product
 count on the following line. Empty cells are gray, occupied cells are green,

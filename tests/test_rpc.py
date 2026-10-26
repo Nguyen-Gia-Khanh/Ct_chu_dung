@@ -117,7 +117,7 @@ class SidecarTests(WorkspaceTestCase):
                             shelf_id=sid, revert_location_id=True)
         self.assertTrue(preview["revert_location_id"])
         self.assertEqual([c["cell"] for c in preview["rows"][0]], [3, 2, 1])
-        self.assertEqual(preview["rows"][0][-1]["count"], 1)
+        self.assertEqual(preview["rows"][0][0]["count"], 1)
         self.assertFalse(self.call("shelves.grid", shelf_id=sid)["revert_location_id"])
         self.call("designer.commit", floor="1", side="1", code="A", layout=[3],
                   shelf_id=sid, revert_location_id=True)

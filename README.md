@@ -407,7 +407,9 @@ Shelf views use the per-shelf **Reverse location ID (right to left)** checkbox
 in Tab 1. Unchecked counts left to right; checked counts right to left. Preview
 then **Commit shelf design** to save it. Side does not select direction. The
 version-5 migration enables the flag once on existing floor 1 even-side shelves;
-cell IDs, product placements, stock, and row order remain unchanged. See
+the initial conversion kept existing locations and stock unchanged. Later
+checkbox changes rename cell numbers and location IDs while products stay at
+the same shelf positions. Exception staging names update on Commit. See
 [migrations/README.md](migrations/README.md) for the backed-up conversion.
 
 ### Location names

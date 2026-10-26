@@ -35,7 +35,7 @@ import unicodedata
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from mapper.core.common import data_directory, default_database_path
+from mapper.core.common import data_directory, default_database_path, shelf_cell_number
 from utils.labels.pdf import (
     LABEL_HEIGHTS_CM,
     Cell,
@@ -53,6 +53,7 @@ class Shelf:
     code: str
     rows: tuple[tuple[int, int], ...]
     cells: tuple[Cell, ...]
+    revert_location_id: bool = False
 
 
 @dataclass(frozen=True)
@@ -173,7 +174,7 @@ class LabelDatabase:
             connection.execute("BEGIN")
             for shelf_id in dict.fromkeys(shelf_ids):
                 info = connection.execute(
-                    "SELECT shelf_id, floor, side, shelf_code, row_count FROM shelves WHERE shelf_id = ?", (shelf_id,),
+                    "SELECT shelf_id, floor, side, shelf_code, row_count, revert_location_id FROM shelves WHERE shelf_id = ?", (shelf_id,),
                 ).fetchone()
                 if info is None:
                     raise ValueError("A selected shelf was removed. Refresh the database list.")
@@ -204,6 +205,7 @@ class LabelDatabase:
                 result.append(Shelf(
                     shelf_id, info["floor"], info["side"], info["shelf_code"],
                     tuple((number,counts.get(number,0)) for number in range(1,info['row_count']+1)), cells,
+                    bool(info['revert_location_id']),
                 ))
         return tuple(result)
 
@@ -549,7 +551,8 @@ class LabelPrinterApp:
                 continue
             for cell in by_row[number]:
                 width = row_w / count
-                x = 90 + (cell.slot_number - 1) * width
+                position = shelf_cell_number(cell.slot_number, count, shelf.revert_location_id)
+                x = 90 + (position - 1) * width
                 tag = f"cell_{cell.slot_id}"
                 marked = cell.slot_id in self.marked
                 already_in_pdf = _location_key(cell.location_id) in self.printed_locations

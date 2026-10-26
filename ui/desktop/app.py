@@ -59,6 +59,7 @@ class WarehouseMapperApp(
         self.transferred_stock: dict[str, int | None] = {}
         self.current_layout: list[int] = []
         self.preview_key: tuple[str, str, str] | None = None
+        self.preview_revert_location_id = False
         self.current_shelf_id: int | None = None
         self.selected_slot: str | None = None
         self.shelf_choices: dict[str, int] = {}

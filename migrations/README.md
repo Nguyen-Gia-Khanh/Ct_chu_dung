@@ -80,4 +80,7 @@ and original timestamps are verified unchanged before committing. A JSON report
 is saved beside the backup. `--database` selects a rehearsal copy.
 
 In Tab 1, **Reverse location ID (right to left)** previews descending cell IDs;
-**Commit shelf design** saves the checkbox. New shelves default to unchecked.
+**Commit shelf design** saves the checkbox and renames the cells in place,
+including copied IDs in exception staging. Product bindings and physical
+positions stay fixed. Existing version-5 databases need no further migration.
+New shelves default to unchecked.

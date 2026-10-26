@@ -171,7 +171,7 @@
       <button disabled={rows.length >= 100} onclick={() => (rows = [...rows, 4])}>Add row at top</button>
       <button disabled={rows.length <= 1} onclick={() => (rows = rows.slice(0, -1))}>Remove top row</button>
     </div>
-    <label><input type="checkbox" bind:checked={revertLocationId} /> Reverse location ID (right to left)</label>
+    <label><input type="checkbox" bind:checked={revertLocationId} /> Reverse location ID (right to left; products stay in place)</label>
     <div class="editor">
       {#each [...rows.keys()].reverse() as index (index)}
         <label class="line">

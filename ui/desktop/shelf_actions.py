@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from tkinter import messagebox
 
-from mapper.core.common import make_slot_name
+from mapper.core.common import make_slot_name, shelf_slot_names, split_locations
 from mapper.persistence.database import LayoutConflictError, Placement
 
 
@@ -44,7 +44,7 @@ class ShelfActions:
             }
         )
         occupied = sorted(
-            {slot for slot in locations.values() if slot in removed_slots}
+            {slot for value in locations.values() for slot in split_locations(value) if slot in removed_slots}
         )
         if occupied:
             messagebox.showerror(
@@ -84,13 +84,8 @@ class ShelfActions:
                 "Select it under Existing shelf and press Load.",
             )
             return False
-        new_slots = {
-            (row_number, cell): make_slot_name(
-                floor, shelf_code, row_number, cell, side=side
-            )
-            for row_number, count in enumerate(layout, start=1)
-            for cell in range(1, count + 1)
-        }
+        reverse = self.designer.revert_location_id_var.get()
+        new_slots = shelf_slot_names(floor, side, shelf_code, layout, revert_location_id=reverse)
         valid_slots = set(new_slots.values())
         if len(valid_slots) != len(new_slots):
             messagebox.showerror(
@@ -100,13 +95,8 @@ class ShelfActions:
             return False
         if self.preview_key:
             old_floor, old_side, old_code = self.preview_key
-            old_slots = {
-                (row_number, cell): make_slot_name(
-                    old_floor, old_code, row_number, cell, side=old_side
-                )
-                for row_number, count in enumerate(self.current_layout, start=1)
-                for cell in range(1, count + 1)
-            }
+            old_slots = shelf_slot_names(old_floor, old_side, old_code, self.current_layout,
+                                         revert_location_id=self.preview_revert_location_id)
             removed = {
                 name
                 for coordinate, name in old_slots.items()
@@ -114,7 +104,7 @@ class ShelfActions:
             }
             if not self._slots_are_empty(removed):
                 return False
-            if new_key != self.preview_key:
+            if old_slots != new_slots:
                 renamed = {
                     name: new_slots[coordinate]
                     for coordinate, name in old_slots.items()
@@ -133,7 +123,7 @@ class ShelfActions:
                     # independently and keeps showing saved metadata until Commit.
                     self.committed_placements = {
                         product_id: Placement(
-                            renamed.get(item.slot_name, item.slot_name),
+                            ", ".join(renamed.get(slot, slot) for slot in split_locations(item.slot_name)),
                             item.stock_qty,
                             item.assigned_at,
                         )
@@ -144,11 +134,15 @@ class ShelfActions:
                         for product_id, item in self.committed_placements.items()
                     }
                 self.selected_slot = renamed.get(self.selected_slot, self.selected_slot)
+                if self.shelf_browser.current_key == self.preview_key:
+                    grid = self.shelf_browser.shelf_grid
+                    grid.selected = renamed.get(grid.selected, grid.selected)
                 # Renamed cells change the location column of the product lists.
                 self.refresh_product_lists()
 
         self.current_layout = layout
         self.preview_key = new_key
+        self.preview_revert_location_id = reverse
         if self.selected_slot not in valid_slots:
             self.selected_slot = None
         self.render_shelf()
@@ -159,34 +153,30 @@ class ShelfActions:
         )
         return True
 
+    def _saved_slot_renames(self) -> dict[str, str]:
+        if self.current_shelf_id is None or self.preview_key is None:
+            return {}
+        floor, side, code, layout = self.database.get_shelf(self.current_shelf_id)
+        old = shelf_slot_names(floor, side, code, layout,
+                              revert_location_id=self.database.get_shelf_revert_location_id(self.current_shelf_id))
+        floor, side, code = self.preview_key
+        new = shelf_slot_names(floor, side, code, self.current_layout,
+                              revert_location_id=self.preview_revert_location_id)
+        return {name: new[position] for position, name in old.items() if position in new}
+
     def render_shelf(self) -> None:
         floor, side, shelf_code = self.preview_key or ("", "", "")
         if not hasattr(self, "shelf_browser"):
             return
-        valid_slots = {
-            make_slot_name(floor, shelf_code, row_number, cell, side=side)
-            for row_number, count in enumerate(self.current_layout, start=1)
-            for cell in range(1, count + 1)
-        }
-        contents = [
-            (product_id, self.products.get(product_id, ""), placement)
-            for product_id, placement in self.committed_placements.items()
-            if placement.slot_name in valid_slots
-            and product_id not in self.pending_unassignments
-        ]
-        contents.extend(
-            (product_id, self.products.get(product_id, ""), placement)
-            for product_id, placement in self.staged_assignments.items()
-            if placement.slot_name in valid_slots
-        )
-        self.shelf_browser.show_preview(
-            floor,
-            side,
-            shelf_code,
-            self.current_layout,
-            contents,
-            revert_location_id=self.designer.revert_location_id_var.get(),
-        )
+        contents = []
+        if self.current_shelf_id is not None:
+            renamed = self._saved_slot_renames()
+            contents = [(pid, name, Placement(renamed.get(p.slot_name, p.slot_name), p.stock_qty, p.assigned_at))
+                        for pid, name, p in self.database.get_shelf_contents(self.current_shelf_id)
+                        if pid not in self.pending_unassignments and pid not in self.staged_assignments]
+        contents.extend((pid, self.products.get(pid, ""), p) for pid, p in self.staged_assignments.items())
+        self.shelf_browser.show_preview(floor, side, shelf_code, self.current_layout, contents,
+                                        revert_location_id=self.preview_revert_location_id)
 
     def refresh_shelf_selector(self) -> None:
         choices = self.database.list_shelves()
@@ -234,6 +224,7 @@ class ShelfActions:
         self.current_shelf_id = None
         self.current_layout = []
         self.preview_key = None
+        self.preview_revert_location_id = False
         self.selected_slot = None
         self.staged_assignments.clear()
         self.pending_unassignments.intersection_update(self.transferred_stock)
@@ -272,6 +263,7 @@ class ShelfActions:
         self.designer.prepare_row_inputs(layout, notify=False)
         self.current_layout = layout
         self.preview_key = (floor, side, shelf_code)
+        self.preview_revert_location_id = revert_location_id
         self.selected_slot = None
         self.staged_assignments.clear()
         self.pending_unassignments.intersection_update(self.transferred_stock)

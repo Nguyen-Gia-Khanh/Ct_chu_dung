@@ -349,14 +349,17 @@ class Api:
             revert_location_id = saved_grid.revert_location_id if saved_grid else False
         grid = build_grid(floor, side, code, layout, revert_location_id=revert_location_id)
         if saved_grid is not None:
-            kept = {(cell.row, cell.cell) for cell in grid.cells()}
-            occupied = sorted(cell.slot_name for cell in saved_grid.cells()
-                              if cell.count and (cell.row, cell.cell) not in kept)
+            saved_positions = {(cell.row, position): cell for row in saved_grid.rows
+                               for position, cell in enumerate(row, 1)}
+            new_positions = {(cell.row, position): cell for row in grid.rows
+                             for position, cell in enumerate(row, 1)}
+            occupied = sorted(cell.slot_name for coordinate, cell in saved_positions.items()
+                              if cell.count and coordinate not in new_positions)
             if occupied:
                 raise ValueError(f"Return or move the products in {occupied[0]} before removing this row or cell.")
-            by_position = {(cell.row, cell.cell): cell.count for cell in saved_grid.cells()}
             grid = build_grid(floor, side, code, layout, [
-                cell.slot_name for cell in grid.cells() for _ in range(by_position.get((cell.row, cell.cell), 0))],
+                cell.slot_name for coordinate, cell in new_positions.items()
+                for _ in range(saved_positions[coordinate].count if coordinate in saved_positions else 0)],
                 revert_location_id=revert_location_id)
         return {"floor": grid.floor, "side": grid.side, "code": grid.shelf_code, "layout": grid.layout,
                 "rows": grid.rows, "saved_products": len(contents), "revert_location_id": grid.revert_location_id}

@@ -63,7 +63,7 @@ class ShelfDesigner(ttk.Frame):
         ).grid(row=2, column=0, columnspan=6, sticky="w", pady=(10, 0))
 
         self.reverse_location_checkbox = ttk.Checkbutton(
-            metadata, text="Reverse location ID (right to left)",
+            metadata, text="Reverse location ID (right to left; products stay in place)",
             variable=self.revert_location_id_var, command=self.on_rows_changed,
         )
         self.reverse_location_checkbox.grid(row=3, column=0, columnspan=6, sticky="w", pady=(8, 0))
