@@ -26,6 +26,7 @@ class ShelfActions:
             self.designer.side_var.get(),
             self.designer.shelf_code_var.get(),
             self.designer.row_count_var.get(),
+            self.designer.revert_location_id_var.get(),
             tuple(count.get() for count in self.designer.row_inputs),
         )
 
@@ -184,6 +185,7 @@ class ShelfActions:
             shelf_code,
             self.current_layout,
             contents,
+            revert_location_id=self.designer.revert_location_id_var.get(),
         )
 
     def refresh_shelf_selector(self) -> None:
@@ -238,6 +240,7 @@ class ShelfActions:
         self.designer.floor_var.set("1")
         self.designer.side_var.set("1")
         self.designer.shelf_code_var.set("")
+        self.designer.revert_location_id_var.set(False)
         self.designer.prepare_row_inputs([4] * 3, notify=False)
         self.saved_editor_state = self._editor_state()
         self.shelf_selector.set("")
@@ -256,6 +259,7 @@ class ShelfActions:
             return
         try:
             floor, side, shelf_code, layout = self.database.get_shelf(shelf_id)
+            revert_location_id = self.database.get_shelf_revert_location_id(shelf_id)
         except Exception as error:
             messagebox.showerror("Shelf could not be loaded", str(error))
             return
@@ -264,6 +268,7 @@ class ShelfActions:
         self.designer.floor_var.set(floor)
         self.designer.side_var.set(side)
         self.designer.shelf_code_var.set(shelf_code)
+        self.designer.revert_location_id_var.set(revert_location_id)
         self.designer.prepare_row_inputs(layout, notify=False)
         self.current_layout = layout
         self.preview_key = (floor, side, shelf_code)
@@ -332,6 +337,7 @@ class ShelfActions:
                 self.pending_unassignments,
                 side=side,
                 shelf_id=self.current_shelf_id,
+                revert_location_id=self.designer.revert_location_id_var.get(),
             )
         except LayoutConflictError as error:
             messagebox.showerror("Shelf layout cannot be changed", str(error))

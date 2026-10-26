@@ -16,9 +16,10 @@ from pathlib import Path
 import sqlite3
 
 from mapper.core.common import clean_product_name, iso_timestamp, normalize_sku
-from mapper.persistence.schema import SCHEMA_VERSION, create_schema
+from mapper.persistence.schema import create_schema
+from migrations.shelf_direction import add_direction_setting
 
-VERSION = SCHEMA_VERSION
+VERSION = 4
 COLLISION = {'H06430-K56-N12', 'H0643-0K5-6N12'}
 
 
@@ -163,7 +164,7 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
         connection.execute('BEGIN IMMEDIATE')
         tables = snapshot(connection)['tables']
         if 'schema_migrations' in tables and connection.execute(
-                'SELECT 1 FROM schema_migrations WHERE version=?', (VERSION,)).fetchone():
+                'SELECT 1 FROM schema_migrations WHERE version>=?', (VERSION,)).fetchone():
             state = snapshot(connection)
             if state['integrity_check'] != ['ok'] or state['foreign_key_check']:
                 raise RuntimeError('Already migrated database fails SQLite checks.')
@@ -197,6 +198,7 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
                 connection.execute("INSERT INTO sqlite_sequence(name,seq) SELECT 'slots',? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name='slots')",(slot_sequence[0],))
                 connection.execute("UPDATE sqlite_sequence SET seq=MAX(seq,?) WHERE name='slots'",(slot_sequence[0],))
             connection.executemany('INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)', [(2,),(3,),(VERSION,)])
+            add_direction_setting(connection)
             after = snapshot(connection)
             if after['integrity_check'] != ['ok'] or after['foreign_key_check']:
                 raise sqlite3.IntegrityError('Schema simplification failed SQLite checks.')
@@ -310,6 +312,7 @@ def migrate(connection: sqlite3.Connection, *, keep_sku: str | None = None,
                 if cursor.rowcount == 0:
                     connection.execute('INSERT INTO sqlite_sequence(name,seq) VALUES (?,?)', (table,value))
         connection.executemany('INSERT INTO schema_migrations(version) VALUES (?)', [(1,), (2,), (3,), (VERSION,)])
+        add_direction_setting(connection)
         after = snapshot(connection)
         if after['integrity_check'] != ['ok'] or after['foreign_key_check']:
             raise sqlite3.IntegrityError(f'Migration checks failed: {after}')

@@ -73,13 +73,13 @@ class ShelfGridCanvas(ttk.Frame):
 
     @property
     def key(self) -> tuple | None:
-        return None if self.model is None else (*self.model.key, self.model.layout)
+        return None if self.model is None else (*self.model.key, self.model.layout, self.model.revert_location_id)
 
     def show(self, grid: ShelfGrid, *, selected: str | None = None, staged: dict[str, int] | None = None,
              keep_view: bool = True) -> None:
         """Draw a shelf; the same shelf with the same layout only recolors its cells."""
         counts = {cell.slot_name: cell.count for cell in grid.cells()}
-        if self.key == (*grid.key, grid.layout):
+        if self.key == (*grid.key, grid.layout, grid.revert_location_id):
             self.model, self.counts, self.staged = grid, counts, dict(staged or {})
             self.selected = selected if selected in counts else None
             for slot_name in self.cells:

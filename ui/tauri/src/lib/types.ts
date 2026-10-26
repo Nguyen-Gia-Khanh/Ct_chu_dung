@@ -45,6 +45,7 @@ export interface GridModel {
   code: string;
   layout: number[];
   rows: GridCell[][];
+  revert_location_id: boolean;
 }
 
 export interface ContentRow {

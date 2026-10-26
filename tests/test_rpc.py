@@ -109,3 +109,20 @@ class SidecarTests(WorkspaceTestCase):
         committed = self.call("designer.commit", floor="1", side="1", code="A", layout=[3, 2], shelf_id=self.first.shelf_id)
         self.assertTrue(committed["changes"]["shelves"])
         self.assertEqual(len(self.call("shelves.grid", shelf_id=self.first.shelf_id)["rows"]), 2)
+
+    def test_designer_reverse_id_round_trip_and_preview(self) -> None:
+        sid = self.first.shelf_id
+        self.call("exceptions.assign", product_id="C1", slot_id=self.first.slot_id, stock=4)
+        preview = self.call("designer.preview", floor="1", side="1", code="A", layout=[3],
+                            shelf_id=sid, revert_location_id=True)
+        self.assertTrue(preview["revert_location_id"])
+        self.assertEqual([c["cell"] for c in preview["rows"][0]], [3, 2, 1])
+        self.assertEqual(preview["rows"][0][-1]["count"], 1)
+        self.assertFalse(self.call("shelves.grid", shelf_id=sid)["revert_location_id"])
+        self.call("designer.commit", floor="1", side="1", code="A", layout=[3],
+                  shelf_id=sid, revert_location_id=True)
+        self.assertTrue(self.call("shelves.grid", shelf_id=sid)["revert_location_id"])
+        # Existing callers that omit the setting preserve it.
+        self.call("designer.commit", floor="1", side="1", code="A", layout=[3], shelf_id=sid)
+        self.assertEqual([c["cell"] for c in self.call("designer.preview", floor="1", side="1", code="A",
+                                                    layout=[3], shelf_id=sid)["rows"][0]], [3, 2, 1])

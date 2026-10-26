@@ -403,9 +403,12 @@ includes persistence and retained handlers.
 
 ### Shelf orientation
 
-Tkinter shelf views show each even-side row in descending cell order. The
-one-time remap of existing product locations is complete. New products use the
-current location IDs directly, so shelves no longer store a switching flag.
+Shelf views use the per-shelf **Reverse location ID (right to left)** checkbox
+in Tab 1. Unchecked counts left to right; checked counts right to left. Preview
+then **Commit shelf design** to save it. Side does not select direction. The
+version-5 migration enables the flag once on existing floor 1 even-side shelves;
+cell IDs, product placements, stock, and row order remain unchanged. See
+[migrations/README.md](migrations/README.md) for the backed-up conversion.
 
 ### Location names
 

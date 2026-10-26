@@ -96,6 +96,13 @@ class ShelfOperations:
                 "SELECT row_number, COUNT(*) FROM slots WHERE shelf_id = ? GROUP BY row_number", (shelf_id,)))
         return shelf["floor"], shelf["side"], shelf["shelf_code"], [counts.get(n, 0) for n in range(1, shelf["row_count"] + 1)]
 
+    def get_shelf_revert_location_id(self, shelf_id: int) -> bool:
+        with closing(self.connect()) as connection:
+            row = connection.execute("SELECT revert_location_id FROM shelves WHERE shelf_id = ?", (shelf_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"Shelf {shelf_id} does not exist.")
+        return bool(row[0])
+
     def _fetch_slot(self, where: str, params: tuple) -> SlotAddress | None:
         with closing(self.connect()) as connection:
             row = connection.execute(f"{SLOT_ADDRESS_SQL} WHERE {where}", params).fetchone()
@@ -143,10 +150,13 @@ class ShelfOperations:
         *,
         side: str = "1",
         shelf_id: int | None = None,
+        revert_location_id: bool | None = None,
     ) -> int:
         """Save a layout plus the designer's staged moves and removals in one transaction."""
         if any(type(count) is not int or count < 0 for count in layout):
             raise ValueError('Each shelf row needs a nonnegative whole-number cell count.')
+        if revert_location_id is not None and type(revert_location_id) is not bool:
+            raise ValueError("Reverse location ID must be true or false.")
         staged = _validated_staging(staged_assignments)
         unassigned = {normalize_sku(pid) for pid in pending_unassignments}
         floor, shelf_code, side = (clean_location_segment(value) for value in (floor, shelf_code, side))
@@ -156,6 +166,9 @@ class ShelfOperations:
         with closing(self.connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             shelf_id = self._upsert_shelf(connection, floor, side, shelf_code, shelf_id)
+            if revert_location_id is not None:
+                connection.execute("UPDATE shelves SET revert_location_id = ? WHERE shelf_id = ?",
+                                   (int(revert_location_id), shelf_id))
             self._return_unassigned(connection, unassigned - staged.keys())
             # Explicit removals/moves happen in this same transaction, so a product
             # can be moved off a top row and that row removed in one commit.
@@ -207,9 +220,10 @@ class ShelfOperations:
                                [(pid, slot_ids[p.slot_name], p.stock_qty, p.assigned_at) for pid, p in staged.items()])
 
     def save_shelf(self, floor: str, shelf_code: str, row_counts: list[int], *, side: str = "1",
-                   shelf_id: int | None = None) -> int:
+                   shelf_id: int | None = None, revert_location_id: bool | None = None) -> int:
         """Create or update a shelf layout; row_counts[0] is physical Row 1."""
-        return self.commit_shelf(floor, shelf_code, row_counts, {}, set(), side=side, shelf_id=shelf_id)
+        return self.commit_shelf(floor, shelf_code, row_counts, {}, set(), side=side, shelf_id=shelf_id,
+                                 revert_location_id=revert_location_id)
 
     def delete_shelf(self, shelf_id: int) -> None:
         """Delete an empty shelf definition and its slots."""

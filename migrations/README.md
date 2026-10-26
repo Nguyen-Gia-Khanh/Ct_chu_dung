@@ -60,3 +60,24 @@ collisions or unexpected legacy tables/views/triggers stop the migration.
 `--database` selects a scratch copy for rehearsal. Do not run old application
 code against the upgraded operational database. Keep the source and database
 versions together. Backups and operational reports are local, ignored data.
+
+
+## Shelf ID direction (version 5)
+
+Close the warehouse app and use the repository `.venv`:
+
+```powershell
+& .\.venv\Scripts\python.exe -m migrations.shelf_direction
+& .\.venv\Scripts\python.exe -m migrations.shelf_direction --apply
+```
+
+The first command reviews the target shelves without writing. The second creates
+an integrity-checked SQLite backup beside the database, then adds the per-shelf
+`revert_location_id` flag in one transaction. Existing floor 1 even-side shelves
+start checked; all other shelves start unchecked. A repeat run leaves manually
+changed flags alone. Cell IDs, row order, shelf side, placements, stock, staging,
+and original timestamps are verified unchanged before committing. A JSON report
+is saved beside the backup. `--database` selects a rehearsal copy.
+
+In Tab 1, **Reverse location ID (right to left)** previews descending cell IDs;
+**Commit shelf design** saves the checkbox. New shelves default to unchecked.
