@@ -17,6 +17,14 @@ backed-up migration before starting this version.
 preserves empty rows. Cell counts come from `slots`. `shelf_rows` and
 `queue_origins` are retired; hot-seller membership comes only from `hot_sellers`.
 
+# Shelf ID direction (schema version 5)
+
+`python -m migrations.shelf_direction --apply` backs up a version-4 database,
+adds `shelves.revert_location_id`, and enables it once for existing floor 1
+even-side shelves. Close the app first; omit `--apply` for review. Reruns
+preserve later checkbox changes. All existing warehouse records are verified
+unchanged. See [migrations/README.md](migrations/README.md).
+
 # Desktop source and behavior guide
 
 Use this file to locate the code for a requested desktop change. [README.md](README.md)
@@ -103,7 +111,11 @@ immediately through `catalog.py` rather than waiting for the shelf commit.
 `make_slot_name` provide naming shared with the other tabs.
 
 **Check:** preview then commit a new shelf; reload it for editing; verify that
-occupied cells cannot be removed and even-side display keeps the saved IDs.
+occupied cells cannot be removed. **Reverse location ID (right to left)** is a
+per-shelf setting (`shelves.revert_location_id`) saved on Commit; it changes only
+cell numbers and location names while every product stays in the same physical
+position. Exception staging names update atomically on Commit. New shelves
+default to unchecked. Existing version-5 data needs no additional migration.
 CSV reimport preservation is covered by `tests/test_persistence.py`.
 `tests/test_csv_import.py` covers both desktop import modes, short CSV rows,
 duplicate IDs, and fresh catalog names when returning to Tab 3.
@@ -193,8 +205,11 @@ so narrow the search before using the visible-queue Shift shortcut.
 ### Shelf display conventions
 
 Row 1 is the ground row. Layout arrays are ordered from the ground upward;
-renderers position the highest row first on screen. Even-side rows display cells
-in descending order without renumbering the stored cell IDs.
+renderers position the highest row first on screen. Cells display left to right by default;
+`revert_location_id` displays each row in descending cell ID order, independently
+of side. On Commit, cells keep their stable `slot_id` and product bindings,
+while `slot_number`, `slot_name`, and copied exception staging names flip.
+Row order and physical product positions stay the same.
 
 The compact Tab 2 cell label uses bold row/column text and a numeric product
 count on the following line. Empty cells are gray, occupied cells are green,

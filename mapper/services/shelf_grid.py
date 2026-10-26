@@ -1,7 +1,7 @@
 """Front view of a shelf: rows top-down, cells in walking order, with product counts.
 
-Layouts are stored from the ground up (index 0 is Row 1). Even sides face the other
-way, so their cells are listed right-to-left. Every grid in both UIs uses this model.
+Layouts are stored from the ground up (index 0 is Row 1). The saved shelf setting
+controls cell ID direction independently of its side. Both UIs use this model.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ class ShelfGrid:
     side: str
     shelf_code: str
     rows: tuple[tuple[GridCell, ...], ...]   # screen order: top row first
+    revert_location_id: bool = False
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -46,10 +47,6 @@ class ShelfGrid:
         return (cell for row in self.rows for cell in row)
 
 
-def is_even_side(side: str) -> bool:
-    return side.isdigit() and int(side) % 2 == 0
-
-
 def cell_color(count: int, *, staged: bool = False, selected: bool = False) -> str:
     if selected:
         return SELECTED_COLOR
@@ -57,24 +54,24 @@ def cell_color(count: int, *, staged: bool = False, selected: bool = False) -> s
 
 
 def build_grid(floor: str, side: str, shelf_code: str, layout: list[int],
-               slot_names: Iterable[str] = ()) -> ShelfGrid:
+               slot_names: Iterable[str] = (), *, revert_location_id: bool = False) -> ShelfGrid:
     """slot_names holds one entry per product location (e.g. from get_shelf_contents)."""
     counts = Counter(slot_names)
     prefix = shelf_prefix(floor, shelf_code, side=side)
-    even = is_even_side(side)
     rows = []
     for row_number in range(len(layout), 0, -1):
         width = layout[row_number - 1]
         cells = []
-        for cell in (range(width, 0, -1) if even else range(1, width + 1)):
+        for cell in (range(width, 0, -1) if revert_location_id else range(1, width + 1)):
             name = f"{prefix}{row_number}-{cell}"
             cells.append(GridCell(row_number, cell, name, counts.get(name, 0)))
         rows.append(tuple(cells))
-    return ShelfGrid(floor, side, shelf_code, tuple(rows))
+    return ShelfGrid(floor, side, shelf_code, tuple(rows), revert_location_id)
 
 
 def load_grid(db, shelf_id: int) -> tuple[ShelfGrid, list]:
     """The saved shelf's grid and its contents rows (product_id, name, Placement)."""
     floor, side, shelf_code, layout = db.get_shelf(shelf_id)
     contents = db.get_shelf_contents(shelf_id)
-    return build_grid(floor, side, shelf_code, layout, (placement.slot_name for _, _, placement in contents)), contents
+    return build_grid(floor, side, shelf_code, layout, (placement.slot_name for _, _, placement in contents),
+                      revert_location_id=db.get_shelf_revert_location_id(shelf_id)), contents

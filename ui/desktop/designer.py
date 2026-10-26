@@ -26,6 +26,7 @@ class ShelfDesigner(ttk.Frame):
         self._row_trace_names: list[tuple[tk.StringVar, str]] = []
         self.floor_var = tk.StringVar(master=self, value="1")
         self.side_var = tk.StringVar(master=self, value="1")
+        self.revert_location_id_var = tk.BooleanVar(master=self, value=False)
         self.shelf_code_var = tk.StringVar(master=self, value="A")
         self.row_count_var = tk.StringVar(master=self, value="3")
 
@@ -60,6 +61,12 @@ class ShelfDesigner(ttk.Frame):
                  "Changing a loaded shelf's metadata renames it on Commit. Use New shelf for another side.",
             foreground="#555555",
         ).grid(row=2, column=0, columnspan=6, sticky="w", pady=(10, 0))
+
+        self.reverse_location_checkbox = ttk.Checkbutton(
+            metadata, text="Reverse location ID (right to left; products stay in place)",
+            variable=self.revert_location_id_var, command=self.on_rows_changed,
+        )
+        self.reverse_location_checkbox.grid(row=3, column=0, columnspan=6, sticky="w", pady=(8, 0))
 
         row_editor = ttk.LabelFrame(self, text="Rows — front view", padding=8)
         row_editor.pack(fill="both", expand=True, pady=(12, 0))

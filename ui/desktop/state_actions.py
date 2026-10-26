@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from mapper.core.common import normalize_sku, make_slot_name, normalize_search, product_search_text
+from mapper.core.common import normalize_sku, split_locations, normalize_search, product_search_text
 from mapper.persistence.database import Placement
 
 
@@ -211,26 +211,12 @@ class StateActions:
         self.committed_placements = self.database.get_placement_details()
         self.on_hand_products = self.database.get_on_hand_products()
         if self.current_shelf_id is not None and self.preview_key:
-            saved_floor, saved_side, saved_code, saved_layout = self.database.get_shelf(
-                self.current_shelf_id
-            )
-            if (saved_floor, saved_side, saved_code) != self.preview_key:
-                floor, side, code = self.preview_key
-                renamed = {
-                    make_slot_name(
-                        saved_floor, saved_code, row, cell, side=saved_side
-                    ): make_slot_name(floor, code, row, cell, side=side)
-                    for row, count in enumerate(saved_layout, start=1)
-                    for cell in range(1, count + 1)
-                }
-                self.committed_placements = {
-                    product_id: Placement(
-                        renamed.get(item.slot_name, item.slot_name),
-                        item.stock_qty,
-                        item.assigned_at,
-                    )
-                    for product_id, item in self.committed_placements.items()
-                }
+            renamed = self._saved_slot_renames()
+            self.committed_placements = {
+                pid: Placement(", ".join(renamed.get(slot, slot) for slot in split_locations(p.slot_name)),
+                               p.stock_qty, p.assigned_at)
+                for pid, p in self.committed_placements.items()
+            }
         self.committed_locations = {
             product_id: placement.slot_name
             for product_id, placement in self.committed_placements.items()

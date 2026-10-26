@@ -5,7 +5,7 @@ from contextlib import closing
 import sqlite3
 from mapper.core.common import UTC_DEFAULT, EXCEL_ERRORS
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 SKU_CHECK = "CHECK (length(product_id) > 0 AND product_id = upper(trim(product_id)) AND instr(product_id, '-') = 0 AND instr(product_id, ' ') = 0)"
 NAME_ERRORS = ', '.join("'" + value + "'" for value in sorted(EXCEL_ERRORS))
 SCHEMA_SQL = f"""
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS shelves (
     created_at TEXT NOT NULL DEFAULT {UTC_DEFAULT},
     updated_at TEXT NOT NULL DEFAULT {UTC_DEFAULT},
     row_count INTEGER NOT NULL DEFAULT 0 CHECK (row_count >= 0),
+    revert_location_id INTEGER NOT NULL DEFAULT 0 CHECK (revert_location_id IN (0, 1)),
     UNIQUE (floor, side, shelf_code)
 );
 CREATE TABLE IF NOT EXISTS slots (
@@ -99,6 +100,12 @@ class SchemaOperations:
                 raise RuntimeError(
                     'This database needs the backed-up warehouse cleanup migration. '
                     'Run python -m migrations.warehouse_cleanup --help using the repo .venv.'
+                )
+            if 'shelves' in tables and 'revert_location_id' not in {
+                    row[1] for row in connection.execute("PRAGMA table_info(shelves)")}:
+                raise RuntimeError(
+                    "This database needs the backed-up shelf direction migration. "
+                    "Run the repo .venv python -m migrations.shelf_direction --apply with the app closed."
                 )
             create_schema(connection)
             connection.execute('INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)',(SCHEMA_VERSION,))

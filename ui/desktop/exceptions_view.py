@@ -466,7 +466,18 @@ class ExceptionsView(ttk.Frame):
         if not self.selected_address:
             return
 
-        contents = self.database.get_slot_contents(self.selected_address.slot_id)
+        address = self.database.get_slot_by_id(self.selected_address.slot_id)
+        if address is None:
+            self.selected_address = None
+            self.loaded_slot_text.set("No cell loaded")
+            return
+        if address != self.selected_address:
+            for variable, value in ((self.floor_var, address.floor), (self.side_var, address.side),
+                                    (self.shelf_var, address.shelf_code), (self.row_var, address.row_number),
+                                    (self.cell_var, address.slot_number)):
+                variable.set(str(value))
+        self.selected_address = address
+        contents = self.database.get_slot_contents(address.slot_id)
         for pid, pname, pl in contents:
             assigned = vietnam_time(pl.assigned_at) if pl.assigned_at else "Unknown"
             qty_display = "" if pl.stock_qty is None else str(pl.stock_qty)

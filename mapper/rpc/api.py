@@ -202,6 +202,7 @@ class Api:
         grid, contents = load_grid(self.db, shelf_id)
         return {"shelf_id": shelf_id, "label": shelf_label(*grid.key), "floor": grid.floor, "side": grid.side,
                 "code": grid.shelf_code, "layout": grid.layout, "rows": grid.rows,
+                "revert_location_id": grid.revert_location_id,
                 "contents": [self._content_row(pid, name, placement) for pid, name, placement in contents]}
 
     @staticmethod
@@ -336,29 +337,38 @@ class Api:
 
     # --- tab 1: shelf designer -------------------------------------------------
     @rpc("designer.preview")
-    def preview(self, floor: str, side: str, code: str, layout: list[int], shelf_id: int | None = None) -> dict[str, Any]:
+    def preview(self, floor: str, side: str, code: str, layout: list[int], shelf_id: int | None = None,
+                revert_location_id: bool | None = None) -> dict[str, Any]:
         """A layout's grid with saved counts; refused when it would drop occupied cells or clash."""
         existing = self.db.get_shelf_id(floor, code, side=side)
         if existing is not None and existing != shelf_id:
             raise ValueError(f"Floor {floor} / Side {side} / Shelf {code} already exists. Load it to edit.")
         contents = self.db.get_shelf_contents(shelf_id) if shelf_id is not None else []
         saved_grid = load_grid(self.db, shelf_id)[0] if shelf_id is not None else None
-        grid = build_grid(floor, side, code, layout)
+        if revert_location_id is None:
+            revert_location_id = saved_grid.revert_location_id if saved_grid else False
+        grid = build_grid(floor, side, code, layout, revert_location_id=revert_location_id)
         if saved_grid is not None:
-            kept = {(cell.row, cell.cell) for cell in grid.cells()}
-            occupied = sorted(cell.slot_name for cell in saved_grid.cells()
-                              if cell.count and (cell.row, cell.cell) not in kept)
+            saved_positions = {(cell.row, position): cell for row in saved_grid.rows
+                               for position, cell in enumerate(row, 1)}
+            new_positions = {(cell.row, position): cell for row in grid.rows
+                             for position, cell in enumerate(row, 1)}
+            occupied = sorted(cell.slot_name for coordinate, cell in saved_positions.items()
+                              if cell.count and coordinate not in new_positions)
             if occupied:
                 raise ValueError(f"Return or move the products in {occupied[0]} before removing this row or cell.")
-            by_position = {(cell.row, cell.cell): cell.count for cell in saved_grid.cells()}
             grid = build_grid(floor, side, code, layout, [
-                cell.slot_name for cell in grid.cells() for _ in range(by_position.get((cell.row, cell.cell), 0))])
+                cell.slot_name for coordinate, cell in new_positions.items()
+                for _ in range(saved_positions[coordinate].count if coordinate in saved_positions else 0)],
+                revert_location_id=revert_location_id)
         return {"floor": grid.floor, "side": grid.side, "code": grid.shelf_code, "layout": grid.layout,
-                "rows": grid.rows, "saved_products": len(contents)}
+                "rows": grid.rows, "saved_products": len(contents), "revert_location_id": grid.revert_location_id}
 
     @rpc("designer.commit")
-    def commit(self, floor: str, side: str, code: str, layout: list[int], shelf_id: int | None = None) -> dict[str, Any]:
-        shelf_id = self.db.commit_shelf(floor, code, layout, {}, set(), side=side, shelf_id=shelf_id)
+    def commit(self, floor: str, side: str, code: str, layout: list[int], shelf_id: int | None = None,
+               revert_location_id: bool | None = None) -> dict[str, Any]:
+        shelf_id = self.db.commit_shelf(floor, code, layout, {}, set(), side=side, shelf_id=shelf_id,
+                                       revert_location_id=revert_location_id)
         return {"shelf_id": shelf_id, "changes": self._written(shelves=True)}
 
     @rpc("designer.delete")

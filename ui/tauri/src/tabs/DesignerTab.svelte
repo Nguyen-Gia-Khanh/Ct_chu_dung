@@ -12,15 +12,16 @@
   let shelfId = $state<number | null>(null);
   let floor = $state("1");
   let side = $state("1");
+  let revertLocationId = $state(false);
   let code = $state("");
   let rows = $state<number[]>([4, 4, 4]);
-  let saved = $state(JSON.stringify([null, "1", "1", "", [4, 4, 4]]));
+  let saved = $state(JSON.stringify([null, "1", "1", "", [4, 4, 4], false]));
   let preview = $state<GridModel | null>(null);
   let problem = $state("");
   let seen = -1;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
-  const snapshot = $derived(JSON.stringify([shelfId, floor.trim(), side.trim(), code.trim(), rows]));
+  const snapshot = $derived(JSON.stringify([shelfId, floor.trim(), side.trim(), code.trim(), rows, revertLocationId]));
   $effect(() => {
     app.designerDirty = snapshot !== saved && (shelfId !== null || code.trim() !== "");
   });
@@ -49,7 +50,7 @@
       return;
     }
     try {
-      preview = await call<GridModel>("designer.preview", { floor, side, code, layout: rows, shelf_id: shelfId });
+      preview = await call<GridModel>("designer.preview", { floor, side, code, layout: rows, shelf_id: shelfId, revert_location_id: revertLocationId });
       problem = "";
     } catch (error) {
       [preview, problem] = [null, errorText(error)];
@@ -67,7 +68,7 @@
 
   async function newShelf() {
     if (!(await discardOk())) return;
-    [shelfId, chosen, floor, side, code, rows] = [null, "", "1", "1", "", [4, 4, 4]];
+    [shelfId, chosen, floor, side, code, rows, revertLocationId] = [null, "", "1", "1", "", [4, 4, 4], false];
     saved = snapshot;
     setStatus("Enter the new shelf metadata and row cell counts.");
   }
@@ -76,8 +77,8 @@
     if (chosen === "") return notify("Select an existing shelf first.");
     if (!(await discardOk())) return;
     const view = await call<ShelfView>("shelves.grid", { shelf_id: chosen });
-    [shelfId, floor, side, code, rows] = [view.shelf_id, view.floor, view.side, view.code, [...view.layout]];
-    saved = JSON.stringify([shelfId, floor, side, code, rows]);
+    [shelfId, floor, side, code, rows, revertLocationId] = [view.shelf_id, view.floor, view.side, view.code, [...view.layout], view.revert_location_id];
+    saved = JSON.stringify([shelfId, floor, side, code, rows, revertLocationId]);
     setStatus(`Loaded ${view.label}.`);
   }
 
@@ -85,10 +86,10 @@
     await refreshPreview();
     if (!preview) return fail(problem, "Shelf layout cannot be saved");
     try {
-      const result = await call<WriteResult & { shelf_id: number }>("designer.commit", { floor, side, code, layout: rows, shelf_id: shelfId });
+      const result = await call<WriteResult & { shelf_id: number }>("designer.commit", { floor, side, code, layout: rows, shelf_id: shelfId, revert_location_id: revertLocationId });
       shelfId = result.shelf_id;
       chosen = result.shelf_id;
-      saved = JSON.stringify([shelfId, floor.trim(), side.trim(), code.trim(), rows]);
+      saved = JSON.stringify([shelfId, floor.trim(), side.trim(), code.trim(), rows, revertLocationId]);
       applied(result, `Committed Floor ${floor} / Side ${side} / Shelf ${code}.`);
       await notify(`Side ${side} / Shelf ${code} was saved.`, "Commit complete");
     } catch (error) {
@@ -170,6 +171,7 @@
       <button disabled={rows.length >= 100} onclick={() => (rows = [...rows, 4])}>Add row at top</button>
       <button disabled={rows.length <= 1} onclick={() => (rows = rows.slice(0, -1))}>Remove top row</button>
     </div>
+    <label><input type="checkbox" bind:checked={revertLocationId} /> Reverse location ID (right to left; products stay in place)</label>
     <div class="editor">
       {#each [...rows.keys()].reverse() as index (index)}
         <label class="line">

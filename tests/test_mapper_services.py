@@ -174,8 +174,8 @@ class ServiceTests(WorkspaceTestCase):
         self.assertIsNotNone(shift_prefix_error(["ABCDE1", "ZZZZZ2"]))
         self.assertIsNotNone(shift_prefix_error(["ABC"]))
 
-    def test_grid_lists_rows_top_down_and_even_sides_right_to_left(self) -> None:
-        grid = build_grid("1", "2", "A", [2, 1], ["L1-2A1-2", "L1-2A1-2"])
+    def test_grid_lists_rows_top_down_with_explicit_reverse_direction(self) -> None:
+        grid = build_grid("1", "2", "A", [2, 1], ["L1-2A1-2", "L1-2A1-2"], revert_location_id=True)
         self.assertEqual([[(c.row, c.cell, c.count) for c in row] for row in grid.rows],
                          [[(2, 1, 0)], [(1, 2, 2), (1, 1, 0)]])
         self.assertEqual(grid.layout, (2, 1))

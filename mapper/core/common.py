@@ -143,3 +143,16 @@ def make_slot_name(
 ) -> str:
     """Example: floor 1, side 1, shelf A, row 8, cell 10 -> L1-1A8-10."""
     return f"{shelf_prefix(floor, shelf_code, side=side)}{row_number}-{slot_number}"
+
+
+def shelf_cell_number(position: int, width: int, reversed_ids: bool) -> int:
+    """Convert between a left-to-right position and its cell number (an involution)."""
+    return width + 1 - position if reversed_ids else position
+
+
+def shelf_slot_names(floor: str, side: str, shelf_code: str, layout: list[int], *,
+                     revert_location_id: bool = False) -> dict[tuple[int, int], str]:
+    """Location IDs keyed by physical (row, left-to-right position)."""
+    return {(row, position): make_slot_name(floor, shelf_code, row,
+                shelf_cell_number(position, width, revert_location_id), side=side)
+            for row, width in enumerate(layout, 1) for position in range(1, width + 1)}

@@ -332,14 +332,8 @@ class AssignmentActions:
             self.assignments.selected_slot_text.set("No address loaded")
             return
         address = self.selected_address
-        current_address = self.database.get_slot_address(
-            address.floor,
-            address.side,
-            address.shelf_code,
-            address.row_number,
-            address.slot_number,
-        )
-        if current_address is None or current_address.slot_id != address.slot_id:
+        current_address = self.database.get_slot_by_id(address.slot_id)
+        if current_address is None:
             sync_tree_rows(tree, [])
             self.selected_address = None
             self.assignments.selected_slot_text.set("No address loaded")
@@ -347,6 +341,13 @@ class AssignmentActions:
                 "The loaded address changed or was removed. Enter and load it again."
             )
             return
+        if current_address != address:
+            for variable, value in ((self.assignments.floor_var, current_address.floor),
+                                    (self.assignments.side_var, current_address.side),
+                                    (self.assignments.shelf_var, current_address.shelf_code),
+                                    (self.assignments.row_var, current_address.row_number),
+                                    (self.assignments.cell_var, current_address.slot_number)):
+                variable.set(str(value))
         address = current_address
         self.selected_address = current_address
         if contents is None:

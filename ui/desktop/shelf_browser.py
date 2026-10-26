@@ -135,12 +135,13 @@ class ShelfBrowserView(ttk.Frame):
             self.shelf_selector.set(label)
 
     def show_preview(self, floor: str, side: str, shelf_code: str, layout: list[int],
-                     contents: Contents | None = None) -> None:
+                     contents: Contents | None = None, *, revert_location_id: bool = False) -> None:
         """Show an editor preview without pretending it is already committed."""
         contents = list(contents or [])
         self.current_shelf_id = None
         self.shelf_selector.set("")
-        self._show(build_grid(floor, side, shelf_code, layout, (p.slot_name for _, _, p in contents)),
+        self._show(build_grid(floor, side, shelf_code, layout, (p.slot_name for _, _, p in contents),
+                              revert_location_id=revert_location_id),
                    contents, summary="Uncommitted shelf preview")
 
     def _show(self, grid, contents: Contents, *, summary: str) -> None:
