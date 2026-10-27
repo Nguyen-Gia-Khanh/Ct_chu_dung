@@ -493,9 +493,30 @@ keep that padding independent of the fitted font size; replacing them with
 whole-font ascent/descent adds unwanted whitespace. Both fonts shrink to fit.
 The 30-character checkbox truncates product names only; it leaves IDs intact.
 
+In the Cell labels tab, the shelf view handles clicks and drags itself instead
+of binding each cell: `on_canvas_press` / `on_canvas_drag` / `on_canvas_release`
+toggle a cell on a plain click, or draw a `CellDrag` box once the mouse moves
+`DRAG_THRESHOLD_PX`. The box selects every cell it touches, deselects when it
+starts on a selected cell, previews fills live, auto-scrolls past the view's
+edge, and Esc cancels it. `draw_shelf` records each cell's box in `cell_boxes`
+for these hit tests. [tests/test_label_printer_app.py](tests/test_label_printer_app.py)
+covers them.
+
+The **Shelf signs (14 x 14 cm)** tab prints side + shelf names such as `3A`,
+two stacked squares per portrait A4 that share their middle cut line.
+`render_shelf_signs_pdf` and the `SIGN_*` constants own that layout; each name
+prints on one bold line, as large as fits, centred on its glyph ink. Names do
+not have to exist in the database: in `app.py`, `expand_sign_range` turns
+From 3 | A To 5 | G into 3A..3G, 4A..4G, 5A..5G (numbers or single letters, a
+blank To keeps the From value), and `parse_sign_names` splits typed names on
+commas. `LabelPrinterApp._build_sign_tab` holds the database picker, the range
+and name boxes (`HintEntry` shows the gray examples), and the print list, which
+skips names already in it.
+
 [tests/test_label_pdf.py](tests/test_label_pdf.py) checks the location split,
 header/product placement, font fitting, height/orientation combinations,
-name limiting, print modes, pagination, and preserving an existing PDF on failure.
+name limiting, print modes, pagination, preserving an existing PDF on failure,
+shelf sign ranges, and the two-per-page sign layout.
 Run the targeted checks from the project root:
 
 ```powershell
