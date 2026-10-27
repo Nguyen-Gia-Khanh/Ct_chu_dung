@@ -25,9 +25,12 @@ from mapper.features.kiotviet_settings import MAX_UPLOAD_TABS, load_settings, sa
 
 
 class WorkbookColumnDialog(tk.Toplevel):
+    PREVIEW_ROWS = 100  # the header row spin box goes up to 100
+
     def __init__(self, parent: tk.Misc, workbook):
         super().__init__(parent)
-        self.workbook = workbook
+        self.workbook = workbook  # python_calamine.CalamineWorkbook
+        self._row_cache: dict[str, list[list]] = {}
         self.result: tuple[str, int, int, int] | None = None
         self.title("Choose KiotViet Excel columns")
         self.resizable(False, False)
@@ -38,7 +41,7 @@ class WorkbookColumnDialog(tk.Toplevel):
             row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(14, 10)
         )
         ttk.Label(self, text="Worksheet").grid(row=1, column=0, sticky="w", padx=14, pady=5)
-        self.sheet = ttk.Combobox(self, values=workbook.sheetnames, state="readonly", width=42)
+        self.sheet = ttk.Combobox(self, values=workbook.sheet_names, state="readonly", width=42)
         self.sheet.grid(row=1, column=1, padx=(0, 14), pady=5)
         self.sheet.current(0)
         self.sheet.bind("<<ComboboxSelected>>", self._update_columns)
@@ -67,10 +70,24 @@ class WorkbookColumnDialog(tk.Toplevel):
         self.wait_visibility()
         self.focus_set()
 
+    def _rows(self, sheet_name: str) -> list[list]:
+        """The sheet's first rows, read once per sheet while the dialog is open."""
+        if sheet_name not in self._row_cache:
+            self._row_cache[sheet_name] = self.workbook.get_sheet_by_name(sheet_name).to_python(
+                nrows=self.PREVIEW_ROWS, skip_empty_area=False)
+        return self._row_cache[sheet_name]
+
+    @staticmethod
+    def _cell_label(value) -> str:
+        if value is None or value == "":
+            return "(blank)"
+        if isinstance(value, float) and value.is_integer():
+            value = int(value)
+        return str(value).strip()
+
     def _suggest_header_row(self) -> None:
-        for sheet_name in self.workbook.sheetnames:
-            worksheet = self.workbook[sheet_name]
-            for row_number, row in enumerate(worksheet.iter_rows(max_row=15, values_only=True), 1):
+        for sheet_name in self.workbook.sheet_names:
+            for row_number, row in enumerate(self._rows(sheet_name)[:15], 1):
                 product, location = suggested_columns(list(row))
                 if product != location and row[product] and row[location]:
                     from mapper.features.location_comparison import _plain_header, ID_HEADERS, LOCATION_HEADERS
@@ -85,12 +102,10 @@ class WorkbookColumnDialog(tk.Toplevel):
             row_number = self.header_row.get()
             if row_number < 1:
                 return
-            worksheet = self.workbook[self.sheet.get()]
-            row = next(worksheet.iter_rows(min_row=row_number, max_row=row_number, values_only=True))
-        except (ValueError, KeyError, StopIteration, tk.TclError):
+            row = self._rows(self.sheet.get())[row_number - 1]
+        except (ValueError, KeyError, IndexError, tk.TclError):
             return
-        labels = [f"{index + 1}: {str(value).strip() if value is not None else '(blank)'}"
-                  for index, value in enumerate(row)]
+        labels = [f"{index + 1}: {self._cell_label(value)}" for index, value in enumerate(row)]
         self.product_column.configure(values=labels)
         self.location_column.configure(values=labels)
         if labels:
@@ -270,8 +285,8 @@ class LocationComparisonView(ttk.Frame):
         if not path:
             return
         try:
-            from openpyxl import load_workbook
-            workbook = load_workbook(path, read_only=True, data_only=True)
+            from python_calamine import CalamineWorkbook
+            workbook = CalamineWorkbook.from_path(path)
             try:
                 dialog = WorkbookColumnDialog(self, workbook)
                 self.wait_window(dialog)

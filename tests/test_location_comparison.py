@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import Mock
 
 from openpyxl import Workbook, load_workbook
+from python_calamine import CalamineWorkbook
 
 from mapper.features.location_comparison import (
     LocationDifference,
@@ -18,7 +19,7 @@ from mapper.features.location_comparison import (
     web_code,
 )
 from ui.desktop.app import WarehouseMapperApp
-from ui.desktop.location_comparison_view import LocationComparisonView
+from ui.desktop.location_comparison_view import LocationComparisonView, WorkbookColumnDialog
 from mapper.features.web_upload import LocationUpdate
 
 
@@ -63,6 +64,69 @@ class LocationComparisonTests(unittest.TestCase):
             workbook.save(path)
             with self.assertRaisesRegex(ValueError, "45133MA3006SS has conflicting website locations at Excel row 8"):
                 read_web_locations(path, sheet.title, 1, 0, 1)
+
+    def test_excel_import_reads_numbers_blanks_and_a_later_header_row(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "kiotviet.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Products"
+            workbook.create_sheet("Other")
+            sheet.append(("KiotViet export",))
+            sheet.append(("Mã hàng", "Vị trí"))
+            sheet.append((6451961405, "L1-3D2-14"))  # digit-only code saved as a number
+            sheet.append((123.0, None))
+            sheet.append((None, "L9-9Z9-9"))  # no product ID: skipped
+            sheet.append(("  ", "L9-9Z9-8"))  # blank product ID: skipped
+            sheet.append(("SKU-1", "  L1-1A1-1, L1-1A1-2 "))
+            workbook.save(path)
+
+            self.assertEqual(
+                read_web_locations(path, "Products", 2, 0, 1),
+                {"6451961405": "L1-3D2-14", "123": "", "SKU1": "L1-1A1-1, L1-1A1-2"},
+            )
+            with self.assertRaisesRegex(ValueError, "Worksheet 'Missing' is not in the Excel file"):
+                read_web_locations(path, "Missing", 2, 0, 1)
+
+    def test_column_dialog_guesses_the_header_and_labels_blank_cells(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "kiotviet.xlsx"
+            workbook = Workbook()
+            workbook.active.title = "Notes"
+            workbook.active.append(("Exported from KiotViet",))
+            sheet = workbook.create_sheet("Products")
+            sheet.append(("Title row",))
+            sheet.append(("Loại hàng", None, "Mã hàng", "Vị trí"))
+            sheet.append(("Item", None, 6451961405, "L1-3D2-14"))
+            workbook.save(path)
+
+            with CalamineWorkbook.from_path(str(path)) as calamine:
+                dialog = SimpleNamespace(
+                    workbook=calamine, _row_cache={}, PREVIEW_ROWS=WorkbookColumnDialog.PREVIEW_ROWS,
+                    _cell_label=WorkbookColumnDialog._cell_label,
+                    sheet=Mock(), header_row=Mock(), product_column=Mock(), location_column=Mock(),
+                )
+                dialog._rows = lambda name: WorkbookColumnDialog._rows(dialog, name)
+
+                WorkbookColumnDialog._suggest_header_row(dialog)
+                dialog.sheet.set.assert_called_once_with("Products")
+                dialog.header_row.set.assert_called_once_with(2)
+
+                dialog.sheet.get.return_value = "Products"
+                dialog.header_row.get.return_value = 2
+                WorkbookColumnDialog._update_columns(dialog)
+                self.assertEqual(dialog.product_column.configure.call_args.kwargs["values"],
+                                 ["1: Loại hàng", "2: (blank)", "3: Mã hàng", "4: Vị trí"])
+                dialog.product_column.current.assert_called_with(2)
+                dialog.location_column.current.assert_called_with(3)
+
+                dialog.header_row.get.return_value = 3
+                WorkbookColumnDialog._update_columns(dialog)
+                self.assertEqual(dialog.product_column.configure.call_args.kwargs["values"][2], "3: 6451961405")
+
+                dialog.header_row.get.return_value = 50  # past the last row: columns stay as they were
+                WorkbookColumnDialog._update_columns(dialog)
+                self.assertEqual(dialog.product_column.configure.call_count, 2)
 
     def test_web_code_restores_kiotviet_dashes(self):
         self.assertEqual(web_code("06451961405"), "06451-961-405")
