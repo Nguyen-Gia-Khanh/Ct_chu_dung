@@ -80,6 +80,28 @@ class SidecarTests(WorkspaceTestCase):
         self.call("assign.revert")
         self.assertEqual(self.call("products.search", query="abcde", scope="hot")["rows"][0]["location"], "")
 
+    def test_workbook_inspect_and_compare_read_a_kiotviet_export(self) -> None:
+        from openpyxl import Workbook
+        path = self.folder / "kiotviet.xlsx"
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Products"
+        sheet.append(("Mã hàng", "Tên hàng", "Vị trí"))
+        sheet.append(("ABCDE1", "Ốc vít", self.first.slot_name))
+        sheet.append((6451961405, None, "L9-9Z9-9"))  # digit-only codes arrive as numbers
+        workbook.save(path)
+
+        inspected = self.call("workbook.inspect", path=str(path))
+        self.assertEqual((inspected["sheet"], inspected["header_row"]), ("Products", 1))
+        self.assertEqual(inspected["sheets"]["Products"][1:],
+                         [["ABCDE1", "Ốc vít", self.first.slot_name], ["6451961405", "", "L9-9Z9-9"]])
+
+        compared = self.call("compare.run", path=str(path), sheet="Products", header_row=1,
+                             id_column=0, location_column=2)
+        self.assertEqual(compared["web_products"], 2)
+        self.assertEqual([(row["product_id"], row["wrong_location"]) for row in compared["differences"]],
+                         [("6451961405", "L9-9Z9-9"), ("ABCDE1", self.first.slot_name)])
+
     def test_errors_come_back_as_data(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "ValueError: Cannot transfer"):
             self.call("assign.shift_queue", slot_id=self.first.slot_id, product_ids=["ABCDE1", "ZZZ9"])

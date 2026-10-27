@@ -455,14 +455,17 @@ class Api:
     @rpc("workbook.inspect")
     def inspect_workbook(self, path: str) -> dict[str, Any]:
         """Each sheet's first rows plus a guessed header row for the column dialog."""
-        from openpyxl import load_workbook
-        workbook = load_workbook(path, read_only=True, data_only=True)
-        try:
-            sheets = {name: [[("" if value is None else str(value)) for value in row]
-                             for row in workbook[name].iter_rows(max_row=15, values_only=True)]
-                      for name in workbook.sheetnames}
-        finally:
-            workbook.close()
+        from python_calamine import CalamineWorkbook
+
+        def text(value: object) -> str:
+            if isinstance(value, float) and value.is_integer():
+                value = int(value)  # calamine reads every number as a float
+            return "" if value is None else str(value)
+
+        with CalamineWorkbook.from_path(path) as workbook:
+            sheets = {name: [[text(value) for value in row]
+                             for row in workbook.get_sheet_by_name(name).to_python(nrows=15, skip_empty_area=False)]
+                      for name in workbook.sheet_names}
         guess = next(((name, number) for name, rows in sheets.items()
                       for number, row in enumerate(rows, 1) if row and _is_header_row(row)),
                      (next(iter(sheets), ""), 1))

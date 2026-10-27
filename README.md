@@ -95,13 +95,14 @@ The executables contain only the Windows launcher, not Python, Playwright, UI
 code, or other app resources.
 
 `requirements.txt` contains only libraries used by the desktop apps and existing
-tools: `openpyxl`, `playwright`, `reportlab`, `pypdf`, `beautifulsoup4`, `pandas`,
+tools: `openpyxl`, `python-calamine`, `playwright`, `reportlab`, `pypdf`, `beautifulsoup4`, `pandas`,
 `requests`, and `tqdm`. Their required dependencies are installed automatically.
 The optional Laya model fallback is excluded; the existing rule-based extraction and browser fallback remain available.
 
 Playwright is used for the optional Chrome/KiotViet integration. The existing
 Chrome connection uses port 9222 and does not need ChromeDriver or a downloaded
-Playwright browser. Tab 7 uses `openpyxl` to read and write `.xlsx` workbooks.
+Playwright browser. Tab 7 reads KiotViet `.xlsx` exports with `python-calamine`
+(fast) and writes the comparison workbook with `openpyxl`.
 
 Start a separate debugging Chrome with its own profile (adjust the Chrome path
 if needed):
