@@ -1,4 +1,5 @@
-"""A4 labels with a location column, or a split header on 14.5 cm labels.
+"""A4 labels with a location column, or a split header on 14.5 cm labels,
+plus 14 x 14 cm shelf signs ("3A") printed two per page.
 
 Used by utils.labels.app. ReportLab is imported only when creating a
 PDF. Change the constants below to revise the printed design.
@@ -32,6 +33,12 @@ LARGE_LABEL_HEIGHT_CM = 14.5
 LARGE_LOCATION_PADDING_PT = 8
 LARGE_LOCATION_FONT_SIZE = 144
 LARGE_PRODUCT_FONT_SIZE = 64
+
+# Shelf signs ("3A"): square signs stacked two per portrait A4 page.
+SIGN_SIZE_MM = 140
+SIGN_PADDING_MM = 10
+SIGNS_PER_PAGE = 2
+MIN_SIGN_FONT_SIZE = 20
 
 # Normally discovered automatically. Set BOTH to override the system fonts.
 FONT_REGULAR_PATH = ""
@@ -113,6 +120,69 @@ def _font_files() -> tuple[Path, Path]:
         "No suitable Unicode font pair found. Set FONT_REGULAR_PATH and "
         "FONT_BOLD_PATH in warehouse_label_pdf.py to Arial or DejaVu Sans TTF files."
     )
+
+
+def _reportlab_missing(error: ImportError) -> RuntimeError:
+    return RuntimeError(
+        "Install ReportLab in the same venv used to run this app:\n\n"
+        ".venv\\Scripts\\python.exe -m pip install reportlab"
+    )
+
+
+def _register_fonts() -> tuple[str, str]:
+    """Register the label fonts once and return their (regular, bold) names."""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    regular, bold = "WarehouseLabelRegular", "WarehouseLabelBold"
+    if regular not in pdfmetrics.getRegisteredFontNames():
+        regular_path, bold_path = _font_files()
+        pdfmetrics.registerFont(TTFont(regular, str(regular_path)))
+        pdfmetrics.registerFont(TTFont(bold, str(bold_path)))
+        pdfmetrics.registerFontFamily(
+            regular, normal=regular, bold=bold, italic=regular, boldItalic=bold
+        )
+    return regular, bold
+
+
+def _ink_extent(font_name: str, text: str, size: float) -> tuple[float, float]:
+    """Lowest and highest glyph ink relative to the baseline, in points.
+
+    Uses the glyph outlines rather than the font's ascent/descent, which include
+    unused space and would push the visible text off centre.
+    """
+    from reportlab.pdfbase import pdfmetrics
+
+    face = pdfmetrics.getFont(font_name).face
+    glyph_data = face.get_table("glyf")
+    bounds = []
+    for character in set(text):
+        glyph = face.charToGlyph.get(ord(character), 0)
+        offset = face.glyphPos[glyph]
+        if offset != face.glyphPos[glyph + 1]:
+            _, _, bottom, _, top = struct.unpack_from(">hhhhh", glyph_data, offset)
+            bounds.append((bottom, top))
+    descent = min((bottom for bottom, _ in bounds), default=0) * size / face.unitsPerEm
+    ascent = max((top for _, top in bounds), default=0) * size / face.unitsPerEm
+    return descent, ascent
+
+
+def _save_atomically(data: bytes, output_path: Path) -> Path:
+    """Replace the output only once the whole PDF exists."""
+    output_path = Path(output_path).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=output_path.parent, prefix=".label_", suffix=".pdf", delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(data)
+        os.replace(temporary, output_path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return output_path
 
 
 def _compute_layout_slots(
@@ -235,23 +305,12 @@ def render_labels_pdf(
         from reportlab.lib.styles import ParagraphStyle
         from reportlab.lib.units import mm
         from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.pdfgen.canvas import Canvas
         from reportlab.platypus import Paragraph, Table, TableStyle
     except ImportError as error:
-        raise RuntimeError(
-            "Install ReportLab in the same venv used to run this app:\n\n"
-            ".venv\\Scripts\\python.exe -m pip install reportlab"
-        ) from error
+        raise _reportlab_missing(error) from error
 
-    regular_path, bold_path = _font_files()
-    regular, bold = "WarehouseLabelRegular", "WarehouseLabelBold"
-    if regular not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont(regular, str(regular_path)))
-        pdfmetrics.registerFont(TTFont(bold, str(bold_path)))
-        pdfmetrics.registerFontFamily(
-            regular, normal=regular, bold=bold, italic=regular, boldItalic=bold
-        )
+    regular, bold = _register_fonts()
 
     def clean(value: str, *, limit_name: bool = False) -> str:
         # Canonical combining marks and XML escaping preserve Vietnamese and &/<.
@@ -432,19 +491,7 @@ def render_labels_pdf(
 
         # Measure the actual glyph ink, excluding the font's unused ascender and
         # descender space, so both visible vertical gaps are exactly 8 points.
-        face = pdfmetrics.getFont(bold).face
-        glyph_data = face.get_table("glyf")
-        bounds = []
-        for character in set("".join(parts)):
-            glyph = face.charToGlyph.get(ord(character), 0)
-            offset = face.glyphPos[glyph]
-            if offset != face.glyphPos[glyph + 1]:
-                _, _, bottom, _, top = struct.unpack_from(
-                    ">hhhhh", glyph_data, offset
-                )
-                bounds.append((bottom, top))
-        descent = min((bottom for bottom, _ in bounds), default=0) * size / face.unitsPerEm
-        ascent = max((top for _, top in bounds), default=0) * size / face.unitsPerEm
+        descent, ascent = _ink_extent(bold, "".join(parts), size)
         h = ascent - descent + 2 * LARGE_LOCATION_PADDING_PT
         body_h = label_h - h
         canvas.setStrokeColor(colors.HexColor("#BBBBBB"))
@@ -519,17 +566,88 @@ def render_labels_pdf(
         canvas.restoreState()
 
     canvas.save()
-    output_path = Path(output_path).expanduser().resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            dir=output_path.parent, prefix=".label_", suffix=".pdf", delete=False
-        ) as stream:
-            temporary = Path(stream.name)
-            stream.write(buffer.getvalue())
-        os.replace(temporary, output_path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    output_path = _save_atomically(buffer.getvalue(), output_path)
     return PrintResult(output_path, len(cells), len(cells), total_pages)
+
+
+def clean_sign_name(name: str) -> str:
+    """Single-spaced NFC text, so Vietnamese marks and pasted spacing print cleanly."""
+    return unicodedata.normalize("NFC", " ".join(str(name).split()))
+
+
+def sign_page_count(count: int) -> int:
+    return math.ceil(count / SIGNS_PER_PAGE)
+
+
+def render_shelf_signs_pdf(
+    names: list[str] | tuple[str, ...],
+    output_path: Path,
+    *,
+    progress=lambda _text: None,
+) -> PrintResult:
+    """Print one 14 x 14 cm sign per name ("3A"), two stacked on each portrait A4.
+
+    The two squares share their middle edge, so one cut separates them. Each name
+    is printed on one line in bold, as large as fits inside the padding, and is
+    centred on its visible ink. Output is replaced only after every sign fits.
+    """
+    names = [clean_sign_name(name) for name in names]
+    if not names:
+        raise ValueError("There are no signs to print.")
+    if not all(names):
+        raise ValueError("A sign name is empty. Remove it from the list and try again.")
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4, portrait
+        from reportlab.lib.units import mm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfgen.canvas import Canvas
+    except ImportError as error:
+        raise _reportlab_missing(error) from error
+
+    _, bold = _register_fonts()
+    page_w, page_h = portrait(A4)
+    side = SIGN_SIZE_MM * mm
+    target = side - 2 * SIGN_PADDING_MM * mm
+
+    # Fit every name before drawing so a bad one never leaves a partial PDF.
+    fitted = []
+    for name in names:
+        descent, ascent = _ink_extent(bold, name, 1)
+        width = pdfmetrics.stringWidth(name, bold, 1)
+        size = min(target / width, target / (ascent - descent)) if width and ascent > descent else 0
+        if size < MIN_SIGN_FONT_SIZE:
+            raise ValueError(
+                f"Sign {name!r} is too long for a {SIGN_SIZE_MM / 10:g} x "
+                f"{SIGN_SIZE_MM / 10:g} cm sign. No PDF was saved."
+            )
+        fitted.append((name, size, descent * size, ascent * size))
+
+    x = (page_w - side) / 2
+    # Top square first, both centred on the page and touching in the middle.
+    slots = [page_h / 2, page_h / 2 - side]
+    total_pages = sign_page_count(len(names))
+    buffer = BytesIO()
+    canvas = Canvas(buffer, pagesize=(page_w, page_h), pageCompression=1)
+    canvas.setTitle("Warehouse shelf signs")
+    canvas.setAuthor("Warehouse Label Printer")
+
+    for index, (name, size, descent, ascent) in enumerate(fitted):
+        slot_index = index % SIGNS_PER_PAGE
+        if slot_index == 0:
+            if index:
+                canvas.showPage()
+            progress(f"Creating A4 page {index // SIGNS_PER_PAGE + 1} of {total_pages}...")
+        canvas.saveState()
+        canvas.translate(x, slots[slot_index])
+        canvas.setStrokeColor(colors.HexColor("#777777"))
+        canvas.setLineWidth(0.55)
+        canvas.rect(0, 0, side, side)
+        canvas.setFillColor(colors.black)
+        canvas.setFont(bold, size)
+        canvas.drawCentredString(side / 2, side / 2 - (ascent + descent) / 2, name)
+        canvas.restoreState()
+
+    canvas.save()
+    output_path = _save_atomically(buffer.getvalue(), output_path)
+    return PrintResult(output_path, len(names), len(names), total_pages)
