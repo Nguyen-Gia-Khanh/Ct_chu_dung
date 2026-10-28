@@ -111,6 +111,7 @@ def read_web_locations(
             raise ValueError(f"Worksheet {sheet_name!r} is not in the Excel file.")
         rows = workbook.get_sheet_by_name(sheet_name).to_python(skip_empty_area=False)
         locations: dict[str, str] = {}
+        from_dashed: set[str] = set()  # IDs whose kept location came from a dashed code
         for row_number, row in enumerate(rows[header_row:], header_row + 1):
             product = row[id_column] if id_column < len(row) else None
             if product is None or not str(product).strip():
@@ -118,6 +119,7 @@ def read_web_locations(
             if isinstance(product, float) and product.is_integer():
                 product = int(product)
             product_id = normalize_sku(product)
+            dashed = "-" in str(product)
             value = row[location_column] if location_column < len(row) else None
             location = str(value).strip() if value is not None else ""
             if product_id in locations:
@@ -127,10 +129,21 @@ def read_web_locations(
                     continue
                 previous = locations[product_id]
                 if previous and set(location_parts(previous)) != set(location_parts(location)):
+                    # A dashed and a dashless product with different locations: the dashed
+                    # one (45133-MA3-006SS) is the real product, so its location wins.
+                    if dashed != (product_id in from_dashed):
+                        if dashed:
+                            locations[product_id] = location
+                            from_dashed.add(product_id)
+                        continue
                     raise ValueError(
                         f"Product {product_id} has conflicting website locations at Excel row {row_number}."
                     )
             locations[product_id] = location
+            if dashed:
+                from_dashed.add(product_id)
+            else:
+                from_dashed.discard(product_id)
         if not locations:
             raise ValueError(
                 "No product IDs were found in the selected worksheet and column."

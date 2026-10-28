@@ -368,7 +368,11 @@ with Tabs 2 and 5. `data_directory` supplies the export destination.
 **Save boundary:** import/compare does not change local placements. Export writes
 an XLSX; explicit resync changes website locations, leaving stock untouched.
 Missing export IDs cannot be compared. Multi-location sets and comma/semicolon/
-pipe/newline separators are supported. **Check:** matching/mismatched sets,
+pipe/newline separators are supported. A code listed twice in the export (after
+dashes are removed) keeps the row with a location; when a dashed and a dashless
+row both have different locations, the dashed one (`45133-MA3-006SS`) wins. Two
+dashed or two dashless rows with different locations still stop the import.
+**Check:** matching/mismatched sets,
 empty local locations, missing IDs, successful-row exclusion, and fresh-export
 verification. `tests/test_multi_locations.py` covers comparison and upload sets.
 
