@@ -397,7 +397,7 @@ class LabelPrinterApp:
         cell_tab = ttk.Frame(notebook)
         sign_tab = ttk.Frame(notebook)
         notebook.add(cell_tab, text="Cell labels")
-        notebook.add(sign_tab, text="Shelf signs (14 x 14 cm)")
+        notebook.add(sign_tab, text="Shelf signs (14.85 x 14.85 cm)")
 
         panes = ttk.Panedwindow(cell_tab, orient="horizontal")
         panes.pack(fill="both", expand=True, pady=(8, 0))

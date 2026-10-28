@@ -132,7 +132,7 @@ class ShelfSignPdfTests(WorkspaceTestCase):
         self.assertAlmostEqual(float(pages[0].mediabox.width), 595.28, places=1)
         self.assertAlmostEqual(float(pages[0].mediabox.height), 841.89, places=1)
 
-        side = 140 * 72 / 25.4
+        side = 148.5 * 72 / 25.4
         squares, text = [], {}
 
         def collect_paths(operator, operands, cm, tm):
@@ -150,8 +150,10 @@ class ShelfSignPdfTests(WorkspaceTestCase):
         for square in squares:
             self.assertAlmostEqual(square[2], side, places=1)
             self.assertAlmostEqual(square[3], side, places=1)
-            self.assertAlmostEqual(square[0] + side / 2, 595.28 / 2, places=1)
+            self.assertAlmostEqual(square[0], 0, places=1)
+        self.assertAlmostEqual(top[1] + side, 841.89, places=1)
         self.assertAlmostEqual(top[1], bottom[1] + side, places=1)
+        self.assertAlmostEqual(bottom[1], 0, places=1)
         self.assertGreater(text["3A"][1], text["5B"][1])
         self.assertGreater(text["3A"][2], 200)
         self.assertIn("12C", pages[1].extract_text())

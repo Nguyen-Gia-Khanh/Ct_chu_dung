@@ -506,8 +506,10 @@ edge, and Esc cancels it. `draw_shelf` records each cell's box in `cell_boxes`
 for these hit tests. [tests/test_label_printer_app.py](tests/test_label_printer_app.py)
 covers them.
 
-The **Shelf signs (14 x 14 cm)** tab prints side + shelf names such as `3A`,
-two stacked squares per portrait A4 that share their middle cut line.
+The **Shelf signs (14.85 x 14.85 cm)** tab prints side + shelf names such as
+`3A`, two stacked squares per portrait A4 that share their middle cut line.
+Each side is half the A4 height, and the squares sit against the left edge, so
+only the right offcut needs trimming.
 `render_shelf_signs_pdf` and the `SIGN_*` constants own that layout; each name
 prints on one bold line, as large as fits, centred on its glyph ink. Names do
 not have to exist in the database: in `app.py`, `expand_sign_range` turns

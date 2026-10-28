@@ -1,5 +1,5 @@
 """A4 labels with a location column, or a split header on 14.5 cm labels,
-plus 14 x 14 cm shelf signs ("3A") printed two per page.
+plus 14.85 x 14.85 cm shelf signs ("3A") printed two per page.
 
 Used by utils.labels.app. ReportLab is imported only when creating a
 PDF. Change the constants below to revise the printed design.
@@ -35,7 +35,8 @@ LARGE_LOCATION_FONT_SIZE = 144
 LARGE_PRODUCT_FONT_SIZE = 64
 
 # Shelf signs ("3A"): square signs stacked two per portrait A4 page.
-SIGN_SIZE_MM = 140
+# Half of A4's 297 mm height, so the two signs fill the page top to bottom.
+SIGN_SIZE_MM = 148.5
 SIGN_PADDING_MM = 10
 SIGNS_PER_PAGE = 2
 MIN_SIGN_FONT_SIZE = 20
@@ -585,9 +586,12 @@ def render_shelf_signs_pdf(
     *,
     progress=lambda _text: None,
 ) -> PrintResult:
-    """Print one 14 x 14 cm sign per name ("3A"), two stacked on each portrait A4.
+    """Print one 14.85 x 14.85 cm sign per name ("3A"), two stacked on each portrait A4.
 
-    The two squares share their middle edge, so one cut separates them. Each name
+    The squares sit against the page's left edge and fill its full height, so the
+    paper's own top, left and bottom edges are their outer edges and only the
+    right offcut needs trimming. They share their middle edge, so one cut
+    separates them. Each name
     is printed on one line in bold, as large as fits inside the padding, and is
     centred on its visible ink. Output is replaced only after every sign fits.
     """
@@ -623,9 +627,9 @@ def render_shelf_signs_pdf(
             )
         fitted.append((name, size, descent * size, ascent * size))
 
-    x = (page_w - side) / 2
-    # Top square first, both centred on the page and touching in the middle.
-    slots = [page_h / 2, page_h / 2 - side]
+    x = 0
+    # Top square first, anchored to the page's top-left corner, touching in the middle.
+    slots = [page_h - side, page_h - 2 * side]
     total_pages = sign_page_count(len(names))
     buffer = BytesIO()
     canvas = Canvas(buffer, pagesize=(page_w, page_h), pageCompression=1)
