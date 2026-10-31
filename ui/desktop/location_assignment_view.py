@@ -8,7 +8,7 @@ from tkinter import font as tkfont, ttk
 
 from mapper.core.common import normalize_sku
 from utils.barcode_scanner import BarcodeScanner, bind_auto_highlight
-from mapper.services.shelf_grid import GridCell, ShelfGrid
+from mapper.services.shelf_grid import GridCell, ShelfGrid, next_cell
 from .widgets import ShelfGridCanvas
 
 # (normal click, Shift held) button text. A normal click on the catalog and queue
@@ -427,6 +427,7 @@ class LocationAssignmentView(ttk.Frame):
             label=lambda cell: f"{cell.row}-{cell.cell:02d}", count_text=str, row_label=lambda row: f"R{row}",
             cell_width=70, cell_height=44, min_row_width=240, font_size=8, )
         self.shelf_grid.grid(row=1, column=0, sticky="nsew")
+        self.shelf_grid.canvas.bind("<Button-3>", self._select_next_shelf_cell)
         self._preview_after_id: str | None = None
         body = ttk.Frame(queue_page)
         body.grid(row=0, column=0, sticky="nsew")
@@ -577,6 +578,19 @@ class LocationAssignmentView(ttk.Frame):
         self.cell_var.set(str(cell.cell))
         self.highlight_shelf_cell(cell.row, cell.cell)
         self.on_load_address()
+
+    def _select_next_shelf_cell(self, _event: tk.Event | None = None) -> str:
+        """Right-click anywhere on the shelf: load the next cell ID, moving up a row at a row's end."""
+        grid = self.shelf_grid.model
+        if grid is None:
+            return "break"
+        current = self.shelf_grid.cells.get(self.shelf_grid.selected) if self.shelf_grid.selected else None
+        following = next_cell(grid, current)
+        if following is not None:
+            self._select_shelf_cell(following)
+        elif current is not None:
+            self.address_status_text.set(f"{current.slot_name} is the last cell on this shelf.")
+        return "break"
 
     def _build_contents_panel(
         self,

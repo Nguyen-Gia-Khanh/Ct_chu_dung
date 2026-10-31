@@ -162,6 +162,10 @@ with Tab 4; see the [source guide](instruction.md#tab-1-shelf-designer).
 2. Enter Floor, Side, and Shelf in the middle pane. Select **Shelf Selection
    Pane** to view that shelf, then click a cell to fill Row and Col and load it.
    You can also enter Row and Col manually and press **Load address →**.
+   Right-click anywhere on the shelf to load the next cell ID. At the end of a
+   row it moves to cell 1 of the row above. It follows cell IDs, so on a shelf
+   with reversed IDs it moves right to left. With no cell selected it starts at
+   Row 1, cell 1; on the top row's last cell it stays put.
 3. Check the current address contents in the right pane.
 4. Search the total queue or select a product in the full catalog, then click
    **Transfer queue → shelf (keep stock)** or

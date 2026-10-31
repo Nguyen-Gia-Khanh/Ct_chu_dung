@@ -47,6 +47,18 @@ class ShelfGrid:
         return (cell for row in self.rows for cell in row)
 
 
+def next_cell(grid: ShelfGrid, current: GridCell | None) -> GridCell | None:
+    """The cell after `current` in ascending cell ID order, whatever side it is drawn on:
+    the next cell in its row, or cell 1 of the next row up when the row ends.
+    With nothing selected it is Row 1's first cell; after the top row's last cell, None."""
+    by_position = {(cell.row, cell.cell): cell for cell in grid.cells()}
+    row, cell = (1, 0) if current is None else (current.row, current.cell)
+    if (row, cell + 1) in by_position:
+        return by_position[row, cell + 1]
+    return next((by_position[upper, 1] for upper in range(row + 1, len(grid.rows) + 1)
+                 if (upper, 1) in by_position), None)
+
+
 def cell_color(count: int, *, staged: bool = False, selected: bool = False) -> str:
     if selected:
         return SELECTED_COLOR

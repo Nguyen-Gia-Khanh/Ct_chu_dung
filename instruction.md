@@ -195,6 +195,7 @@ one-step reversal, not a general history of all inventory edits.
 | Search, location status, catalog double-click | `CatalogActions.schedule_queue_refresh`, `refresh_product_queue`, `refresh_catalog`, `refresh_search_location`, and `activate_catalog_product`. |
 | Queue double-click | `LocationAssignmentView._on_queue_double_click` fills and selects the search field; it does not move inventory. |
 | Compact shelf text, count, color, selection | `render_shelf_preview`, `refresh_shelf_cell`, `highlight_shelf_cell`, and `WarehouseMapperApp.refresh_assignment_shelf_preview`. |
+| Right-click to the next cell | `LocationAssignmentView._select_next_shelf_cell` (bound to `<Button-3>` on the shelf canvas) and `next_cell` in `mapper/services/shelf_grid.py`. Desktop (Tkinter) only; the Tauri app does not have it. Tests: `tests/test_shelf_next_cell.py`. |
 | Web action scope and labels | `LocationAssignmentView._refresh_web_action_labels`; `WebActions._web_placements` and `_location_updates` (via `mapper.services.uploads`). |
 
 Shift state is stored in `view.whole_mode`. Each mouse press stores the
