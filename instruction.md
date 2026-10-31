@@ -169,16 +169,14 @@ Queue assignment filters rows with `CatalogActions.is_queue_product_movable`
 (not on a shelf). `is_queue_product_available` (not on a shelf and not on-hand)
 only drives the "ready" count.
 
-Assigning a product that is already on a shelf from the queue button is refused by
-`AssignmentActions._refuse_shelved`. It plays `play_error_sound`
-(`ui/desktop/sounds.py`, Windows' Critical Stop sound via `winsound.MessageBeep`,
-Tk's bell elsewhere) and shows the location in the search status and status bar.
-Shift-queue assignments check every selected product. The normal queue click
-checks the exact searched ID (`CatalogActions.exact_search_product`) when there is
-one, so a scanned shelved product is not swapped for a similar ready ID. Without
-one it checks the visible rows only when none is ready. The catalog button never
-calls `_refuse_shelved`: it is the forced relocation and moves shelved products to
-the loaded cell. Tests: `tests/test_tab2_already_shelved.py`.
+The queue button skips shelved rows. When none of the visible rows (normal click)
+or selected rows (Shift) is movable, `AssignmentActions._refuse_shelved` plays
+`play_error_sound` (`ui/desktop/sounds.py`, Windows' Critical Stop sound via
+`winsound.MessageBeep`, Tk's bell elsewhere) and shows the location in the search
+status and status bar. A mix of shelved and ready rows moves the ready ones with
+no sound. The catalog button never calls `_refuse_shelved`: it is the forced
+relocation and moves shelved products to the loaded cell. Tests:
+`tests/test_tab2_already_shelved.py`.
 
 Every assignment requires a loaded saved cell. For the normal queue click, IDs must
 share the first five characters after removing hyphens, trimming, and uppercasing;

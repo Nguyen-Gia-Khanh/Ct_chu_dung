@@ -113,13 +113,15 @@ class AssignmentActions:
         if not is_to_shelf:
             self._reset_queue_shift_clicks()
             selected_items = self.assignments.queue_tree.selection()
-            product_ids = [
+            selected = [
                 item_id.removeprefix("product::")
                 for item_id in selected_items
                 if item_id.startswith("product::")
                 and item_id.removeprefix("product::") in self.products
             ]
-            if self._refuse_shelved(product_ids):
+            # Shelved (gray) rows are skipped; the error sound plays only when all are shelved.
+            product_ids = [pid for pid in selected if self.is_queue_product_movable(pid)]
+            if not product_ids and self._refuse_shelved(selected):
                 return
             if not product_ids:
                 messagebox.showinfo(
@@ -151,16 +153,9 @@ class AssignmentActions:
             if item_id.startswith("product::")
         ]
         queue_pids = [pid for pid in visible if self.is_queue_product_movable(pid)]
-        exact = self.exact_search_product()
-        if exact is not None:
-            # A scanned or typed ID that is already shelved is refused even when similar
-            # IDs are still ready; otherwise those would move instead of the scanned one.
-            shelved_check = [exact]
-        elif not queue_pids:
-            shelved_check = visible  # nothing ready: every visible row is already shelved
-        else:
-            shelved_check = []  # a family search moves its ready rows; gray rows are context
-        if self._refuse_shelved(shelved_check):
+        # Ready rows move and gray rows are skipped silently. The error sound plays
+        # only when every visible row is already on a shelf.
+        if not queue_pids and self._refuse_shelved(visible):
             self._reset_queue_shift_clicks()
             return
         if not queue_pids:

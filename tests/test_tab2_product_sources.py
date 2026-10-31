@@ -111,10 +111,21 @@ class ProductSourceTests(WorkspaceTestCase):
         records = app.database.assign_catalog_direct_to_slot.call_args.args[2]
         self.assertEqual(records, {"ABCDE2": ("Washers", "")})
 
-    def test_stock_entry_queue_assignment_refuses_gray_selection_with_error_sound(self):
+    def test_stock_entry_queue_assignment_skips_gray_rows_in_a_mixed_selection(self):
         app = self.make_actions()
         app.committed_locations["P1"] = self.first.slot_name
         app.assignments.queue_tree.selection = lambda: ("product::P1", "product::P2")
+        with patch("ui.desktop.assignment_actions.StockQuantityDialog") as dialog, patch(
+            "ui.desktop.assignment_actions.play_error_sound"
+        ) as sound:
+            app.assign_queue_selection_to_address(to_shelf=False)
+        sound.assert_not_called()
+        self.assertEqual([pid for pid, _name in dialog.call_args.args[2]], ["P2"])
+
+    def test_stock_entry_queue_assignment_refuses_all_gray_selection_with_error_sound(self):
+        app = self.make_actions()
+        app.committed_locations["P1"] = self.first.slot_name
+        app.assignments.queue_tree.selection = lambda: ("product::P1",)
         with patch("ui.desktop.assignment_actions.messagebox.showinfo") as info, patch(
             "ui.desktop.assignment_actions.StockQuantityDialog"
         ) as dialog, patch("ui.desktop.assignment_actions.play_error_sound") as sound:

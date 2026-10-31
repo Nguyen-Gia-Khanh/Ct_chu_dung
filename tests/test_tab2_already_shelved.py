@@ -1,5 +1,6 @@
-"""Tab 2: assigning a product that is already on a shelf from the queue button plays
-the error sound and assigns nothing. The catalog button relocates it silently."""
+"""Tab 2: the queue button skips products already on a shelf and plays the error
+sound only when every shown (or selected) product is shelved. The catalog button
+relocates shelved products silently."""
 
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from ui.desktop.app import WarehouseMapperApp
 FIRST_TIME = "2026-10-31T08:00:00+07:00"
 HOT = "12251K97T01"
 SIMILAR = "12251K97T01B"  # contains HOT's ID, so a search for HOT shows it too
+SIMILAR2 = "12251K97T01C"
 SPARE = "C9"
 
 
@@ -26,7 +28,7 @@ class AlreadyShelvedTests(unittest.TestCase):
         db_path = Path(self.temp_dir.name) / "warehouse.db"
         database = WarehouseDatabase(db_path)
         database.commit_shelf("1", "A", [3], {}, set(), side="1")
-        database.import_products({HOT: "Brake pad", SIMILAR: "Brake pad B"})
+        database.import_products({HOT: "Brake pad", SIMILAR: "Brake pad B", SIMILAR2: "Brake pad C"})
         database.import_catalog_products({SPARE: ("Spare part", "")})
         first = database.get_slot_address("1", "1", "A", 1, 1)
         database.assign_catalog_direct_to_slot(first.slot_id, FIRST_TIME, {HOT: ("Brake pad", "")}, quantities={HOT: 7})
@@ -67,16 +69,45 @@ class AlreadyShelvedTests(unittest.TestCase):
         self.assertNotIn(SPARE, placements)
         self.assertIsNone(self.app.last_shift_transfer)
 
-    def test_quick_queue_click_on_a_scanned_shelved_product(self) -> None:
-        self.search(HOT)
-        self.assertIn(f"product::{SIMILAR}", self.app.assignments.queue_tree.get_children())
-        self.app.assign_queue_selection_to_address(to_shelf=True)
-        self.assert_refused()
-        self.assertEqual(self.app.queue_shift_clicks, 0)
+    def click_queue(self, times: int) -> None:
+        for _ in range(times):
+            self.app.assign_queue_selection_to_address(to_shelf=True)
 
-    def test_stock_entry_queue_click_with_a_shelved_product_selected(self) -> None:
+    def test_multi_click_moves_the_unassigned_rows_without_a_sound(self) -> None:
+        self.search(HOT)  # the scanned ID is shelved, but two similar IDs are still ready
+        self.assertEqual(len(self.app.assignments.queue_tree.get_children()), 3)
+        self.click_queue(3)
+        self.sound.assert_not_called()
+        placements = self.app.database.get_placement_details()
+        self.assertEqual((placements[HOT].slot_name, placements[HOT].stock_qty), ("L1-1A1-1", 7))
+        self.assertEqual(placements[SIMILAR].slot_name, "L1-1A1-2")
+        self.assertEqual(placements[SIMILAR2].slot_name, "L1-1A1-2")
+
+    def test_queue_click_beeps_once_every_shown_product_is_assigned(self) -> None:
+        self.search(HOT)
+        self.click_queue(3)
+        self.sound.assert_not_called()
+        self.click_queue(1)
+        self.sound.assert_called_once()
+        self.assertTrue(self.app.status_text.get().startswith("Not assigned: 3 products are already on a shelf"))
+        self.assertEqual(self.app.queue_shift_clicks, 0)
+        self.assertEqual(self.app.database.get_placement_details()[HOT].slot_name, "L1-1A1-1")
+
+    def test_stock_entry_queue_click_skips_a_shelved_row_without_a_sound(self) -> None:
         self.search(HOT)
         self.app.assignments.queue_tree.selection_set(f"product::{HOT}", f"product::{SIMILAR}")
+        self.dialog.return_value.result = {SIMILAR: 3}
+        with patch.object(self.app.root, "wait_window"):
+            self.app.assign_queue_selection_to_address(to_shelf=False)
+        self.sound.assert_not_called()
+        self.assertEqual([pid for pid, _name in self.dialog.call_args.args[2]], [SIMILAR])
+        placements = self.app.database.get_placement_details()
+        self.assertEqual((placements[SIMILAR].slot_name, placements[SIMILAR].stock_qty), ("L1-1A1-2", 3))
+        self.assertEqual(placements[HOT].slot_name, "L1-1A1-1")
+
+    def test_stock_entry_queue_click_beeps_when_every_selected_row_is_shelved(self) -> None:
+        self.search(HOT)
+        self.app.assignments.queue_tree.selection_set(f"product::{HOT}")
         self.app.assign_queue_selection_to_address(to_shelf=False)
         self.assert_refused()
 
@@ -84,7 +115,8 @@ class AlreadyShelvedTests(unittest.TestCase):
         self.app.assignments.cell_var.set("1")
         self.app.load_assignment_address()
         self.search(HOT)
-        self.app.assign_queue_selection_to_address(to_shelf=True)
+        self.app.assignments.queue_tree.selection_set(f"product::{HOT}")
+        self.app.assign_queue_selection_to_address(to_shelf=False)
         self.assert_refused()
 
     # The lower catalog button is the forced relocation: it moves shelved products
@@ -118,14 +150,6 @@ class AlreadyShelvedTests(unittest.TestCase):
         self.app.assign_catalog_selection_to_address(to_shelf=True)
         self.sound.assert_not_called()
         self.assertEqual(self.app.database.get_placement_details()[HOT].slot_name, "L1-1A1-1")
-
-    def test_family_search_still_moves_its_ready_rows_without_a_sound(self) -> None:
-        self.search("12251")
-        self.app.assign_queue_selection_to_address(to_shelf=True)
-        self.sound.assert_not_called()
-        placements = self.app.database.get_placement_details()
-        self.assertEqual(placements[SIMILAR].slot_name, "L1-1A1-2")
-        self.assertEqual(placements[HOT].slot_name, "L1-1A1-1")
 
     def test_unshelved_catalog_product_assigns_without_a_sound(self) -> None:
         self.search(SPARE)
