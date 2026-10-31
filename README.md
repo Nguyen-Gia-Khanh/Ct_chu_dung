@@ -157,22 +157,25 @@ with Tab 4; see the [source guide](instruction.md#tab-1-shelf-designer).
    matches remain visible in gray below them. Gray applies only to this queue.
    The **Location ID** column shows assigned shelf addresses and is blank for
    unassigned products.
-   Only ready rows can move through the queue transfer buttons.
+   Gray rows cannot move through the queue button. Products waiting in on-hand
+   are not gray and move like any other queue product.
 2. Enter Floor, Side, and Shelf in the middle pane. Select **Shelf Selection
    Pane** to view that shelf, then click a cell to fill Row and Col and load it.
    You can also enter Row and Col manually and press **Load address →**.
 3. Check the current address contents in the right pane.
-4. Select products from the total queue or full catalog and press
-   **Assign selected queue → loaded address** or
-   **Assign selected catalog → loaded address**. Enter each product's stock
-   quantity and confirm. Assignment saves immediately without passing through
-   on-hand. Catalog-only products are never added to the total queue.
+4. Search the total queue or select a product in the full catalog, then click
+   **Transfer queue → shelf (keep stock)** or
+   **Transfer selected → shelf (keep stock)** to move it with its known stock.
+   Hold **Shift** while clicking to enter each selected product's stock first
+   (see the table below). Either way, assignment saves immediately without
+   passing through on-hand. Catalog-only products are never added to the total
+   queue.
 5. On-hand holds products removed from a shelf. To reassign those products,
    select on-hand rows and use **Assign selected on-hand → loaded address**.
    The batch survives restarting the app; **Edit selected quantity** adjusts
    its stock before reassignment.
 
-**Quick move to location**, beside **Revert shift transfer**, is available when the
+**Quick move to location**, beside **Revert quick transfer**, is available when the
 search matches exactly one distinct product across the queue and full catalog.
 It fills Floor / Side / Shelf / Row / Col, opens the Shelf Selection Pane,
 and loads that product's saved cell without moving inventory. For multiple
@@ -186,29 +189,31 @@ Both Tab 2 product lists show the complete saved location list, or the direct
 assignment when there are no exceptions. The Location ID column expands to fit;
 use its horizontal scrollbar to read a long list.
 
-### Shift shortcuts
+### Normal clicks and Shift
 
-Normal clicks assign selected products directly. Hold **Shift** to enable
-the direct-transfer/whole-batch shortcuts; the button labels change while it
-is held.
+A normal click on the queue or catalog button moves products straight to the
+loaded cell with their known stock. Hold **Shift** to enter stock first; the
+button labels change while it is held. On the on-hand button, Shift moves the
+whole on-hand batch.
 
 | Button/source | Normal click | Hold Shift and click |
 | --- | --- | --- |
-| Full catalog assignment | Selected products → loaded cell, with manually entered quantities and no total-queue copy. | One selected product → loaded cell, with retained stock, or **999** when uncounted. |
-| Total queue assignment | Selected ready products → loaded cell, with manually entered quantities. | All visible ready queue search results → loaded cell, with retained stock, or **999** when uncounted. |
+| Full catalog assignment | One selected product → loaded cell, with retained stock, or **999** when uncounted. | Selected products → loaded cell, with manually entered quantities and no total-queue copy. |
+| Total queue assignment | All visible queue search results that are not on a shelf → loaded cell, with retained stock, or **999** when uncounted. Products waiting in on-hand come along with their on-hand stock. | Selected products that are not on a shelf → loaded cell, with manually entered quantities. An on-hand product's stock is filled in. |
 | On-hand assignment | Selected on-hand rows → loaded cell, retaining quantities. | All on-hand products → loaded cell, retaining quantities. |
 
-The queue shortcut requires IDs with the same first five characters after
+The normal queue click requires IDs with the same first five characters after
 removing hyphens, trimming, and uppercasing. One visible result moves with one
-Shift-click. Multiple results need three clicks while holding Shift; each
-pending click restarts a three-second timeout. Releasing Shift or changing the
-queue search resets the count. Lists show at most 750 results, so narrow the
-search and inspect the visible queue before using this shortcut.
+click. Multiple results need three clicks; each pending click restarts a
+three-second timeout. Pressing or releasing Shift, or changing the queue
+search, resets the count. Lists show at most 750 results, so narrow the search
+and inspect the visible queue before clicking.
 
-Direct/whole-batch assignment requires a loaded saved address. **Revert shift
-transfer** asks for confirmation and reverses the latest successful Shift
-transfer. This is a single in-memory snapshot, cleared by reversal and lost
-when the app closes.
+Every Tab 2 assignment requires a loaded saved address. **Revert quick
+transfer** asks for confirmation and reverses the latest keep-stock transfer
+(catalog, queue, or whole on-hand batch). Assignments made with entered stock
+are not covered. This is a single in-memory snapshot, cleared by reversal and
+lost when the app closes.
 
 ### Return products and modify stock
 
@@ -221,7 +226,7 @@ returned queue or Dequeue action.
 Ctrl-click rows in a loaded address for **Selected product(s) to on-hand**, or
 use **Shelf to on-hand (all)** for the complete cell. These actions save
 immediately. **Commit shelf design** applies to pending shelf design changes.
-Catalog and queue Shift assignment preserve a known count, including zero;
+Catalog and queue keep-stock transfers preserve a known count, including zero;
 **999** means located but uncounted and is used when there is no known count.
 
 ### Update website locations

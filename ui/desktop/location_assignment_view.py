@@ -11,6 +11,21 @@ from utils.barcode_scanner import BarcodeScanner, bind_auto_highlight
 from mapper.services.shelf_grid import GridCell, ShelfGrid
 from .widgets import ShelfGridCanvas
 
+# (normal click, Shift held) button text. A normal click on the catalog and queue
+# buttons transfers with known stock; holding Shift opens the stock dialog instead.
+CATALOG_BUTTON_TEXT = (
+    "Transfer selected → shelf (keep stock)",
+    "Assign selected catalog → loaded address (enter stock)",
+)
+QUEUE_BUTTON_TEXT = (
+    "Transfer queue → shelf (keep stock)",
+    "Assign selected queue → loaded address (enter stock)",
+)
+ON_HAND_BUTTON_TEXT = (
+    "Assign selected on-hand → loaded address",
+    "Transfer ALL on-hand → shelf (Whole mode)",
+)
+
 
 class LocationAssignmentView(ttk.Frame):
     """Tab 2: assign by address and hold removed shelf products on-hand."""
@@ -134,56 +149,29 @@ class LocationAssignmentView(ttk.Frame):
                 self.on_whole_mode_change(enabled)
             except Exception:
                 pass
+        # The orange style marks buttons while Shift is held.
         if hasattr(self, "assign_button"):
-            if enabled:
-                self.assign_button.configure(
-                    text="Transfer ALL on-hand → shelf (Whole mode)",
-                    style="WholeMode.Commit.TButton",
-                )
-            else:
-                self.assign_button.configure(
-                    text="Assign selected on-hand → loaded address",
-                    style="Commit.TButton",
-                )
+            self.assign_button.configure(
+                text=ON_HAND_BUTTON_TEXT[enabled],
+                style="WholeMode.Commit.TButton" if enabled else "Commit.TButton",
+            )
 
         if hasattr(self, "catalog_transfer_button"):
-            if enabled:
-                self.catalog_transfer_button.configure(
-                    text="Transfer selected → shelf (keep stock)",
-                    style="WholeMode.TButton",
-                )
-            else:
-                self.catalog_transfer_button.configure(
-                    text="Assign selected catalog → loaded address",
-                    style="TButton",
-                )
+            self.catalog_transfer_button.configure(
+                text=CATALOG_BUTTON_TEXT[enabled],
+                style="WholeMode.TButton" if enabled else "TButton",
+            )
 
-        if hasattr(self, "queue_move_button"):
-            if enabled:
-                self.queue_move_button.configure(
-                    text="Transfer queue → shelf (keep stock)",
-                    style="WholeMode.TButton",
-                )
-            else:
-                self.queue_move_button.configure(
-                    text="Assign selected queue → loaded address",
-                    style="TButton",
-                )
+        self.set_queue_button_clicks(None)
 
     def set_queue_button_clicks(self, remaining_clicks: int | None = None) -> None:
         if not hasattr(self, "queue_move_button"):
             return
         if remaining_clicks is None or remaining_clicks <= 0:
-            if self.whole_mode:
-                self.queue_move_button.configure(
-                    text="Transfer queue → shelf (keep stock)",
-                    style="WholeMode.TButton",
-                )
-            else:
-                self.queue_move_button.configure(
-                    text="Assign selected queue → loaded address",
-                    style="TButton",
-                )
+            self.queue_move_button.configure(
+                text=QUEUE_BUTTON_TEXT[self.whole_mode],
+                style="WholeMode.TButton" if self.whole_mode else "TButton",
+            )
         else:
             plural = "time" if remaining_clicks == 1 else "times"
             self.queue_move_button.configure(
@@ -191,9 +179,10 @@ class LocationAssignmentView(ttk.Frame):
                 style="WholeMode.TButton",
             )
 
+    # Each press records its own Shift bit, so a press released off the button
+    # (no click) cannot leave a stale Shift flag for the next click.
     def _on_assign_button_press(self, event: tk.Event) -> None:
-        if bool(event.state & 0x0001):
-            self._shift_clicked = True
+        self._shift_clicked = bool(event.state & 0x0001)
 
     def _handle_assign_click(self) -> None:
         whole = self.whole_mode or getattr(self, "_shift_clicked", False)
@@ -204,11 +193,11 @@ class LocationAssignmentView(ttk.Frame):
             self.on_assign_address()
 
     def _on_catalog_transfer_button_press(self, event: tk.Event) -> None:
-        if bool(event.state & 0x0001):
-            self._shift_clicked = True
+        self._shift_clicked = bool(event.state & 0x0001)
 
     def _handle_catalog_transfer_click(self) -> None:
-        to_shelf = self.whole_mode or getattr(self, "_shift_clicked", False)
+        # Normal click: transfer with known stock. Shift: enter stock first.
+        to_shelf = not (self.whole_mode or getattr(self, "_shift_clicked", False))
         self._shift_clicked = False
         try:
             self.on_catalog_to_queue(to_shelf=to_shelf)
@@ -216,11 +205,11 @@ class LocationAssignmentView(ttk.Frame):
             self.on_catalog_to_queue()
 
     def _on_queue_move_button_press(self, event: tk.Event) -> None:
-        if bool(event.state & 0x0001):
-            self._shift_clicked = True
+        self._shift_clicked = bool(event.state & 0x0001)
 
     def _handle_queue_move_click(self) -> None:
-        to_shelf = self.whole_mode or getattr(self, "_shift_clicked", False)
+        # Normal click: transfer the visible queue with known stock. Shift: enter stock first.
+        to_shelf = not (self.whole_mode or getattr(self, "_shift_clicked", False))
         self._shift_clicked = False
         try:
             self.on_queue_to_hand(to_shelf=to_shelf)
@@ -242,7 +231,7 @@ class LocationAssignmentView(ttk.Frame):
         actions.columnconfigure((0, 1), weight=1, uniform="actions")
         self.revert_button = ttk.Button(
             actions,
-            text="Revert shift transfer",
+            text="Revert quick transfer",
             command=on_revert_shift,
             state="disabled",
         )
@@ -313,7 +302,7 @@ class LocationAssignmentView(ttk.Frame):
         )
         self.queue_move_button = ttk.Button(
             queue,
-            text="Assign selected queue → loaded address",
+            text=QUEUE_BUTTON_TEXT[False],
             command=self._handle_queue_move_click,
         )
         self.queue_move_button.grid(row=5, column=0, sticky="ew", pady=(5, 0))
@@ -353,7 +342,7 @@ class LocationAssignmentView(ttk.Frame):
         )
         self.catalog_transfer_button = ttk.Button(
             catalog,
-            text="Assign selected catalog → loaded address",
+            text=CATALOG_BUTTON_TEXT[False],
             command=self._handle_catalog_transfer_click,
         )
         self.catalog_transfer_button.grid(row=2, column=0, sticky="ew", pady=(5, 0))
@@ -516,7 +505,7 @@ class LocationAssignmentView(ttk.Frame):
         )
         self.assign_button = ttk.Button(
             address,
-            text="Assign selected on-hand → loaded address",
+            text=ON_HAND_BUTTON_TEXT[False],
             command=self._handle_assign_click,
             style="Commit.TButton",
         )

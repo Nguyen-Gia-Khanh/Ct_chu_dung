@@ -305,7 +305,7 @@ class Api:
     @rpc("assign.revert")
     def revert(self) -> dict[str, Any]:
         if self.last_shift is None:
-            raise ValueError("There is no Shift transfer to revert.")
+            raise ValueError("There is no quick transfer to revert.")
         products = [record["product_id"] for record in self.last_shift["products"]]
         slots = [self._slot_name(self.last_shift["slot_id"]), *self._old_slots(products)]
         count = self.db.revert_shift_transfer(self.last_shift)

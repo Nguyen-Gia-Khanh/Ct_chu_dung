@@ -96,6 +96,8 @@ class ProductSourceTests(WorkspaceTestCase):
         app.refresh_product_queue()
         self.assertEqual(app.assignments.queue_tree.item("product::P1", "tags"), ())
         self.assertFalse(app.is_queue_product_available("P1"))
+        # Not counted as "ready", but queue assignment still brings it to the cell.
+        self.assertTrue(app.is_queue_product_movable("P1"))
 
     def test_shift_queue_transfer_skips_gray_rows(self):
         app = self.make_actions()
@@ -109,36 +111,38 @@ class ProductSourceTests(WorkspaceTestCase):
         records = app.database.assign_catalog_direct_to_slot.call_args.args[2]
         self.assertEqual(records, {"ABCDE2": ("Washers", "")})
 
-    def test_normal_queue_transfer_skips_gray_selection(self):
+    def test_stock_entry_queue_assignment_skips_gray_selection(self):
         app = self.make_actions()
         app.committed_locations["P1"] = self.first.slot_name
         app.assignments.queue_tree.selection = lambda: ("product::P1",)
-        with patch("ui.desktop.assignment_actions.messagebox.showinfo"):
-            app.assign_queue_selection_to_address()
-        app.database.add_to_on_hand.assert_not_called()
+        with patch("ui.desktop.assignment_actions.messagebox.showinfo") as info, patch(
+            "ui.desktop.assignment_actions.StockQuantityDialog"
+        ) as dialog:
+            app.assign_queue_selection_to_address(to_shelf=False)
+        info.assert_called_once()
+        dialog.assert_not_called()
+        app.database.assign_catalog_direct_to_slot.assert_not_called()
 
-
-
-    def test_normal_queue_click_assigns_selected_products_directly(self):
+    def test_stock_entry_queue_assignment_assigns_selected_products_directly(self):
         app = self.make_actions()
         app.database = self.db
         app.assignments.queue_tree.selection = lambda: ("product::P1", "product::P2")
         with patch("ui.desktop.assignment_actions.StockQuantityDialog") as dialog:
             dialog.return_value.result = {"P1": 7, "P2": 11}
-            app.assign_queue_selection_to_address()
+            app.assign_queue_selection_to_address(to_shelf=False)
         self.assertEqual(self.db.get_on_hand_products(), {})
         self.assertEqual(self.db.get_placement_details()["P1"].stock_qty, 7)
         self.assertEqual(self.db.get_placement_details()["P2"].stock_qty, 11)
         self.assertEqual(set(dict(self.db.get_products())), {"P1", "P2"})
 
-    def test_cancel_normal_catalog_assignment_has_no_inventory_changes(self):
+    def test_cancel_stock_entry_catalog_assignment_has_no_inventory_changes(self):
         app = self.make_actions()
         app.database = self.db
         app.assignments.catalog_tree = Mock()
         app.assignments.catalog_tree.selection.return_value = ("catalog::C1",)
         with patch("ui.desktop.assignment_actions.StockQuantityDialog") as dialog:
             dialog.return_value.result = None
-            app.assign_catalog_selection_to_address()
+            app.assign_catalog_selection_to_address(to_shelf=False)
         self.assertNotIn("C1", dict(self.db.get_products()))
         self.assertEqual(self.db.get_placement_details(), {})
         app.reconcile_inventory_products.assert_not_called()
@@ -151,7 +155,7 @@ class ProductSourceTests(WorkspaceTestCase):
         with patch("ui.desktop.assignment_actions.StockQuantityDialog") as dialog, patch(
             "ui.desktop.assignment_actions.messagebox.showinfo"
         ):
-            app.assign_catalog_selection_to_address()
+            app.assign_catalog_selection_to_address(to_shelf=False)
         dialog.assert_not_called()
         app.database.assign_catalog_direct_to_slot.assert_not_called()
 

@@ -154,24 +154,29 @@ cycling/reset, and the Tab 6 synchronization boundary.
 
 ### Normal clicks and Shift clicks
 
-Normal clicks assign selected products directly to the loaded cell with entered
-quantities; Shift invokes direct/whole-batch shortcuts, preserving known stock. On-hand holds products
+A normal click on the catalog or queue button transfers to the loaded cell with
+known stock (keep-stock transfer); holding Shift opens `StockQuantityDialog`
+first. On the on-hand button, Shift takes the whole batch. On-hand holds products
 removed from shelves for reassignment or return to their queue/catalog list.
 
 | Source/button | Normal click | Hold Shift and click |
 | --- | --- | --- |
-| Catalog assignment | Selected catalog products go directly to the loaded cell after entering stock; catalog-only products stay out of the total queue. | Exactly one selected catalog product goes directly to the loaded cell with retained stock, or `999` when uncounted. |
-| Total queue assignment | Selected ready queue products go directly to the loaded cell after entering stock in `StockQuantityDialog`. | All currently visible ready queue rows go directly to the loaded cell with retained stock, or `999` when uncounted; this uses the displayed search results, not just the selected rows. |
+| Catalog assignment | Exactly one selected catalog product goes directly to the loaded cell with retained stock, or `999` when uncounted. | Selected catalog products go directly to the loaded cell after entering stock; catalog-only products stay out of the total queue. |
+| Total queue assignment | All currently visible queue rows that are not on a shelf go directly to the loaded cell with retained stock, or `999` when uncounted; this uses the displayed search results, not just the selected rows. On-hand products are included and keep their on-hand stock. | Selected queue products that are not on a shelf go directly to the loaded cell after entering stock in `StockQuantityDialog`, which is pre-filled with an on-hand product's stock. |
 | On-hand assignment | Only selected on-hand rows go to the loaded cell with their recorded quantities. | The entire on-hand batch goes to the loaded cell with its recorded quantities. |
 
-Direct transfers require a loaded saved cell. For the queue shortcut, IDs must
+Queue assignment filters rows with `CatalogActions.is_queue_product_movable`
+(not on a shelf). `is_queue_product_available` (not on a shelf and not on-hand)
+only drives the "ready" count.
+
+Every assignment requires a loaded saved cell. For the normal queue click, IDs must
 share the first five characters after removing hyphens, trimming, and uppercasing;
 shorter prefixes are rejected. One visible product transfers in one click.
-Multiple products require three clicks while holding Shift. Each pending click
-restarts a three-second timeout. Releasing Shift or refreshing queue search
-results resets that click count.
+Multiple products require three clicks. Each pending click restarts a
+three-second timeout. Pressing or releasing Shift, or refreshing queue search
+results, resets that click count.
 
-`Revert shift transfer` remembers the latest successful Shift transfer from the
+`Revert quick transfer` remembers the latest successful keep-stock transfer from the
 catalog, queue, or whole on-hand batch. It asks for confirmation and restores
 captured product state through `WarehouseDatabase.revert_shift_transfer`.
 The snapshot lives in `app.last_shift_transfer` and is lost on restart; this is
@@ -192,15 +197,18 @@ one-step reversal, not a general history of all inventory edits.
 | Compact shelf text, count, color, selection | `render_shelf_preview`, `refresh_shelf_cell`, `highlight_shelf_cell`, and `WarehouseMapperApp.refresh_assignment_shelf_preview`. |
 | Web action scope and labels | `LocationAssignmentView._refresh_web_action_labels`; `WebActions._web_placements` and `_location_updates` (via `mapper.services.uploads`). |
 
-Shift state is stored in `view.whole_mode`. Mouse press handlers also capture
-the event's Shift bit in `_shift_clicked`, which click handlers consume. The
-action layer checks the requested flag and the view's current mode. A modifier
-change must keep labels, click routing, action routing, and timer resets aligned.
+Shift state is stored in `view.whole_mode`. Each mouse press stores the
+event's Shift bit in `_shift_clicked` (replacing any stale value), which click
+handlers consume. The catalog/queue handlers pass `to_shelf=not shift`; the
+action methods use an explicit `to_shelf` and fall back to `not whole_mode`
+when it is `None`. Button text lives in the `*_BUTTON_TEXT` (normal, Shift)
+pairs at the top of `location_assignment_view.py`. A modifier change must keep
+labels, click routing, action routing, and timer resets aligned.
 
 Search normalization is case- and Vietnamese-accent-insensitive. An exact ID
 reports its queue/on-hand/shelf state. Tab 2 catalog filtering also matches saved
 location text. Each product list displays at most `MAX_VISIBLE_PRODUCTS` (750),
-so narrow the search before using the visible-queue Shift shortcut.
+so narrow the search before using the visible-queue transfer.
 
 ### Shelf display conventions
 
@@ -220,12 +228,14 @@ label format; changing Tab 2 does not require changing every renderer.
 **Refresh dependencies:** `StateActions.apply_inventory_changes` and
 `reconcile_inventory_products` update the queue/catalog/on-hand caches after
 writes. `refresh_visible_cells` routes changed cells to the active view.
-`StockQuantityDialog` lives in `dialogs.py`. Shift-transfer rules (shared
+`StockQuantityDialog` lives in `dialogs.py`. Keep-stock transfer rules (shared
 five-character prefix, triple click, stock 999) are in `mapper/services/assignment.py`.
 
 **Save boundary:** the current address/on-hand actions save immediately.
-**Check:** selected moves, all three Shift shortcuts, prefix rejection, timer
-reset, reversal, restart persistence, and unchanged stock in ordinary moves.
+**Check:** normal-click transfers, all three Shift actions, on-hand products in a
+queue transfer, prefix rejection, timer reset, reversal, restart persistence,
+and unchanged stock in ordinary moves. `tests/test_tab2_click_routing.py` covers
+the click routing and on-hand hot sellers.
 `tests/test_incremental_desktop.py` checks the numeric count format and widget
 reuse; `tests/test_persistence.py` checks the underlying inventory moves.
 
@@ -622,7 +632,7 @@ New-Item -ItemType Directory -Force tmp | Out-Null
 & '.venv\Scripts\python.exe' warehouse_mapper.py --db tmp/manual-check.db
 ```
 
-For Tab 2, check normal selected-product moves, all three Shift shortcuts,
+For Tab 2, check normal-click keep-stock transfers, all three Shift actions,
 loaded-address validation, queue prefix rejection, the three-click timeout,
 Shift release/tab changes, reversal, and unchanged stock during ordinary moves.
 Compare a freshly rendered shelf with counts updated after a transfer. Queue
