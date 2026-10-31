@@ -225,9 +225,13 @@ class OnHandHotSellerAppTests(unittest.TestCase):
         self.app.assignments.cell_var.set("2")
         self.app.load_assignment_address()
 
-        self.click_queue_button(shift=False)
+        with patch("ui.desktop.assignment_actions.play_error_sound") as sound:
+            self.click_queue_button(shift=False)
+        sound.assert_called_once()
         self.assertEqual(self.app.database.get_placement_details()[HOT].slot_name, "L1-1A1-1")
-        self.assertEqual(self.app.assignments.search_location_text.get(), "No products in queue to transfer.")
+        self.assertEqual(
+            self.app.assignments.search_location_text.get(), f"Not assigned: {HOT} is already at L1-1A1-1."
+        )
 
 
 if __name__ == "__main__":

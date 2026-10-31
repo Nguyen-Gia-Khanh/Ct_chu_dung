@@ -12,6 +12,7 @@ from mapper.services.assignment import (
 )
 from mapper.services.shelf_grid import load_grid
 from .dialogs import StockQuantityDialog
+from .sounds import play_error_sound
 from .widgets import sync_tree_rows
 
 
@@ -71,6 +72,23 @@ class AssignmentActions:
         if hasattr(self.assignments, "search_location_label"):
             self.assignments.search_location_label.configure(foreground="#c62828")
 
+    def _refuse_shelved(self, product_ids) -> bool:
+        """Assigning a product that is already on a shelf: error sound, nothing assigned.
+        Returns True when the action was refused."""
+        shelved = {pid: location for pid in product_ids if (location := self.shelf_location(pid)) is not None}
+        if not shelved:
+            return False
+        play_error_sound(self.root)
+        if len(shelved) == 1:
+            ((pid, location),) = shelved.items()
+            message = f"Not assigned: {pid} is already at {location}."
+        else:
+            names = ", ".join(list(shelved)[:3]) + (", …" if len(shelved) > 3 else "")
+            message = f"Not assigned: {len(shelved)} products are already on a shelf ({names})."
+        self._show_search_refusal(message)
+        self.status_text.set(message)
+        return True
+
     def _reset_queue_shift_clicks(self) -> None:
         if self.queue_shift_timer is not None:
             try:
@@ -100,8 +118,9 @@ class AssignmentActions:
                 for item_id in selected_items
                 if item_id.startswith("product::")
                 and item_id.removeprefix("product::") in self.products
-                and self.is_queue_product_movable(item_id.removeprefix("product::"))
             ]
+            if self._refuse_shelved(product_ids):
+                return
             if not product_ids:
                 messagebox.showinfo(
                     "Choose products",
@@ -126,13 +145,24 @@ class AssignmentActions:
             self._reset_queue_shift_clicks()
             return
 
-        queue_items = self.assignments.queue_tree.get_children()
-        queue_pids = [
+        visible = [
             item_id.removeprefix("product::")
-            for item_id in queue_items
+            for item_id in self.assignments.queue_tree.get_children()
             if item_id.startswith("product::")
-            and self.is_queue_product_movable(item_id.removeprefix("product::"))
         ]
+        queue_pids = [pid for pid in visible if self.is_queue_product_movable(pid)]
+        exact = self.exact_search_product()
+        if exact is not None:
+            # A scanned or typed ID that is already shelved is refused even when similar
+            # IDs are still ready; otherwise those would move instead of the scanned one.
+            shelved_check = [exact]
+        elif not queue_pids:
+            shelved_check = visible  # nothing ready: every visible row is already shelved
+        else:
+            shelved_check = []  # a family search moves its ready rows; gray rows are context
+        if self._refuse_shelved(shelved_check):
+            self._reset_queue_shift_clicks()
+            return
         if not queue_pids:
             if hasattr(self.assignments, "search_location_text"):
                 self.assignments.search_location_text.set(
