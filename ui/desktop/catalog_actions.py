@@ -106,8 +106,8 @@ class CatalogActions:
                 parent=self.root,
             )
             return
-        if self._refuse_shelved(product_ids):
-            return
+        # No already-shelved check here: the catalog button is the forced relocation,
+        # so it moves a shelved product to the loaded cell. Only the queue button beeps.
 
         is_to_shelf = not getattr(self.assignments, "whole_mode", False) if to_shelf is None else to_shelf
         if is_to_shelf:

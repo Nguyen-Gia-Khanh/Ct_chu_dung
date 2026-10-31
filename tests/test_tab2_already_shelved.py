@@ -1,5 +1,5 @@
-"""Tab 2: assigning a product that is already on a shelf plays the error sound
-and assigns nothing, from both the queue and the catalog buttons."""
+"""Tab 2: assigning a product that is already on a shelf from the queue button plays
+the error sound and assigns nothing. The catalog button relocates it silently."""
 
 from __future__ import annotations
 
@@ -80,25 +80,44 @@ class AlreadyShelvedTests(unittest.TestCase):
         self.app.assign_queue_selection_to_address(to_shelf=False)
         self.assert_refused()
 
-    def test_quick_catalog_click_on_a_shelved_product(self) -> None:
+    def test_reassigning_to_the_same_cell_is_refused_too(self) -> None:
+        self.app.assignments.cell_var.set("1")
+        self.app.load_assignment_address()
+        self.search(HOT)
+        self.app.assign_queue_selection_to_address(to_shelf=True)
+        self.assert_refused()
+
+    # The lower catalog button is the forced relocation: it moves shelved products
+    # to the loaded cell with no sound, from a normal click or with Shift.
+    def test_quick_catalog_click_relocates_a_shelved_product_without_a_sound(self) -> None:
         self.search(HOT)
         self.app.assignments.catalog_tree.selection_set(f"catalog::{HOT}")
         self.app.assign_catalog_selection_to_address(to_shelf=True)
-        self.assert_refused()
+        self.sound.assert_not_called()
+        placements = self.app.database.get_placement_details()
+        self.assertEqual((placements[HOT].slot_name, placements[HOT].stock_qty), ("L1-1A1-2", 7))
+        self.assertIsNotNone(self.app.last_shift_transfer)
 
-    def test_stock_entry_catalog_click_with_a_shelved_product_selected(self) -> None:
+    def test_stock_entry_catalog_click_relocates_shelved_products_without_a_sound(self) -> None:
         self.search("")
         self.app.assignments.catalog_tree.selection_set(f"catalog::{HOT}", f"catalog::{SPARE}")
-        self.app.assign_catalog_selection_to_address(to_shelf=False)
-        self.assert_refused()
+        self.dialog.return_value.result = {HOT: 4, SPARE: 2}
+        with patch.object(self.app.root, "wait_window"):
+            self.app.assign_catalog_selection_to_address(to_shelf=False)
+        self.sound.assert_not_called()
+        self.dialog.assert_called_once()
+        placements = self.app.database.get_placement_details()
+        self.assertEqual((placements[HOT].slot_name, placements[HOT].stock_qty), ("L1-1A1-2", 4))
+        self.assertEqual((placements[SPARE].slot_name, placements[SPARE].stock_qty), ("L1-1A1-2", 2))
 
-    def test_reassigning_to_the_same_cell_is_refused_too(self) -> None:
+    def test_catalog_click_into_the_same_cell_has_no_sound(self) -> None:
         self.app.assignments.cell_var.set("1")
         self.app.load_assignment_address()
         self.search(HOT)
         self.app.assignments.catalog_tree.selection_set(f"catalog::{HOT}")
         self.app.assign_catalog_selection_to_address(to_shelf=True)
-        self.assert_refused()
+        self.sound.assert_not_called()
+        self.assertEqual(self.app.database.get_placement_details()[HOT].slot_name, "L1-1A1-1")
 
     def test_family_search_still_moves_its_ready_rows_without_a_sound(self) -> None:
         self.search("12251")

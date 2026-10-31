@@ -177,13 +177,14 @@ with Tab 4; see the [source guide](instruction.md#tab-1-shelf-designer).
    passing through on-hand. Catalog-only products are never added to the total
    queue.
 
-   A product that is already on a shelf cannot be assigned again from either
-   button: Windows' error sound plays, nothing is assigned, and the search
-   status shows the cell it is already in. This covers selected rows, a scanned
-   or typed product ID (even when similar IDs are still ready), and the same
-   cell it is already in. A family search such as `12251` still moves its
-   ready rows and ignores the gray ones. To relocate a shelved product, move it
-   to on-hand first or use Tab 5.
+   A product that is already on a shelf cannot be assigned again from the
+   queue button: Windows' error sound plays, nothing is assigned, and the
+   search status shows the cell it is already in. This covers selected rows, a
+   scanned or typed product ID (even when similar IDs are still ready), and the
+   same cell it is already in. A family search such as `12251` still moves its
+   ready rows and ignores the gray ones. The catalog button is the forced
+   relocation: it moves a shelved product from its current cell to the loaded
+   cell, with no sound.
 5. On-hand holds products removed from a shelf. To reassign those products,
    select on-hand rows and use **Assign selected on-hand → loaded address**.
    The batch survives restarting the app; **Edit selected quantity** adjusts
