@@ -31,6 +31,33 @@ class CatalogActions:
         """Queue assignment skips gray (shelved) rows but brings on-hand products along."""
         return not self.is_queue_product_assigned(product_id)
 
+    def shelf_location(self, product_id: str) -> str | None:
+        """Saved location text of a product already on a shelf, or None."""
+        if not self.is_queue_product_assigned(product_id):
+            return None
+        staged = self.staged_assignments.get(product_id)
+        return staged.slot_name if staged is not None else self.committed_locations.get(product_id, "")
+
+    def exact_search_product(self, raw_query: str | None = None) -> str | None:
+        """The product whose ID the search text spells exactly (case and dashes ignored), or None."""
+        if raw_query is None:
+            search_var = getattr(self.assignments, "search_var", None)
+            raw_query = search_var.get() if search_var is not None else ""
+        raw_query = raw_query.strip()
+        if not raw_query:
+            return None
+        product_id = getattr(self, "product_id_lookup", {}).get(normalize_sku(raw_query).casefold())
+        if product_id is None:
+            product_id = exact_product_search_id(
+                raw_query,
+                (
+                    item_id.partition("::")[2]
+                    for tree in (self.assignments.queue_tree, self.assignments.catalog_tree)
+                    for item_id in tree.get_children()
+                ),
+            )
+        return product_id
+
     def activate_catalog_product(self, event) -> str | None:
         tree = self.assignments.catalog_tree
         item_id = tree.identify_row(event.y)
@@ -78,6 +105,8 @@ class CatalogActions:
                 "Select one or more products from the full catalog first.",
                 parent=self.root,
             )
+            return
+        if self._refuse_shelved(product_ids):
             return
 
         is_to_shelf = not getattr(self.assignments, "whole_mode", False) if to_shelf is None else to_shelf
@@ -319,18 +348,7 @@ class CatalogActions:
             if raw_query is None
             else raw_query.strip()
         )
-        product_id = None
-        if raw_query:
-            product_id = self.product_id_lookup.get(normalize_sku(raw_query).casefold())
-            if product_id is None:
-                product_id = exact_product_search_id(
-                    raw_query,
-                    (
-                        item_id.partition("::")[2]
-                        for tree in (self.assignments.queue_tree, self.assignments.catalog_tree)
-                        for item_id in tree.get_children()
-                    ),
-                )
+        product_id = self.exact_search_product(raw_query)
 
         message = ""
         location_exists = False

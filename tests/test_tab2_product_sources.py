@@ -111,17 +111,21 @@ class ProductSourceTests(WorkspaceTestCase):
         records = app.database.assign_catalog_direct_to_slot.call_args.args[2]
         self.assertEqual(records, {"ABCDE2": ("Washers", "")})
 
-    def test_stock_entry_queue_assignment_skips_gray_selection(self):
+    def test_stock_entry_queue_assignment_refuses_gray_selection_with_error_sound(self):
         app = self.make_actions()
         app.committed_locations["P1"] = self.first.slot_name
-        app.assignments.queue_tree.selection = lambda: ("product::P1",)
+        app.assignments.queue_tree.selection = lambda: ("product::P1", "product::P2")
         with patch("ui.desktop.assignment_actions.messagebox.showinfo") as info, patch(
             "ui.desktop.assignment_actions.StockQuantityDialog"
-        ) as dialog:
+        ) as dialog, patch("ui.desktop.assignment_actions.play_error_sound") as sound:
             app.assign_queue_selection_to_address(to_shelf=False)
-        info.assert_called_once()
+        sound.assert_called_once()
+        info.assert_not_called()
         dialog.assert_not_called()
         app.database.assign_catalog_direct_to_slot.assert_not_called()
+        app.assignments.search_location_text.set.assert_called_with(
+            f"Not assigned: P1 is already at {self.first.slot_name}."
+        )
 
     def test_stock_entry_queue_assignment_assigns_selected_products_directly(self):
         app = self.make_actions()
