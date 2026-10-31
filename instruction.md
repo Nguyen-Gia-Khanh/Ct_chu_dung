@@ -173,8 +173,8 @@ The queue button skips shelved rows. When none of the visible rows (normal click
 or selected rows (Shift) is movable, `AssignmentActions._refuse_shelved` plays
 `play_error_sound` (`ui/desktop/sounds.py`, Windows' Critical Stop sound via
 `winsound.MessageBeep`, Tk's bell elsewhere) and shows the location in the search
-status and status bar. A mix of shelved and ready rows moves the ready ones with
-no sound. The catalog button never calls `_refuse_shelved`: it is the forced
+status and status bar. A normal click with no visible rows also plays the sound.
+A mix of shelved and ready rows moves the ready ones with no sound. The catalog button never calls `_refuse_shelved`: it is the forced
 relocation and moves shelved products to the loaded cell. Tests:
 `tests/test_tab2_already_shelved.py`.
 

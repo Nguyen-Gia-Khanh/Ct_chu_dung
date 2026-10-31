@@ -178,10 +178,10 @@ with Tab 4; see the [source guide](instruction.md#tab-1-shelf-designer).
    queue.
 
    The queue button skips products that are already on a shelf (gray rows)
-   and moves the rest, including during a multi-click transfer. When every
-   product the search shows is already on a shelf (or, with Shift, every
-   selected row), Windows' error sound plays, nothing is assigned, and the
-   search status shows where it already is. The catalog button is the forced
+   and moves the rest, including during a multi-click transfer. When the
+   search shows no products, or every product it shows is already on a shelf
+   (or, with Shift, every selected row), Windows' error sound plays and nothing
+   is assigned. The search status shows where a shelved product already is. The catalog button is the forced
    relocation: it moves a shelved product from its current cell to the loaded
    cell, with no sound.
 5. On-hand holds products removed from a shelf. To reassign those products,

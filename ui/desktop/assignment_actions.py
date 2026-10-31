@@ -154,11 +154,12 @@ class AssignmentActions:
         ]
         queue_pids = [pid for pid in visible if self.is_queue_product_movable(pid)]
         # Ready rows move and gray rows are skipped silently. The error sound plays
-        # only when every visible row is already on a shelf.
+        # when the search shows nothing, or only products already on a shelf.
         if not queue_pids and self._refuse_shelved(visible):
             self._reset_queue_shift_clicks()
             return
         if not queue_pids:
+            play_error_sound(self.root)
             if hasattr(self.assignments, "search_location_text"):
                 self.assignments.search_location_text.set(
                     "No products in queue to transfer."

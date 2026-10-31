@@ -93,6 +93,14 @@ class AlreadyShelvedTests(unittest.TestCase):
         self.assertEqual(self.app.queue_shift_clicks, 0)
         self.assertEqual(self.app.database.get_placement_details()[HOT].slot_name, "L1-1A1-1")
 
+    def test_queue_click_beeps_when_the_search_shows_no_product(self) -> None:
+        self.search("NOTHING-MATCHES")
+        self.assertEqual(self.app.assignments.queue_tree.get_children(), ())
+        self.click_queue(1)
+        self.sound.assert_called_once()
+        self.assertEqual(self.app.assignments.search_location_text.get(), "No products in queue to transfer.")
+        self.assertEqual(set(self.app.database.get_placement_details()), {HOT})
+
     def test_stock_entry_queue_click_skips_a_shelved_row_without_a_sound(self) -> None:
         self.search(HOT)
         self.app.assignments.queue_tree.selection_set(f"product::{HOT}", f"product::{SIMILAR}")
