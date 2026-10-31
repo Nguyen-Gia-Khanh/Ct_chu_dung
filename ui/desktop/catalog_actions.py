@@ -21,11 +21,15 @@ class CatalogActions:
         )
 
     def is_queue_product_available(self, product_id: str) -> bool:
-        """Gray queue rows remain searchable but cannot be transferred again."""
+        """Not on a shelf and not on-hand: counted as "ready" in the queue."""
         return (
             not self.is_queue_product_assigned(product_id)
             and product_id not in getattr(self, "on_hand_products", {})
         )
+
+    def is_queue_product_movable(self, product_id: str) -> bool:
+        """Queue assignment skips gray (shelved) rows but brings on-hand products along."""
+        return not self.is_queue_product_assigned(product_id)
 
     def activate_catalog_product(self, event) -> str | None:
         tree = self.assignments.catalog_tree
@@ -58,7 +62,9 @@ class CatalogActions:
             )
         return "break"
 
-    def assign_catalog_selection_to_address(self, to_shelf: bool = False) -> None:
+    def assign_catalog_selection_to_address(self, to_shelf: bool | None = None) -> None:
+        """to_shelf=True transfers with known stock; False opens the stock dialog.
+        None follows the keyboard: a normal click transfers, Shift opens the dialog."""
         selected_items = self.assignments.catalog_tree.selection()
         product_ids = [
             item_id.removeprefix("catalog::")
@@ -74,7 +80,7 @@ class CatalogActions:
             )
             return
 
-        is_to_shelf = to_shelf or getattr(self.assignments, "whole_mode", False)
+        is_to_shelf = not getattr(self.assignments, "whole_mode", False) if to_shelf is None else to_shelf
         if is_to_shelf:
             if self.selected_address is None:
                 messagebox.showinfo(

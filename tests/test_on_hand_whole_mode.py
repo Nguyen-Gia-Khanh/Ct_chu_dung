@@ -98,56 +98,37 @@ class Tab2WholeModeViewTests(unittest.TestCase):
         )
         view.pack()
 
-        # Initial normal mode
-        self.assertFalse(view.whole_mode)
-        self.assertEqual(
-            view.assign_button.cget("text"),
-            "Assign selected on-hand → loaded address",
-        )
-        self.assertEqual(
-            view.catalog_transfer_button.cget("text"),
-            "Assign selected catalog → loaded address",
-        )
+        normal = {
+            "assign_button": ("Assign selected on-hand → loaded address", "Commit.TButton"),
+            "catalog_transfer_button": ("Transfer selected → shelf (keep stock)", "TButton"),
+            "queue_move_button": ("Transfer queue → shelf (keep stock)", "TButton"),
+        }
+        shift_held = {
+            "assign_button": ("Transfer ALL on-hand → shelf (Whole mode)", "WholeMode.Commit.TButton"),
+            "catalog_transfer_button": ("Assign selected catalog → loaded address (enter stock)", "WholeMode.TButton"),
+            "queue_move_button": ("Assign selected queue → loaded address (enter stock)", "WholeMode.TButton"),
+        }
 
-        # Toggle whole mode on
+        def assert_buttons(expected):
+            for name, (text, style) in expected.items():
+                button = getattr(view, name)
+                self.assertEqual(button.cget("text"), text, name)
+                self.assertEqual(str(button.cget("style") or "TButton"), style, name)
+
+        # Initial normal mode: catalog and queue transfer with known stock.
+        self.assertFalse(view.whole_mode)
+        for name, (text, _style) in normal.items():
+            self.assertEqual(getattr(view, name).cget("text"), text, name)
+
+        # Holding Shift: catalog and queue open the stock dialog; on-hand takes all.
         view.set_whole_mode(True)
         self.assertTrue(view.whole_mode)
-        self.assertEqual(
-            view.assign_button.cget("text"),
-            "Transfer ALL on-hand → shelf (Whole mode)",
-        )
-        self.assertEqual(
-            view.assign_button.cget("style"),
-            "WholeMode.Commit.TButton",
-        )
-        self.assertEqual(
-            view.catalog_transfer_button.cget("text"),
-            "Transfer selected → shelf (keep stock)",
-        )
-        self.assertEqual(
-            view.catalog_transfer_button.cget("style"),
-            "WholeMode.TButton",
-        )
+        assert_buttons(shift_held)
 
-        # Toggle whole mode off
+        # Releasing Shift restores the normal labels.
         view.set_whole_mode(False)
         self.assertFalse(view.whole_mode)
-        self.assertEqual(
-            view.assign_button.cget("text"),
-            "Assign selected on-hand → loaded address",
-        )
-        self.assertEqual(
-            view.assign_button.cget("style"),
-            "Commit.TButton",
-        )
-        self.assertEqual(
-            view.catalog_transfer_button.cget("text"),
-            "Assign selected catalog → loaded address",
-        )
-        self.assertEqual(
-            view.catalog_transfer_button.cget("style"),
-            "TButton",
-        )
+        assert_buttons(normal)
 
 
 class Tab2WholeModeAppWorkflowTests(unittest.TestCase):
@@ -219,15 +200,32 @@ class Tab2WholeModeAppWorkflowTests(unittest.TestCase):
         self.assertIn("P2", placements)
         self.assertEqual(len(self.app.on_hand_products), 0)
 
-    def test_catalog_transfer_button_shift_click_triggers_shelf_transfer(self) -> None:
+    def test_catalog_transfer_button_normal_click_triggers_shelf_transfer(self) -> None:
         self.app.assignments.catalog_tree.selection_set("catalog::C2")
-        self.app.assignments.catalog_transfer_button.event_generate("<Button-1>", state=1)
-        self.app.assignments.catalog_transfer_button.invoke()
+        self.app.assignments.catalog_transfer_button.event_generate("<Button-1>", state=0)
+        with patch("ui.desktop.assignment_actions.StockQuantityDialog") as dialog:
+            self.app.assignments.catalog_transfer_button.invoke()
 
+        dialog.assert_not_called()
         placements = self.app.database.get_placement_details()
         self.assertIn("C2", placements)
         self.assertEqual(placements["C2"].stock_qty, 999)
         self.assertEqual(placements["C2"].slot_name, "L1-1A1-1")
+
+    def test_catalog_transfer_button_shift_click_opens_stock_dialog(self) -> None:
+        self.app.assignments.catalog_tree.selection_set("catalog::C2")
+        self.app.assignments.catalog_transfer_button.event_generate("<Button-1>", state=1)
+        with patch("ui.desktop.assignment_actions.StockQuantityDialog") as dialog, patch.object(
+            self.app.root, "wait_window"
+        ):
+            dialog.return_value.result = {"C2": 4}
+            self.app.assignments.catalog_transfer_button.invoke()
+
+        dialog.assert_called_once()
+        placements = self.app.database.get_placement_details()
+        self.assertEqual(placements["C2"].stock_qty, 4)
+        self.assertEqual(placements["C2"].slot_name, "L1-1A1-1")
+        self.assertIsNone(self.app.last_shift_transfer)
 
     def test_normal_assign_only_moves_selected_on_hand_product(self) -> None:
         # Only select P1
@@ -249,6 +247,7 @@ class Tab2WholeModeAppWorkflowTests(unittest.TestCase):
         self.assertNotIn("C1", placements)
         self.assertNotIn("C2", placements)
         self.assertIn("only affects 1 product ID", self.app.assignments.search_location_text.get())
+        self.assertIn("Hold Shift", self.app.assignments.search_location_text.get())
         self.assertEqual(str(self.app.assignments.search_location_label.cget("foreground")), "#c62828")
 
         # Select only C1

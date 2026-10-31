@@ -23,7 +23,10 @@ def shift_prefix_error(product_ids: Iterable[str]) -> str | None:
 
 def catalog_shift_error(product_ids: list[str]) -> str | None:
     if len(product_ids) != 1:
-        return f"Cannot transfer: Catalog shift transfer only affects 1 product ID (selected {len(product_ids)})."
+        return (
+            f"Cannot transfer: Quick catalog transfer only affects 1 product ID (selected {len(product_ids)}). "
+            "Hold Shift and click to enter stock for several."
+        )
     return None
 
 

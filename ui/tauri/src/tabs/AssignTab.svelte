@@ -64,10 +64,13 @@
     { key: "modified", label: "Latest stock change", width: "160px", value: (row) => row.modified_at },
   ];
 
-  const ready = (row: ProductRow) => !row.location && !row.on_hand;
+  // Queue assignment skips rows already on a shelf; on-hand rows are brought to the cell.
+  const movable = (row: ProductRow) => !row.location;
+  // A normal click transfers with known stock; holding Shift opens the stock dialog.
   const queueLabel = $derived(
-    whole ? (shiftClicks ? `Click ${CONFIRM_CLICKS - shiftClicks} more time${CONFIRM_CLICKS - shiftClicks === 1 ? "" : "s"}` : "Shift: whole queue → loaded address")
-      : "Assign selected queue → loaded address");
+    whole ? "Assign selected queue → loaded address (enter stock)"
+      : shiftClicks ? `Click ${CONFIRM_CLICKS - shiftClicks} more time${CONFIRM_CLICKS - shiftClicks === 1 ? "" : "s"} to transfer → shelf`
+      : "Transfer queue → shelf (keep stock)");
 
   $effect(() => {
     if (stale("assign", seen)) {
@@ -95,6 +98,8 @@
   }
 
   async function search() {
+    // A new result set needs its own three clicks (scan, row double-click, refresh after a write).
+    resetClicks();
     try {
       [queue, catalog] = await Promise.all([
         call<SearchResult>("products.search", { query, scope: "hot", order: "queue" }),
@@ -234,14 +239,15 @@
 
   async function assignQueue(event: MouseEvent) {
     const rows = queue?.rows ?? [];
-    if (!(whole || event.shiftKey)) {
+    if (whole || event.shiftKey) {
       resetClicks();
-      const chosen = rows.filter((row) => queueSelected.includes(row.product_id) && ready(row));
-      if (!chosen.length) return notify("Select one or more ready products from the queue. Products already on-hand or assigned cannot move again.");
+      const chosen = rows.filter((row) => queueSelected.includes(row.product_id) && movable(row));
+      if (!chosen.length) return notify("Select one or more products from the queue. Gray products are already on a shelf and cannot move again.");
       return assignWithStock(chosen);
     }
     const target = requireAddress();
-    const ids = rows.filter(ready).map((row) => row.product_id);
+    const ids = rows.filter(movable).map((row) => row.product_id);
+    const fromHand = rows.filter((row) => movable(row) && row.on_hand).length;
     if (!target || !ids.length) {
       [searchStatus, searchHasPlace] = [target ? "No products in queue to transfer." : searchStatus, true];
       return resetClicks();
@@ -256,14 +262,14 @@
     }
     resetClicks();
     const result = await run<WriteResult & { can_revert: boolean }>("assign.shift_queue", { slot_id: target.slot_id, product_ids: ids },
-      (r) => `Transferred ${r.count} queue product(s) to ${target.slot_name} with retained stock (999 when uncounted).`);
+      (r) => `Transferred ${r.count} queue product(s) to ${target.slot_name} with retained stock (999 when uncounted)${fromHand ? `, ${fromHand} brought from on-hand` : ""}.`);
     if (result) canRevert = true;
   }
 
   async function assignCatalog(event: MouseEvent) {
     const chosen = (catalog?.rows ?? []).filter((row) => catalogSelected.includes(row.product_id));
     if (!chosen.length) return notify("Select one or more products from the full catalog first.");
-    if (!(whole || event.shiftKey)) return assignWithStock(chosen);
+    if (whole || event.shiftKey) return assignWithStock(chosen);
     const target = requireAddress();
     if (!target) return;
     const result = await run<WriteResult>("assign.shift_catalog", { slot_id: target.slot_id, product_ids: chosen.map((row) => row.product_id) },
@@ -283,8 +289,8 @@
   }
 
   async function revert() {
-    if (!(await confirm("Revert the latest Shift transfer?"))) return;
-    if (await run("assign.revert", {}, () => "Reverted the latest Shift transfer.")) canRevert = false;
+    if (!(await confirm("Revert the latest quick transfer?"))) return;
+    if (await run("assign.revert", {}, () => "Reverted the latest quick transfer.")) canRevert = false;
   }
 
   async function editOnHand() {
@@ -331,8 +337,10 @@
 
   function keys(event: KeyboardEvent) {
     if (app.tab !== "assign" || event.key !== "Shift") return;
-    whole = event.type === "keydown";
-    if (!whole) resetClicks();
+    const held = event.type === "keydown";
+    // Pending clicks belong to the normal-click transfer; any Shift change starts over.
+    if (held !== whole) resetClicks();
+    whole = held;
   }
 </script>
 
@@ -357,10 +365,10 @@
     </div>
     <div class="fill">
       <VirtualTable columns={queueColumns} rows={queue?.rows ?? []} rowKey={(row) => row.product_id} multi bind:selected={queueSelected}
-        rowClass={(row) => (ready(row) ? "" : "muted")} onactivate={(row) => ((query = row.product_id), search())} />
+        rowClass={(row) => (movable(row) ? "" : "muted")} onactivate={(row) => ((query = row.product_id), search())} />
     </div>
     <span class="muted small">{queue ? `${queue.total.toLocaleString()} matching · ${queue.ready?.toLocaleString()} ready · showing ${queue.rows.length}` : ""}</span>
-    <button class:whole onclick={assignQueue}>{queueLabel}</button>
+    <button class:whole={whole || shiftClicks > 0} onclick={assignQueue}>{queueLabel}</button>
   </div>
 {/snippet}
 
@@ -373,8 +381,8 @@
     </div>
     <span class="muted small">{catalog ? `${catalog.total.toLocaleString()} matching / ${catalog.size.toLocaleString()} total · showing ${catalog.rows.length}` : ""}</span>
     <div class="row nowrap">
-      <button class="grow" class:whole onclick={assignCatalog}>{whole ? "Shift: one catalog product → loaded address" : "Assign selected catalog → loaded address"}</button>
-      <button disabled={!canRevert} onclick={revert}>Revert Shift transfer</button>
+      <button class="grow" class:whole onclick={assignCatalog}>{whole ? "Assign selected catalog → loaded address (enter stock)" : "Transfer selected → shelf (keep stock)"}</button>
+      <button disabled={!canRevert} onclick={revert}>Revert quick transfer</button>
     </div>
   </div>
 {/snippet}

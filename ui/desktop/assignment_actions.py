@@ -83,11 +83,15 @@ class AssignmentActions:
             self.assignments.set_queue_button_clicks(None)
 
     def _on_whole_mode_change(self, enabled: bool) -> None:
-        if not enabled:
-            self._reset_queue_shift_clicks()
+        # Pending clicks belong to the normal-click transfer; pressing Shift switches
+        # the button to the stock dialog, so any Shift change starts the count over.
+        self._reset_queue_shift_clicks()
 
-    def assign_queue_selection_to_address(self, to_shelf: bool = False) -> None:
-        is_to_shelf = to_shelf or getattr(self.assignments, "whole_mode", False)
+    def assign_queue_selection_to_address(self, to_shelf: bool | None = None) -> None:
+        """to_shelf=True transfers the visible queue with known stock; False assigns the
+        selection through the stock dialog. None follows the keyboard (Shift = dialog).
+        On-hand products are brought to the cell; only shelved (gray) rows are skipped."""
+        is_to_shelf = not getattr(self.assignments, "whole_mode", False) if to_shelf is None else to_shelf
         if not is_to_shelf:
             self._reset_queue_shift_clicks()
             selected_items = self.assignments.queue_tree.selection()
@@ -96,12 +100,12 @@ class AssignmentActions:
                 for item_id in selected_items
                 if item_id.startswith("product::")
                 and item_id.removeprefix("product::") in self.products
-                and self.is_queue_product_available(item_id.removeprefix("product::"))
+                and self.is_queue_product_movable(item_id.removeprefix("product::"))
             ]
             if not product_ids:
                 messagebox.showinfo(
                     "Choose products",
-                    "Select one or more ready products from the total queue. Products already on-hand or assigned cannot move again.",
+                    "Select one or more products from the total queue. Gray products are already on a shelf and cannot move again.",
                     parent=self.root,
                 )
                 return
@@ -112,7 +116,7 @@ class AssignmentActions:
             })
             return
 
-        # Whole mode: Transfer total queue straight to shelf with stock 999
+        # Quick transfer: every visible queue row not yet on a shelf, keeping known stock (999 when uncounted).
         if self.selected_address is None:
             messagebox.showinfo(
                 "Load an address",
@@ -127,7 +131,7 @@ class AssignmentActions:
             item_id.removeprefix("product::")
             for item_id in queue_items
             if item_id.startswith("product::")
-            and self.is_queue_product_available(item_id.removeprefix("product::"))
+            and self.is_queue_product_movable(item_id.removeprefix("product::"))
         ]
         if not queue_pids:
             if hasattr(self.assignments, "search_location_text"):
@@ -160,6 +164,8 @@ class AssignmentActions:
             if not name and pid in self.catalog_products:
                 name = self.catalog_products[pid][0]
             records[pid] = (name, "")
+        on_hand = getattr(self, "on_hand_products", {})
+        from_hand = sum(pid in on_hand for pid in queue_pids)
 
         try:
             moved, transfer_data = shift_transfer(self.database, self.selected_address.slot_id, records)
@@ -179,8 +185,9 @@ class AssignmentActions:
         self.reconcile_inventory_products(
             queue_pids, affected_slots=(self.selected_address.slot_name,)
         )
+        brought = f", {from_hand} brought from on-hand" if from_hand else ""
         self.status_text.set(
-            f"Transferred {moved} queue product(s) to {self.selected_address.slot_name} with retained stock (999 when uncounted). Saved immediately."
+            f"Transferred {moved} queue product(s) to {self.selected_address.slot_name} with retained stock (999 when uncounted){brought}. Saved immediately."
         )
 
     def refresh_on_hand_queue(self) -> None:
@@ -447,8 +454,8 @@ class AssignmentActions:
             return
         products = self.last_shift_transfer.get("products", [])
         confirm = messagebox.askyesno(
-            "Revert shift transfer",
-            f"Revert the latest shift transfer of {len(products)} product(s)?",
+            "Revert quick transfer",
+            f"Revert the latest quick transfer of {len(products)} product(s)?",
             parent=self.root,
         )
         if not confirm:
@@ -458,7 +465,7 @@ class AssignmentActions:
             self.database.revert_shift_transfer(self.last_shift_transfer)
         except Exception as error:
             messagebox.showerror(
-                "Revert failed", f"Could not revert shift transfer: {error}", parent=self.root
+                "Revert failed", f"Could not revert quick transfer: {error}", parent=self.root
             )
             return
 
@@ -473,7 +480,7 @@ class AssignmentActions:
         if hasattr(self.assignments, "revert_button"):
             self.assignments.revert_button.configure(state="disabled")
         self.reconcile_inventory_products(item["product_id"] for item in products)
-        self.status_text.set("Successfully reverted the latest shift transfer.")
+        self.status_text.set("Successfully reverted the latest quick transfer.")
 
 
     def move_address_to_on_hand(self) -> None:

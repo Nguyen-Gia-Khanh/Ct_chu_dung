@@ -239,7 +239,7 @@ class InventoryOperations:
             current = dict(c.execute(f'SELECT product_id, slot_id FROM placements WHERE product_id {IN_IDS}', (batch,)))
             moved = next((pid for pid in ids if current.get(pid) != transfer_data['slot_id']), None)
             if moved is not None:
-                raise ValueError(f'{moved} has moved since the Shift transfer. Nothing was reverted.')
+                raise ValueError(f'{moved} has moved since the quick transfer. Nothing was reverted.')
             for table in TRANSFER_TABLES:
                 c.execute(f'DELETE FROM {table} WHERE product_id {IN_IDS}', (batch,))
                 rows = [row for record in records for row in record[table]]
