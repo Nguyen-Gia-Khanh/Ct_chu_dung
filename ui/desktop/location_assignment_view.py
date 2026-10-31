@@ -89,6 +89,9 @@ class LocationAssignmentView(ttk.Frame):
             on_upload,
             on_modify_location,
         )
+        # Right-click on the shelf or on an assign button loads the next cell.
+        for widget in (self.shelf_grid.canvas, self.queue_move_button, self.catalog_transfer_button, self.assign_button):
+            widget.bind("<Button-3>", self._select_next_shelf_cell)
         self.barcode_scanner = barcode_scanner
         self.whole_mode = False
         self._shift_clicked = False
@@ -427,7 +430,6 @@ class LocationAssignmentView(ttk.Frame):
             label=lambda cell: f"{cell.row}-{cell.cell:02d}", count_text=str, row_label=lambda row: f"R{row}",
             cell_width=70, cell_height=44, min_row_width=240, font_size=8, )
         self.shelf_grid.grid(row=1, column=0, sticky="nsew")
-        self.shelf_grid.canvas.bind("<Button-3>", self._select_next_shelf_cell)
         self._preview_after_id: str | None = None
         body = ttk.Frame(queue_page)
         body.grid(row=0, column=0, sticky="nsew")
@@ -580,7 +582,10 @@ class LocationAssignmentView(ttk.Frame):
         self.on_load_address()
 
     def _select_next_shelf_cell(self, _event: tk.Event | None = None) -> str:
-        """Right-click anywhere on the shelf: load the next cell ID, moving up a row at a row's end."""
+        """Right-click on the shelf or an assign button: load the next cell ID, moving up a row at a row's end."""
+        # Redraw first: while the On-hand queue view is showing, the hidden grid
+        # is not kept in step with the address fields.
+        self.on_preview_shelf()
         grid = self.shelf_grid.model
         if grid is None:
             return "break"

@@ -43,7 +43,9 @@ class AssignTabRightClickTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
         db_path = Path(self.temp_dir.name) / "warehouse.db"
-        WarehouseDatabase(db_path).commit_shelf("1", "A", [3, 2], {}, set(), side="1")
+        database = WarehouseDatabase(db_path)
+        database.commit_shelf("1", "A", [3, 2], {}, set(), side="1")
+        database.commit_shelf("1", "B", [2], {}, set(), side="1")
         try:
             self.root = tk.Tk()
         except tk.TclError as error:
@@ -69,6 +71,26 @@ class AssignTabRightClickTests(unittest.TestCase):
         # binding and call its handler directly.
         self.assertIn("_select_next_shelf_cell", self.view.shelf_grid.canvas.bind("<Button-3>"))
         self.assertEqual(self.view._select_next_shelf_cell(), "break")
+
+    def test_assign_buttons_are_bound_to_right_click(self) -> None:
+        for name in ("queue_move_button", "catalog_transfer_button", "assign_button"):
+            with self.subTest(button=name):
+                self.assertIn("_select_next_shelf_cell", getattr(self.view, name).bind("<Button-3>"))
+
+    def test_right_click_from_the_on_hand_view_follows_the_loaded_shelf(self) -> None:
+        self.load(1, 3)  # the shelf pane has drawn shelf A
+        self.view.hand_view.set("queue")
+        self.view._show_hand_view()
+        self.view.shelf_var.set("B")  # hidden grid still shows shelf A
+        self.load(1, 1)
+        self.assertEqual(self.app.selected_address.slot_name, "L1-1B1-1")
+        self.right_click()
+        self.assertEqual(self.app.selected_address.slot_name, "L1-1B1-2")
+        # B1-2 ends B's only row. On the stale shelf A grid it would step to a
+        # nonexistent B1-3 instead of staying put.
+        self.right_click()
+        self.assertEqual(self.app.selected_address.slot_name, "L1-1B1-2")
+        self.assertIn("last cell", self.view.address_status_text.get())
 
     def test_right_click_loads_the_next_cell_and_moves_up_at_the_row_end(self) -> None:
         self.load(1, 2)
