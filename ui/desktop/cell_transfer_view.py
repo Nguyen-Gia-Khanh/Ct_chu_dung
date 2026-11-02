@@ -10,7 +10,7 @@ from mapper.core.common import clean_location_segment, normalize_sku
 from mapper.persistence.database import Placement, SlotAddress, WarehouseDatabase
 from mapper.features.web_upload import LocationUpdate
 from mapper.services.cell_lookup import find_cell
-from mapper.services.shelf_grid import load_grid, plan_block_shift
+from mapper.services.shelf_grid import cells_in_id_order, load_grid, plan_block_shift
 from .shelf_address_lookup import ShelfAddressLookup
 from .widgets import ShelfGridCanvas, sync_tree_rows
 from utils.barcode_scanner import BarcodeScanner
@@ -589,7 +589,8 @@ class CellTransferView(ttk.Frame):
         ttk.Button(actions, text="Refresh both", command=self.refresh).pack(fill="x")
         ttk.Label(
             actions,
-            text="Switch exchanges both cells.\n\nCombine empties the source into the target and keeps the target's current products."
+            text="Switch exchanges both cells. With a block on each side, it switches the blocks "
+                 "pair by pair (same number of cells, Row 1 and cell 1 first).\n\nCombine empties the source into the target and keeps the target's current products."
                  "\n\nMove block: drag a box over cells on one shelf, then press an arrow under it.",
             foreground="#555555",
             wraplength=170,
@@ -651,6 +652,9 @@ class CellTransferView(ttk.Frame):
 
     def swap_cells(self) -> None:
         if not self.can_change():
+            return
+        if self.left.shelf_grid.marked or self.right.shelf_grid.marked:
+            self.swap_blocks()
             return
         pair = self._selected_pair()
         if pair is None:
@@ -767,6 +771,76 @@ class CellTransferView(ttk.Frame):
         )
         self.status_text.set(message)
 
+    def _move_cells(self, moves: dict[str, str], contents) -> int:
+        """Save cell-name moves in one transaction and remember the moved products for the web."""
+        slot_ids = {}
+        for slot_name in {*moves, *moves.values()}:
+            address = self.database.get_slot_by_name(slot_name)
+            if address is None:
+                raise KeyError(f"{slot_name} no longer exists. Refresh and try again.")
+            slot_ids[slot_name] = address.slot_id
+        moved = self.database.shift_slot_contents(
+            {slot_ids[source]: slot_ids[target] for source, target in moves.items()})
+        # "Modify location ID on web" re-reads each product's full location list, extra cells included.
+        targets: dict[str, str] = {}
+        for pid, _name, placement in contents:
+            if placement.slot_name in moves:
+                targets.setdefault(pid, moves[placement.slot_name])
+        self.last_changed_updates = [LocationUpdate(pid, target) for pid, target in targets.items()]
+        return moved
+
+    def swap_blocks(self) -> None:
+        """Trade two same-size blocks cell by cell, pairing them in location-ID order."""
+        left_marked, right_marked = self.left.shelf_grid.marked, self.right.shelf_grid.marked
+        if not left_marked or not right_marked:
+            messagebox.showinfo(
+                "Select a block on both sides",
+                "Drag a block on both the left and the right shelf.\n\n"
+                "To switch two single cells, press Clear block first.", parent=self)
+            return
+        if len(left_marked) != len(right_marked):
+            def cells(count: int) -> str:
+                return f"{count} cell{'s' if count != 1 else ''}"
+            messagebox.showerror(
+                "Blocks have different sizes",
+                f"Left block: {cells(len(left_marked))}. Right block: {cells(len(right_marked))}.\n\n"
+                "Select the same number of cells on both sides. Nothing was switched.", parent=self)
+            return
+        shared = sorted(left_marked & right_marked)
+        if shared:
+            messagebox.showerror(
+                "Blocks overlap",
+                f"{shared[0]} is in both blocks. Select two blocks that do not share a cell. "
+                "Nothing was switched.", parent=self)
+            return
+        try:
+            left_grid, left_contents = load_grid(self.database, self.left.current_shelf_id)
+            right_grid, right_contents = load_grid(self.database, self.right.current_shelf_id)
+        except KeyError:
+            messagebox.showerror("Shelf not found", "A shelf no longer exists. Press Refresh both.", parent=self)
+            return
+        pairs = list(zip(cells_in_id_order(left_grid, left_marked), cells_in_id_order(right_grid, right_marked)))
+        moves = {left.slot_name: right.slot_name for left, right in pairs}
+        moves.update({right.slot_name: left.slot_name for left, right in pairs})
+        left_count = sum(left.count for left, _right in pairs)
+        right_count = sum(right.count for _left, right in pairs)
+        examples = "\n".join(f"{left.slot_name} ↔ {right.slot_name}" for left, right in pairs[:4])
+        more = f"\n… and {len(pairs) - 4} more" if len(pairs) > 4 else ""
+        if not messagebox.askyesno(
+            "Switch blocks?",
+            f"Switch {len(pairs)} pair(s) of cells?\n\n"
+            f"Left block: {left_count} product location(s). Right block: {right_count}.\n\n"
+            f"{examples}{more}", parent=self):
+            return
+        try:
+            moved = self._move_cells(moves, [*left_contents, *right_contents])
+        except Exception as error:
+            messagebox.showerror("Blocks could not be switched", str(error), parent=self)
+            return
+        message = f"Switched {len(pairs)} pair(s) of cells ({moved} product location(s) moved)."
+        self.on_changed(message, self.last_changed_updates, tuple(moves))
+        self.status_text.set(message)
+
     def shift_block(self, pane: CellTransferPane, rows_up: int, cells_right: int) -> None:
         """Move the pane's marked block up/down/left/right on its own shelf."""
         if not self.can_change():
@@ -809,23 +883,10 @@ class CellTransferView(ttk.Frame):
             f"{examples}{more}", parent=self):
             return
         try:
-            slot_ids = {}
-            for slot_name in {*plan.moves, *plan.moves.values()}:
-                address = self.database.get_slot_by_name(slot_name)
-                if address is None:
-                    raise KeyError(f"{slot_name} no longer exists. Refresh and try again.")
-                slot_ids[slot_name] = address.slot_id
-            moved = self.database.shift_slot_contents(
-                {slot_ids[source]: slot_ids[target] for source, target in plan.moves.items()})
+            moved = self._move_cells(plan.moves, contents)
         except Exception as error:
             messagebox.showerror("Block could not be moved", str(error), parent=self)
             return
-        # "Modify location ID on web" re-reads each product's full location list, extra cells included.
-        targets: dict[str, str] = {}
-        for pid, _name, placement in contents:
-            if placement.slot_name in plan.moves:
-                targets.setdefault(pid, plan.moves[placement.slot_name])
-        self.last_changed_updates = [LocationUpdate(pid, target) for pid, target in targets.items()]
         pane.shelf_grid.set_marked(plan.selection)
         message = f"Moved {moved} product location(s) in {len(plan.moves)} cell(s) {direction}."
         self.on_changed(message, self.last_changed_updates, (*plan.moves, *plan.moves.values()))

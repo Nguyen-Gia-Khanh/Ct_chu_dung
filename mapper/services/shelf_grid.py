@@ -92,6 +92,12 @@ def plan_block_shift(grid: ShelfGrid, selected: Iterable[str], rows_up: int, cel
     return BlockShift(moves, tuple(landing), tuple(missing), blocked)
 
 
+def cells_in_id_order(grid: ShelfGrid, slot_names: Iterable[str]) -> list[GridCell]:
+    """The named cells from Row 1 up, cell 1 first, whichever side the shelf draws them on."""
+    wanted = set(slot_names)
+    return sorted((cell for cell in grid.cells() if cell.slot_name in wanted), key=lambda cell: (cell.row, cell.cell))
+
+
 def cell_color(count: int, *, staged: bool = False, selected: bool = False) -> str:
     if selected:
         return SELECTED_COLOR

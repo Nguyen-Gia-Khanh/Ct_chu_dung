@@ -1,4 +1,4 @@
-"""Tab 5 block shift: drag a box over cells and move their products up, down, left or right."""
+"""Tab 5 blocks: drag a box over cells, move them up/down/left/right, or switch two same-size blocks."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from mapper.persistence.database import Placement, WarehouseDatabase
-from mapper.services.shelf_grid import build_grid, plan_block_shift
+from mapper.services.shelf_grid import build_grid, cells_in_id_order, plan_block_shift
 from tests.support import WorkspaceTestCase
 from ui.desktop.cell_transfer_view import CellTransferView
 from ui.desktop.widgets import ShelfGridCanvas
@@ -242,6 +242,94 @@ class ShiftBlockViewTests(WorkspaceTestCase):
         self.view.shift_block(self.pane, 1, 0)
         self.assertEqual(self.db.get_placement_details()["P1"].slot_name, name(1, 1))
         self.on_changed.assert_not_called()
+
+
+def b_name(row: int, cell: int) -> str:
+    return f"L1-2B{row}-{cell}"
+
+
+class CellsInIdOrderTests(unittest.TestCase):
+    def test_row_one_first_then_cell_one_first_even_when_reversed(self) -> None:
+        grid = build_grid("1", "1", "A", [3, 3], revert_location_id=True)
+        marked = {name(2, 1), name(1, 3), name(1, 1), name(2, 2)}
+        self.assertEqual([cell.slot_name for cell in cells_in_id_order(grid, marked)],
+                         [name(1, 1), name(1, 3), name(2, 1), name(2, 2)])
+
+
+class BlockSwitchViewTests(WorkspaceTestCase):
+    """Two same-size blocks trade contents pair by pair in location-ID order."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        try:
+            self.root = tk.Tk()
+        except tk.TclError as error:
+            self.skipTest(f"Tk is unavailable: {error}")
+        self.root.withdraw()
+        self.addCleanup(self.root.destroy)
+        self.db = WarehouseDatabase(self.folder / "warehouse.db")
+        self.db.import_products({"P1": "Bolts", "P2": "Nuts", "P3": "Washers", "E1": "Extra"})
+        self.db.commit_shelf("1", "A", [4], {
+            "P1": Placement(name(1, 1), 5, TIME), "P2": Placement(name(1, 3), 6, TIME),
+        }, set(), side="1")
+        self.db.commit_shelf("1", "B", [2, 2], {"P3": Placement(b_name(2, 2), 7, TIME)}, set(), side="2")
+        self.on_changed = Mock()
+        self.view = CellTransferView(self.root, self.db, self.on_changed, lambda: True)
+        self.view.refresh()
+        self.view.left.load_shelf(self.db.get_slot_by_name(name(1, 1)).shelf_id)
+        self.view.right.load_shelf(self.db.get_slot_by_name(b_name(1, 1)).shelf_id)
+
+    def locations(self):
+        details = self.db.get_placement_details()
+        return {pid: details[pid].slot_name for pid in ("P1", "P2", "P3")}
+
+    def test_blocks_of_different_shapes_switch_in_id_order(self) -> None:
+        # One row of 4 on the left, two rows of 2 on the right.
+        self.db.add_to_on_hand({"E1": 1}, TIME)
+        self.db.assign_on_hand_to_slot(self.db.get_slot_by_name(b_name(1, 1)).slot_id, TIME, ["E1"])
+        self.db.assign_exception("E1", self.db.get_slot_by_name(name(1, 4)).slot_id, TIME, 1)
+        self.view.left.shelf_grid.set_marked({name(1, c) for c in range(1, 5)})
+        self.view.right.shelf_grid.set_marked({b_name(r, c) for r in (1, 2) for c in (1, 2)})
+        with patch("ui.desktop.cell_transfer_view.messagebox.askyesno", return_value=True) as confirm:
+            self.view.swap_cells()
+        self.assertIn(f"{name(1, 1)} ↔ {b_name(1, 1)}", confirm.call_args.args[1])
+        self.assertEqual(self.locations(), {"P1": b_name(1, 1), "P2": b_name(2, 1), "P3": name(1, 4)})
+        # E1's main cell 2B1-1 pairs with 1A1-1; its extra cell 1A1-4 pairs with 2B2-2.
+        self.assertEqual(set(self.db.find_product_locations("E1")[1]), {name(1, 1), b_name(2, 2)})
+        self.assertEqual({u.product_id for u in self.view.last_changed_updates}, {"P1", "P2", "P3", "E1"})
+        self.on_changed.assert_called_once()
+
+    def test_different_cell_counts_change_nothing(self) -> None:
+        self.view.left.shelf_grid.set_marked({name(1, 1), name(1, 2)})
+        self.view.right.shelf_grid.set_marked({b_name(1, 1)})
+        with patch("ui.desktop.cell_transfer_view.messagebox.showerror") as error:
+            self.view.swap_cells()
+        self.assertIn("Left block: 2 cells", error.call_args.args[1])
+        self.assertIn("Right block: 1 cell", error.call_args.args[1])
+        self.assertEqual(self.locations(), {"P1": name(1, 1), "P2": name(1, 3), "P3": b_name(2, 2)})
+
+    def test_a_block_on_one_side_only_changes_nothing(self) -> None:
+        self.view.left.shelf_grid.set_marked({name(1, 1)})
+        with patch("ui.desktop.cell_transfer_view.messagebox.showinfo") as info:
+            self.view.swap_cells()
+        self.assertIn("Clear block", info.call_args.args[1])
+        self.assertEqual(self.locations()["P1"], name(1, 1))
+
+    def test_overlapping_blocks_change_nothing(self) -> None:
+        self.view.right.load_shelf(self.view.left.current_shelf_id)
+        self.view.left.shelf_grid.set_marked({name(1, 1), name(1, 2)})
+        self.view.right.shelf_grid.set_marked({name(1, 2), name(1, 3)})
+        with patch("ui.desktop.cell_transfer_view.messagebox.showerror") as error:
+            self.view.swap_cells()
+        self.assertIn(name(1, 2), error.call_args.args[1])
+        self.assertEqual(self.locations()["P1"], name(1, 1))
+
+    def test_without_blocks_switch_still_trades_the_two_clicked_cells(self) -> None:
+        self.view.left._select_coordinates(1, 1)
+        self.view.right._select_coordinates(2, 2)
+        with patch("ui.desktop.cell_transfer_view.messagebox.askyesno", return_value=True):
+            self.view.swap_cells()
+        self.assertEqual(self.locations(), {"P1": b_name(2, 2), "P2": name(1, 3), "P3": name(1, 1)})
 
 
 if __name__ == "__main__":
