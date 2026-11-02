@@ -311,6 +311,11 @@ CSV rows included. Targets must already exist and be empty unless they are movin
 For a new physical row in the middle of a shelf: add a row at the top in Tab 1 and
 commit, then select the rows from the new row's position upward and press up.
 
+**Block switch:** with a block on both sides, Switch calls `swap_blocks`. The blocks
+must have the same number of cells (any shapes) and share no cell; cells pair up by
+`shelf_grid.cells_in_id_order` (Row 1 first, cell 1 first) and trade contents in one
+`shift_slot_contents` call. With no blocks, Switch trades the two clicked cells as before.
+
 **Shared sections:** `ShelfActions.can_change_cells` checks pending designer
 changes before a mutation. `InventoryOperations.swap_slot_contents` /
 `combine_slot_contents` in `inventory.py` perform immediate transactions after

@@ -132,10 +132,12 @@ class CellTransferControllerTests(unittest.TestCase):
         view.left = SimpleNamespace(
             selected_address=self.address(1, "LEFT"),
             selected_product_count=2,
+            shelf_grid=SimpleNamespace(marked=set()),
         )
         view.right = SimpleNamespace(
             selected_address=self.address(2, "RIGHT"),
             selected_product_count=3,
+            shelf_grid=SimpleNamespace(marked=set()),
         )
         view.on_changed = Mock()
         view.can_change = Mock(return_value=True)
