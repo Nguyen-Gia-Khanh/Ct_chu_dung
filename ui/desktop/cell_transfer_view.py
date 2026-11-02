@@ -10,10 +10,21 @@ from mapper.core.common import clean_location_segment, normalize_sku
 from mapper.persistence.database import Placement, SlotAddress, WarehouseDatabase
 from mapper.features.web_upload import LocationUpdate
 from mapper.services.cell_lookup import find_cell
-from mapper.services.shelf_grid import load_grid
+from mapper.services.shelf_grid import load_grid, plan_block_shift
 from .shelf_address_lookup import ShelfAddressLookup
 from .widgets import ShelfGridCanvas, sync_tree_rows
 from utils.barcode_scanner import BarcodeScanner
+
+
+def _direction_text(rows_up: int, cells_right: int) -> str:
+    def amount(count: int, noun: str) -> str:
+        return f"{count} {noun}{'s' if count != 1 else ''}"
+    parts = []
+    if rows_up:
+        parts.append(f"{amount(abs(rows_up), 'row')} {'up' if rows_up > 0 else 'down'}")
+    if cells_right:
+        parts.append(f"{amount(abs(cells_right), 'cell')} {'right' if cells_right > 0 else 'left'}")
+    return " and ".join(parts)
 
 
 class DuplicateCellMergeDialog(simpledialog.Dialog):
@@ -153,14 +164,34 @@ class CellTransferPane(ttk.LabelFrame):
             row=0, column=2, padx=(5, 0)
         )
 
-        shelf_frame = ttk.LabelFrame(self, text="Shelf — click a cell", padding=5)
+        shelf_frame = ttk.LabelFrame(self, text="Shelf — click a cell, or drag a box to select a block", padding=5)
         shelf_frame.grid(row=3, column=0, sticky="nsew")
         shelf_frame.rowconfigure(0, weight=1)
         shelf_frame.columnconfigure(0, weight=1)
         self.shelf_grid = ShelfGridCanvas(
             shelf_frame, on_select=lambda cell: self._select_coordinates(cell.row, cell.cell),
-            label=lambda cell: f"{self.side_var.get()}{self._shelf_code()}{cell.row}-{cell.cell}", cell_width=78)
+            label=lambda cell: f"{self.side_var.get()}{self._shelf_code()}{cell.row}-{cell.cell}", cell_width=78,
+            drag_select=True, on_marked=self._block_changed)
         self.shelf_grid.grid(row=0, column=0, sticky="nsew")
+
+        self.on_shift: Callable[[CellTransferPane, int, int], object] | None = None
+        shift_bar = ttk.Frame(shelf_frame)
+        shift_bar.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+        self.block_text = tk.StringVar(self, value="No block")
+        ttk.Label(shift_bar, textvariable=self.block_text, width=13).pack(side="left")
+        ttk.Label(shift_bar, text="Move block:").pack(side="left", padx=(4, 3))
+        self.shift_buttons: dict[str, ttk.Button] = {}
+        for key, arrow, rows_up, cells_right in (("up", "↑", 1, 0), ("down", "↓", -1, 0),
+                                                 ("left", "←", 0, -1), ("right", "→", 0, 1)):
+            button = ttk.Button(shift_bar, text=arrow, width=3,
+                                command=lambda up=rows_up, right=cells_right: self._shift(up, right))
+            button.pack(side="left", padx=1)
+            self.shift_buttons[key] = button
+        ttk.Label(shift_bar, text="by").pack(side="left", padx=(6, 3))
+        self.shift_steps = tk.StringVar(self, value="1")
+        ttk.Spinbox(shift_bar, from_=1, to=50, width=3, textvariable=self.shift_steps).pack(side="left")
+        ttk.Button(shift_bar, text="Clear block", command=lambda: self.shelf_grid.set_marked(())).pack(
+            side="left", padx=(8, 0))
 
         self.selection_text = tk.StringVar(self, value="No cell selected")
         ttk.Label(
@@ -218,6 +249,20 @@ class CellTransferPane(ttk.LabelFrame):
             placement.slot_name == self.selected_address.slot_name
             for _product_id, _product_name, placement in self.current_contents
         )
+
+    def _block_changed(self, marked: set[str]) -> None:
+        self.block_text.set(f"Block: {len(marked)} cell{'s' if len(marked) != 1 else ''}" if marked else "No block")
+
+    def _shift(self, rows_up: int, cells_right: int) -> None:
+        try:
+            steps = int(self.shift_steps.get())
+        except ValueError:
+            steps = 0
+        if steps < 1:
+            messagebox.showinfo("Move block", "Type how many cells or rows to move (1 or more).", parent=self)
+            return
+        if self.on_shift is not None:
+            self.on_shift(self, rows_up * steps, cells_right * steps)
 
     def _shelf_code(self) -> str:
         model = self.shelf_grid.model
@@ -544,7 +589,8 @@ class CellTransferView(ttk.Frame):
         ttk.Button(actions, text="Refresh both", command=self.refresh).pack(fill="x")
         ttk.Label(
             actions,
-            text="Switch exchanges both cells.\n\nCombine empties the source into the target and keeps the target's current products.",
+            text="Switch exchanges both cells.\n\nCombine empties the source into the target and keeps the target's current products."
+                 "\n\nMove block: drag a box over cells on one shelf, then press an arrow under it.",
             foreground="#555555",
             wraplength=170,
             justify="left",
@@ -565,6 +611,7 @@ class CellTransferView(ttk.Frame):
         self.last_active_pane: CellTransferPane = self.left
         self.left.on_focus_callback = self._set_active_pane
         self.right.on_focus_callback = self._set_active_pane
+        self.left.on_shift = self.right.on_shift = self.shift_block
         self.barcode_scanner = barcode_scanner
 
     def _set_active_pane(self, pane: CellTransferPane) -> None:
@@ -718,6 +765,70 @@ class CellTransferView(ttk.Frame):
             message, self.last_changed_updates,
             (source_address.slot_name, target_address.slot_name),
         )
+        self.status_text.set(message)
+
+    def shift_block(self, pane: CellTransferPane, rows_up: int, cells_right: int) -> None:
+        """Move the pane's marked block up/down/left/right on its own shelf."""
+        if not self.can_change():
+            return
+        if pane.current_shelf_id is None or not pane.shelf_grid.marked:
+            messagebox.showinfo("No block selected", "Drag a box over the cells you want to move first.", parent=self)
+            return
+        # Read the shelf fresh: the visible grid only patches counts after earlier moves.
+        try:
+            grid, contents = load_grid(self.database, pane.current_shelf_id)
+        except KeyError:
+            messagebox.showerror("Shelf not found", "This shelf no longer exists. Press Refresh both.", parent=self)
+            return
+        direction = _direction_text(rows_up, cells_right)
+        plan = plan_block_shift(grid, pane.shelf_grid.marked, rows_up, cells_right)
+        if plan.missing:
+            hint = ("\n\nTo make room at the top, add the row in Tab 1 (Add row at top, then commit) first."
+                    if rows_up > 0 else "")
+            messagebox.showerror(
+                "Block would leave the shelf",
+                f"{plan.missing[0]} has no cell {direction} of it on this shelf.{hint}\n\nNothing was moved.",
+                parent=self)
+            return
+        if plan.blocked:
+            messagebox.showerror(
+                "Target cell is not empty",
+                f"{plan.blocked[0]} already holds products and is not part of the block.\n\n"
+                "Empty it, or include it in the block. Nothing was moved.", parent=self)
+            return
+        if not plan.moves:
+            self.status_text.set("The selected cells are empty. Nothing to move.")
+            return
+        counts = {cell.slot_name: cell.count for cell in grid.cells()}
+        products = sum(counts[source] for source in plan.moves)
+        examples = "\n".join(f"{source} → {target}" for source, target in list(plan.moves.items())[:4])
+        more = f"\n… and {len(plan.moves) - 4} more" if len(plan.moves) > 4 else ""
+        if not messagebox.askyesno(
+            "Move block?",
+            f"Move {len(plan.moves)} occupied cell(s), {products} product location(s), {direction}?\n\n"
+            f"{examples}{more}", parent=self):
+            return
+        try:
+            slot_ids = {}
+            for slot_name in {*plan.moves, *plan.moves.values()}:
+                address = self.database.get_slot_by_name(slot_name)
+                if address is None:
+                    raise KeyError(f"{slot_name} no longer exists. Refresh and try again.")
+                slot_ids[slot_name] = address.slot_id
+            moved = self.database.shift_slot_contents(
+                {slot_ids[source]: slot_ids[target] for source, target in plan.moves.items()})
+        except Exception as error:
+            messagebox.showerror("Block could not be moved", str(error), parent=self)
+            return
+        # "Modify location ID on web" re-reads each product's full location list, extra cells included.
+        targets: dict[str, str] = {}
+        for pid, _name, placement in contents:
+            if placement.slot_name in plan.moves:
+                targets.setdefault(pid, plan.moves[placement.slot_name])
+        self.last_changed_updates = [LocationUpdate(pid, target) for pid, target in targets.items()]
+        pane.shelf_grid.set_marked(plan.selection)
+        message = f"Moved {moved} product location(s) in {len(plan.moves)} cell(s) {direction}."
+        self.on_changed(message, self.last_changed_updates, (*plan.moves, *plan.moves.values()))
         self.status_text.set(message)
 
     def modify_location_on_web(self) -> None:
