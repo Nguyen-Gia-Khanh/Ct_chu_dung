@@ -334,7 +334,7 @@ class ExceptionsView(ttk.Frame):
             value = normalize_sku(self.product_id_var.get())
         self.product_id_var.set(value)
         self.after_idle(self._select_entry)
-        self.assign_exception()
+        self.find_product()
         return "break"
 
     def _on_barcode_scan(self, scanned_code: str) -> None:
