@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from contextlib import closing
 from typing import Any
@@ -156,6 +157,35 @@ class InventoryOperations:
                 merge_cell_duplicates(c, overlaps, source_slot_id, target_slot_id)
             c.execute('UPDATE placements SET slot_id=? WHERE slot_id=?', (target_slot_id, source_slot_id))
             move_exception_cells(c, {source_slot_id: target_slot_id})
+        return count
+
+    def shift_slot_contents(self, moves: dict[int, int]) -> int:
+        """Move many cells at once (source slot -> target slot), e.g. rows shifted up after a new row.
+
+        A target may be another moving cell; any other target must be empty. Returns the
+        number of locations moved. Nothing changes if any check or write fails.
+        """
+        moves = {int(source): int(target) for source, target in moves.items()}
+        if not moves:
+            raise ValueError('Choose at least one cell to move.')
+        if len(set(moves.values())) != len(moves):
+            raise ValueError('Two cells cannot move into the same cell.')
+        with closing(self.connect()) as c, c:
+            c.execute('BEGIN IMMEDIATE')
+            check_slots(c, *moves, *moves.values())
+            occupied = c.execute(f"""SELECT s.slot_name FROM ({LOCATION_SQL}) l JOIN slots s USING(slot_id)
+                                     WHERE l.slot_id {IN_IDS} ORDER BY s.slot_name LIMIT 1""",
+                                 (ids_param(set(moves.values()) - moves.keys()),)).fetchone()
+            if occupied:
+                raise ValueError(f'{occupied[0]} already holds products. Nothing was moved.')
+            count = c.execute(f'SELECT COUNT(*) FROM ({LOCATION_SQL}) WHERE slot_id {IN_IDS}',
+                              (ids_param(moves),)).fetchone()[0]
+            # One statement, so a row moving onto a cell that is itself moving is not carried twice.
+            c.execute(f"""UPDATE placements SET slot_id = (SELECT value FROM json_each(?)
+                                                         WHERE key = CAST(placements.slot_id AS TEXT))
+                          WHERE slot_id {IN_IDS}""",
+                      (json.dumps({str(source): target for source, target in moves.items()}), ids_param(moves)))
+            move_exception_cells(c, moves)
         return count
 
     def assign_on_hand_to_slot(self, slot_id, assigned_at, product_ids=None):

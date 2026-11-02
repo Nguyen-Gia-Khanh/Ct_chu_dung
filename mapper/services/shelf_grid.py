@@ -59,6 +59,39 @@ def next_cell(grid: ShelfGrid, current: GridCell | None) -> GridCell | None:
                  if (upper, 1) in by_position), None)
 
 
+@dataclass(frozen=True)
+class BlockShift:
+    moves: dict[str, str]          # occupied source cell -> target cell
+    selection: tuple[str, ...]     # where the selected cells land, for the next press
+    missing: tuple[str, ...]       # occupied cells whose target is off the shelf
+    blocked: tuple[str, ...]       # occupied targets that are not moving out of the way
+
+
+def plan_block_shift(grid: ShelfGrid, selected: Iterable[str], rows_up: int, cells_right: int) -> BlockShift:
+    """Move selected cells by screen direction: up raises the row number, right follows the drawing.
+
+    A cell keeps its left-to-right position in the new row. Empty cells carry nothing,
+    so they never block a move even when their target is off the shelf.
+    """
+    chosen = set(selected)
+    by_position = {(cell.row, column): cell for row in grid.rows for column, cell in enumerate(row, 1)}
+    moves, landing, missing = {}, [], []
+    for (row, column), cell in by_position.items():
+        if cell.slot_name not in chosen:
+            continue
+        target = by_position.get((row + rows_up, column + cells_right))
+        if target is not None:
+            landing.append(target.slot_name)
+        if cell.count:
+            if target is None:
+                missing.append(cell.slot_name)
+            else:
+                moves[cell.slot_name] = target.slot_name
+    counts = {cell.slot_name: cell.count for cell in by_position.values()}
+    blocked = tuple(target for target in moves.values() if counts[target] and target not in moves)
+    return BlockShift(moves, tuple(landing), tuple(missing), blocked)
+
+
 def cell_color(count: int, *, staged: bool = False, selected: bool = False) -> str:
     if selected:
         return SELECTED_COLOR

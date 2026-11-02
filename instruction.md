@@ -301,6 +301,16 @@ owns `_selected_pair`, `swap_cells`, `combine_cells`, and the optional explicit
 `modify_location_on_web` action. Switch exchanges both complete cells; combine
 moves all source contents into the destination while retaining its contents.
 
+**Move block:** each pane's shelf has drag selection (`ShelfGridCanvas(drag_select=True)`:
+drag a box to mark cells, start on a marked cell to unmark, Esc cancels, a plain click
+still picks one cell). The arrows under the shelf call `CellTransferView.shift_block`,
+which plans with `mapper.services.shelf_grid.plan_block_shift` (screen directions; a cell
+keeps its left-to-right position; empty cells carry nothing) and saves through
+`InventoryOperations.shift_slot_contents` in one transaction, extra locations and staged
+CSV rows included. Targets must already exist and be empty unless they are moving too.
+For a new physical row in the middle of a shelf: add a row at the top in Tab 1 and
+commit, then select the rows from the new row's position upward and press up.
+
 **Shared sections:** `ShelfActions.can_change_cells` checks pending designer
 changes before a mutation. `InventoryOperations.swap_slot_contents` /
 `combine_slot_contents` in `inventory.py` perform immediate transactions after
@@ -315,6 +325,8 @@ the Find box uses `mapper.services.cell_lookup.find_cell`. Explicit web updates 
 designer-change rejection, and source/destination counts after a move.
 `tests/test_persistence.py` checks quantity/time preservation;
 `tests/test_incremental_desktop.py` checks that only changed cells refresh.
+`tests/test_tab5_block_shift.py` covers block planning, the one-transaction move,
+drag selection, and the Tab 5 arrows.
 
 ## Tab 6: Special Exceptions
 

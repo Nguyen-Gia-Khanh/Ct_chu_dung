@@ -4,14 +4,31 @@ from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable
+from dataclasses import dataclass
 from tkinter import ttk
 from weakref import WeakSet
 
 from mapper.services.shelf_grid import GridCell, ShelfGrid, cell_color
 
 
+MARKED_COLOR = "#9fc5ec"
+DRAG_THRESHOLD_PX = 5
+
+
 def products_label(count: int) -> str:
     return f"{count} product{'s' if count != 1 else ''}"
+
+
+@dataclass
+class _GridDrag:
+    """A press on the grid; it becomes a selection box once the mouse moves."""
+    press: tuple[int, int]
+    start: tuple[float, float]   # canvas coordinates, so scrolling keeps the anchor in place
+    slot_name: str | None
+    select: bool                 # starting on a marked cell makes the box unmark
+    pointer: tuple[int, int]
+    started: bool = False
+    band: int | None = None
 
 
 class ShelfGridCanvas(ttk.Frame):
@@ -20,6 +37,9 @@ class ShelfGridCanvas(ttk.Frame):
     Drawing rectangles takes milliseconds where one Button per cell took about half
     a second for a large shelf. Rows are listed top-down by the ShelfGrid model and
     each row's cells share its full width, like the physical shelf front.
+
+    With drag_select, dragging a box marks a block of cells (`marked`) while a plain
+    click still picks one cell through on_select.
     """
 
     ROW_LABEL_WIDTH = 74
@@ -38,9 +58,15 @@ class ShelfGridCanvas(ttk.Frame):
         min_row_width: int = 320,
         font_size: int = 9,
         show_title: bool = True,
+        drag_select: bool = False,
+        on_marked: Callable[[set[str]], None] | None = None,
     ):
         super().__init__(parent)
         self.on_select = on_select
+        self.on_marked = on_marked
+        self.marked: set[str] = set()
+        self._drag: _GridDrag | None = None
+        self._autoscroll_id: str | None = None
         self.label, self.count_text, self.row_label = label, count_text, row_label
         self.cell_width, self.cell_height, self.min_row_width = cell_width, cell_height, min_row_width
         self.font = ("Segoe UI", font_size)
@@ -64,7 +90,14 @@ class ShelfGridCanvas(ttk.Frame):
         x_scroll.grid(row=1, column=0, sticky="ew")
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
-        self.canvas.tag_bind("cell", "<Button-1>", self._clicked)
+        if drag_select:
+            # A press only becomes a click or a box on release, once we know which.
+            self.canvas.bind("<ButtonPress-1>", self._press)
+            self.canvas.bind("<B1-Motion>", self._motion)
+            self.canvas.bind("<ButtonRelease-1>", self._release)
+            self.canvas.bind("<Escape>", self._cancel_drag)
+        else:
+            self.canvas.tag_bind("cell", "<Button-1>", self._clicked)
         self.canvas.bind("<MouseWheel>", lambda e: self._wheel(e, self.canvas.yview_scroll))
         self.canvas.bind("<Shift-MouseWheel>", lambda e: self._wheel(e, self.canvas.xview_scroll))
 
@@ -79,6 +112,7 @@ class ShelfGridCanvas(ttk.Frame):
              keep_view: bool = True) -> None:
         """Draw a shelf; the same shelf with the same layout only recolors its cells."""
         counts = {cell.slot_name: cell.count for cell in grid.cells()}
+        self.marked &= counts.keys()
         if self.key == (*grid.key, grid.layout, grid.revert_location_id):
             self.model, self.counts, self.staged = grid, counts, dict(staged or {})
             self.selected = selected if selected in counts else None
@@ -90,7 +124,9 @@ class ShelfGridCanvas(ttk.Frame):
         self._draw(keep_view=keep_view)
 
     def show_message(self, text: str) -> None:
+        self._end_drag()
         self.model, self.selected = None, None
+        self.marked = set()
         self.cells, self.counts, self.staged = {}, {}, {}
         self._items, self._slot_by_item = {}, {}
         self.canvas.delete("all")
@@ -141,6 +177,8 @@ class ShelfGridCanvas(ttk.Frame):
     def _draw(self, *, keep_view: bool) -> None:
         x_view, y_view = self.canvas.xview()[0], self.canvas.yview()[0]
         self.canvas.delete("all")
+        if self._drag is not None:
+            self._drag.band = None
         self.cells, self._items, self._slot_by_item = {}, {}, {}
         grid = self.model
         widest = max((len(row) for row in grid.rows), default=1)
@@ -173,12 +211,15 @@ class ShelfGridCanvas(ttk.Frame):
         self.canvas.xview_moveto(x_view if keep_view else 0)
         self.canvas.yview_moveto(y_view if keep_view else 0)
 
-    def _paint(self, slot_name: str) -> None:
+    def _paint(self, slot_name: str, *, marked: bool | None = None) -> None:
         rect, text = self._items[slot_name]
         count = self.counts.get(slot_name, 0)
         staged = self.staged.get(slot_name, 0)
         selected = slot_name == self.selected
-        self.canvas.itemconfigure(rect, fill=cell_color(count + staged, staged=bool(staged), selected=selected),
+        if marked is None:
+            marked = slot_name in self.marked
+        fill = MARKED_COLOR if marked else cell_color(count + staged, staged=bool(staged), selected=selected)
+        self.canvas.itemconfigure(rect, fill=fill,
                                   outline="#1f5f99" if selected else "#8a8a8a", width=3 if selected else 1)
         self.canvas.itemconfigure(text, text=f"{self.label(self.cells[slot_name])}\n{self.count_text(count + staged)}",
                                   font=self.bold_font if selected else self.font)
@@ -188,6 +229,104 @@ class ShelfGridCanvas(ttk.Frame):
         slot_name = self._slot_by_item.get(current[0]) if current else None
         if slot_name is not None and self.on_select is not None:
             self.on_select(self.cells[slot_name])
+
+    # --- drag a box to mark a block of cells (drag_select=True) ---
+
+    def set_marked(self, slot_names) -> None:
+        self.marked = set(slot_names) & self.cells.keys()
+        for slot_name in self.cells:
+            self._paint(slot_name)
+        if self.on_marked is not None:
+            self.on_marked(set(self.marked))
+
+    def _slots_in(self, left: float, top: float, right: float, bottom: float) -> set[str]:
+        """Every cell the box touches, not only the ones fully inside it."""
+        items = self.canvas.find_overlapping(left, top, right, bottom)
+        return {self._slot_by_item[item] for item in items if item in self._slot_by_item}
+
+    def _drag_box(self, drag: _GridDrag) -> tuple[float, float, float, float]:
+        x, y = self.canvas.canvasx(drag.pointer[0]), self.canvas.canvasy(drag.pointer[1])
+        return min(drag.start[0], x), min(drag.start[1], y), max(drag.start[0], x), max(drag.start[1], y)
+
+    def _press(self, event: tk.Event) -> None:
+        if self.model is None:
+            return
+        x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        slot_name = next(iter(self._slots_in(x, y, x, y)), None)
+        self._drag = _GridDrag((event.x, event.y), (x, y), slot_name,
+                               select=slot_name not in self.marked, pointer=(event.x, event.y))
+
+    def _motion(self, event: tk.Event) -> None:
+        drag = self._drag
+        if drag is None:
+            return
+        drag.pointer = (event.x, event.y)
+        if not drag.started:
+            if max(abs(event.x - drag.press[0]), abs(event.y - drag.press[1])) < DRAG_THRESHOLD_PX:
+                return
+            drag.started = True
+            self.canvas.focus_set()  # so Esc reaches the canvas; plain clicks leave focus alone
+        self._show_drag(drag)
+        if self._autoscroll_id is None:
+            self._autoscroll()
+
+    def _show_drag(self, drag: _GridDrag) -> None:
+        """Draw the box and preview each cell as if the mouse were released now."""
+        if drag.band is None:
+            drag.band = self.canvas.create_rectangle(0, 0, 0, 0, width=2, dash=(5, 3),
+                                                     outline="#1f5f99" if drag.select else "#c0392b")
+        box = self._drag_box(drag)
+        self.canvas.coords(drag.band, *box)
+        self.canvas.tag_raise(drag.band)
+        hits = self._slots_in(*box)
+        for slot_name in self.cells:
+            self._paint(slot_name, marked=drag.select if slot_name in hits else slot_name in self.marked)
+
+    def _autoscroll(self) -> None:
+        """Keep scrolling while a drag is held past the edge of the grid."""
+        self._autoscroll_id = None
+        drag = self._drag
+        if drag is None or not drag.started:
+            return
+        x, y = drag.pointer
+        dx = -1 if x < 0 else 1 if x > self.canvas.winfo_width() else 0
+        dy = -1 if y < 0 else 1 if y > self.canvas.winfo_height() else 0
+        if not (dx or dy):
+            return
+        if dx:
+            self.canvas.xview_scroll(dx, "units")
+        if dy:
+            self.canvas.yview_scroll(dy, "units")
+        self._show_drag(drag)
+        self._autoscroll_id = self.after(60, self._autoscroll)
+
+    def _end_drag(self) -> _GridDrag | None:
+        drag, self._drag = self._drag, None
+        if self._autoscroll_id is not None:
+            self.after_cancel(self._autoscroll_id)
+            self._autoscroll_id = None
+        if drag is not None and drag.band is not None:
+            self.canvas.delete(drag.band)
+        return drag
+
+    def _release(self, event: tk.Event) -> None:
+        drag = self._drag
+        if drag is None:
+            return
+        drag.pointer = (event.x, event.y)
+        hits = self._slots_in(*self._drag_box(drag)) if drag.started else set()
+        self._end_drag()
+        if not drag.started:
+            if drag.slot_name is not None and self.on_select is not None:
+                self.on_select(self.cells[drag.slot_name])
+            return
+        self.set_marked(self.marked | hits if drag.select else self.marked - hits)
+
+    def _cancel_drag(self, _event: tk.Event | None = None) -> None:
+        drag = self._end_drag()
+        if drag is not None and drag.started:
+            for slot_name in self.cells:
+                self._paint(slot_name)
 
     @staticmethod
     def _wheel(event: tk.Event, scroll) -> str:
