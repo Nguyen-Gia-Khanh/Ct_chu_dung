@@ -272,71 +272,89 @@
     return (best - 45) * Math.PI / 180;
   }
 
-  /** One frame: scanlines across the whole strip, both directions. Returns slot votes and box. */
-  function scanFrame(gray, width, height) {
+  /** One frame: scanlines across the whole strip, both directions. Returns slot votes and box.
+   *  `spread`: extra scan angles (degrees) around the bars' normal. On a sheared or bent label the
+   *  band of bars runs at another angle than the bars' normal, so only lines along the band cross it.
+   *  More lines also repeat a label's systematic defects: use a spread only with catalog checks. */
+  function scanFrame(gray, width, height, spread = [0]) {
     const observation = {
       // Exact chain positions from the start/stop; "near" positions were estimated across a gap.
-      start: new Map(), end: new Map(), startNear: new Map(), endNear: new Map(), lengths: new Map(), estimates: new Map(), chars: 0, present: false, box: null };
+      start: new Map(), end: new Map(), startNear: new Map(), endNear: new Map(), lengths: new Map(), estimates: new Map(),
+      // Unanchored character runs (text → lines), from the reading direction that saw more characters.
+      pieces: new Map(), chars: 0, present: false, box: null };
     if (width < 64 || height < 8) return observation;
-    let angle = estimateAngle(gray, width, height);
-    if (Math.abs(angle) < 3 * Math.PI / 180) angle = 0;
-    const cos = Math.cos(angle), sin = Math.sin(angle);
+    let base = estimateAngle(gray, width, height);
+    if (Math.abs(base) < 3 * Math.PI / 180) base = 0;
     const lines = Math.max(8, Math.min(48, Math.round(height / 6)));
+    const loose = [new Map(), new Map()], seen = [0, 0];
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (let line = 0; line < lines; line++) {
-      const y0 = height * (line + .5) / lines;
-      let tMin = (3 - width / 2) / cos, tMax = (width - 4 - width / 2) / cos;
-      if (sin > 0) { tMin = Math.max(tMin, (3 - y0) / sin); tMax = Math.min(tMax, (height - 4 - y0) / sin); }
-      if (sin < 0) { tMin = Math.max(tMin, (height - 4 - y0) / sin); tMax = Math.min(tMax, (3 - y0) / sin); }
-      const length = Math.floor(tMax - tMin);
-      if (length < 64) continue;
-      const profile = new Float32Array(length);
-      if (angle === 0) {
-        const row = Math.min(height - 2, Math.max(1, Math.round(y0)));
-        const offset = Math.round(width / 2 + tMin);
-        for (let t = 0; t < length; t++) {
-          const i = row * width + offset + t;
-          profile[t] = (gray[i - width] + gray[i] + gray[i + width]) / 3;
-        }
-      } else {
-        // Average across the bar direction so the profile stays sharp along the scan.
-        for (let t = 0; t < length; t++) {
-          const cx = width / 2 + (tMin + t) * cos, cy = y0 + (tMin + t) * sin;
-          let sum = 0;
-          for (const n of [-1.5, 0, 1.5]) sum += bilinear(gray, width, cx - n * sin, cy + n * cos);
-          profile[t] = sum / 3;
-        }
-      }
-      const { positions, signs } = findEdges(profile);
-      if (positions.length < 20) continue;
-      const count = positions.length - 1;
-      const widths = new Float32Array(count), isBar = new Uint8Array(count), starts = new Float32Array(count + 1);
-      for (let i = 0; i < count; i++) {
-        widths[i] = positions[i + 1] - positions[i];
-        isBar[i] = signs[i] < 0 ? 1 : 0;
-        starts[i] = positions[i];
-      }
-      starts[count] = positions[count];
-      const lead = positions[0], trail = length - 1 - positions[count];
-      const forward = fragments(widths, isBar, starts, lead, trail);
-      // Reverse direction for upside-down labels: same elements read right to left.
-      const rWidths = widths.slice().reverse(), rIsBar = isBar.slice().reverse();
-      const rStarts = new Float32Array(count + 1);
-      for (let i = 0; i <= count; i++) rStarts[i] = length - 1 - positions[count - i];
-      const backward = fragments(rWidths, rIsBar, rStarts, trail, lead);
-      for (const [pieces, reversed] of [[forward, false], [backward, true]]) {
-        if (!collect(pieces, observation)) continue;
-        for (const piece of pieces) {
-          observation.chars += piece.chars.length;
-          for (const u of [piece.begin, piece.end]) {
-            const t = tMin + (reversed ? length - 1 - u : u);
-            const x = width / 2 + t * cos, y = y0 + t * sin;
-            minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    for (const offset of spread) {
+      const angle = base + offset * Math.PI / 180;
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      for (let line = 0; line < lines; line++) {
+        const y0 = height * (line + .5) / lines;
+        let tMin = (3 - width / 2) / cos, tMax = (width - 4 - width / 2) / cos;
+        if (sin > 0) { tMin = Math.max(tMin, (3 - y0) / sin); tMax = Math.min(tMax, (height - 4 - y0) / sin); }
+        if (sin < 0) { tMin = Math.max(tMin, (height - 4 - y0) / sin); tMax = Math.min(tMax, (3 - y0) / sin); }
+        const length = Math.floor(tMax - tMin);
+        if (length < 64) continue;
+        const profile = new Float32Array(length);
+        if (angle === 0) {
+          const row = Math.min(height - 2, Math.max(1, Math.round(y0)));
+          const first = Math.round(width / 2 + tMin);
+          for (let t = 0; t < length; t++) {
+            const i = row * width + first + t;
+            profile[t] = (gray[i - width] + gray[i] + gray[i + width]) / 3;
+          }
+        } else {
+          // Average across the bar direction so the profile stays sharp along the scan.
+          for (let t = 0; t < length; t++) {
+            const cx = width / 2 + (tMin + t) * cos, cy = y0 + (tMin + t) * sin;
+            let sum = 0;
+            for (const n of [-1.5, 0, 1.5]) sum += bilinear(gray, width, cx - n * sin, cy + n * cos);
+            profile[t] = sum / 3;
           }
         }
+        const { positions, signs } = findEdges(profile);
+        if (positions.length < 20) continue;
+        const count = positions.length - 1;
+        const widths = new Float32Array(count), isBar = new Uint8Array(count), starts = new Float32Array(count + 1);
+        for (let i = 0; i < count; i++) {
+          widths[i] = positions[i + 1] - positions[i];
+          isBar[i] = signs[i] < 0 ? 1 : 0;
+          starts[i] = positions[i];
+        }
+        starts[count] = positions[count];
+        const lead = positions[0], trail = length - 1 - positions[count];
+        const forward = fragments(widths, isBar, starts, lead, trail);
+        // Reverse direction for upside-down labels: same elements read right to left.
+        const rWidths = widths.slice().reverse(), rIsBar = isBar.slice().reverse();
+        const rStarts = new Float32Array(count + 1);
+        for (let i = 0; i <= count; i++) rStarts[i] = length - 1 - positions[count - i];
+        const backward = fragments(rWidths, rIsBar, rStarts, trail, lead);
+        for (const [pieces, reversed] of [[forward, false], [backward, true]]) {
+          const direction = reversed ? 1 : 0;
+          for (const piece of pieces) {
+            seen[direction] += piece.chars.length;
+            if (!piece.startAnchor && !piece.stopAnchor && piece.chars.length >= 4 && !piece.chars.some(c => c.doubtful)) {
+              loose[direction].set(piece.text, (loose[direction].get(piece.text) || 0) + 1);
+            }
+          }
+          if (!collect(pieces, observation)) continue;
+          for (const piece of pieces) {
+            observation.chars += piece.chars.length;
+            for (const u of [piece.begin, piece.end]) {
+              const t = tMin + (reversed ? length - 1 - u : u);
+              const x = width / 2 + t * cos, y = y0 + t * sin;
+              minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+            }
+          }
+        }
+        if (positions.length >= 30) observation.present = true;
       }
-      if (positions.length >= 30) observation.present = true;
     }
+    // Reversed reads of a label's bars are valid-looking garbage: keep pieces from the readable direction.
+    observation.pieces = loose[seen[0] >= seen[1] ? 0 : 1];
     if (minX < maxX) {
       const pad = height / lines;
       minY = Math.max(0, minY - pad); maxY = Math.min(height, maxY + pad);
@@ -353,8 +371,10 @@
 
   /** Rolling multi-frame consensus. */
   class Session {
-    constructor({ windowMs = 1000, maxFrames = 30 } = {}) {
+    constructor({ windowMs = 1000, maxFrames = 30, accept = null } = {}) {
       this.windowMs = windowMs; this.maxFrames = maxFrames;
+      // Optional check of a complete read (is it a catalog ID?). A refused read keeps its votes.
+      this.accept = accept;
       this.reset();
     }
 
@@ -405,7 +425,11 @@
         if (!resolved) unresolved++;
       }
       const joined = text.join("");
-      if (!unresolved) { this.reset(); return { text: joined, length }; }
+      if (!unresolved) {
+        if (this.accept && !this.accept(joined)) return { length, refused: joined };
+        this.reset();
+        return { text: joined, length };
+      }
       // Mostly read, a few slots never readable: offer a pattern for catalog completion.
       if (unresolved <= 2 && length >= 5 && length - unresolved >= 4) {
         if (this.partial !== joined) { this.partial = joined; this.partialSince = now; }
@@ -413,6 +437,33 @@
       }
       this.partial = null;
       return { length };
+    }
+
+    /** The evidence a catalog check weighs: votes per slot counted from the start and from the stop
+     *  (weight and the frames that cast them), and unanchored pieces repeated on MIN_FRAMES frames. */
+    lattice() {
+      const merge = key => {
+        const slots = new Map();
+        this.frames.forEach(({ observation }, index) => {
+          for (const [slot, votes] of observation[key]) {
+            if (!slots.has(slot)) slots.set(slot, new Map());
+            const tally = slots.get(slot);
+            for (const [char, weight] of votes) {
+              const entry = tally.get(char) || { weight: 0, frames: new Set() };
+              entry.weight += weight;
+              entry.frames.add(index);
+              tally.set(char, entry);
+            }
+          }
+        });
+        return slots;
+      };
+      const pieces = new Map();
+      for (const { observation } of this.frames) {
+        for (const text of observation.pieces?.keys() || []) pieces.set(text, (pieces.get(text) || 0) + 1);
+      }
+      return { start: merge("start"), end: merge("end"),
+               pieces: [...pieces].filter(([text, frames]) => frames >= MIN_FRAMES && text.length >= 6).map(([text]) => text) };
     }
 
     length() {
@@ -472,7 +523,84 @@
     }
   }
 
-  const api = { scanFrame, Session, classify, findEdges, ALPHABET, ENCODINGS, ASTERISK: 0x094 };
+  /** The stored SKU spelling (mapper.core.common.normalize_sku). */
+  const normalizeId = text => String(text).trim().toUpperCase().replace(/[- ]/g, "");
+  // Products can be missing from the catalog, and it holds near-identical IDs (64321…/64322…). So a
+  // completion fills at most one character no frame saw, and none that any frame read differently.
+  // (Synthetic heavy damage, 300 labels with real catalog IDs: 0 wrong; with each true ID removed from
+  // the catalog, 0 wrong. Allowing 2 unseen characters gave 15–19 wrong IDs for missing products.)
+  const CATALOG_SLACK = 1, WEAK_AGAINST = .5, MIN_CONFIRMED = 6;
+
+  /** Catalog IDs: a check for complete reads, and completion of damaged reads from their evidence. */
+  class Catalog {
+    constructor(ids) {
+      this.ids = new Set();
+      this.byLength = new Map();
+      for (const raw of ids) {
+        const id = normalizeId(raw);
+        if (!id) continue;
+        this.ids.add(id);
+        if (!/^[0-9A-Z]+$/.test(id) || id.length < MIN_CONFIRMED) continue;
+        if (!this.byLength.has(id.length)) this.byLength.set(id.length, []);
+        this.byLength.get(id.length).push(id);
+      }
+    }
+
+    has(text) {
+      return this.ids.has(normalizeId(text));
+    }
+
+    /** The one ID that fits a session's lattice() with at most CATALOG_SLACK unseen characters, or null. */
+    complete({ start, end, pieces }) {
+      const strong = slots => [...slots.values()].filter(votes => [...votes.values()].some(v => v.weight >= MIN_SLOT_VOTES)).length;
+      if (strong(start) + strong(end) < MIN_CONFIRMED - CATALOG_SLACK && !pieces.length) return null;
+      let best = null, runnerUp = -1;
+      for (const [length, ids] of this.byLength) {
+        // Each position of an ID this long gets the votes counted from the start and from the stop.
+        const positions = [];
+        for (let p = 0; p < length; p++) {
+          const votes = new Map();
+          for (const source of [start.get(p), end.get(length - 1 - p)]) {
+            for (const [char, entry] of source || []) {
+              const merged = votes.get(char) || { weight: 0, frames: new Set() };
+              merged.weight += entry.weight;
+              for (const frame of entry.frames) merged.frames.add(frame);
+              votes.set(char, merged);
+            }
+          }
+          const order = [...votes].sort((a, b) => b[1].weight - a[1].weight);
+          positions.push({ votes, top: order[0], next: order[1] });
+        }
+        for (const id of ids) {
+          const known = new Uint8Array(length);
+          let refused = false;
+          for (let p = 0; p < length && !refused; p++) {
+            const { votes, top, next } = positions[p];
+            const mine = votes.get(id[p]), agree = mine?.weight || 0;
+            const against = (top && top[0] !== id[p] ? top[1].weight : next?.[1].weight) || 0;
+            if (against >= WEAK_AGAINST && against > agree) refused = true;
+            else if (agree >= MIN_SLOT_VOTES && agree >= 2 * against && mine.frames.size >= MIN_FRAMES) known[p] = 1;
+          }
+          if (refused) continue;
+          for (const piece of pieces) {
+            const at = id.indexOf(piece);
+            if (at >= 0 && id.indexOf(piece, at + 1) < 0) known.fill(1, at, at + piece.length);
+          }
+          let covered = 0;
+          for (const k of known) covered += k;
+          if (covered < MIN_CONFIRMED || length - covered > CATALOG_SLACK) continue;
+          if (!best || covered > best.covered) {
+            if (best) runnerUp = Math.max(runnerUp, best.covered);
+            best = { id, covered };
+          } else runnerUp = Math.max(runnerUp, covered);
+        }
+      }
+      // Unique: no other acceptable ID as well or nearly as well supported.
+      return best && runnerUp < best.covered - 1 ? best.id : null;
+    }
+  }
+
+  const api = { scanFrame, Session, Catalog, classify, findEdges, ALPHABET, ENCODINGS, ASTERISK: 0x094 };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Robust39 = api;
 })(typeof self !== "undefined" ? self : this);

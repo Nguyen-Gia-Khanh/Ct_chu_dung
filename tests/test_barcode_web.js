@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const zlib = require("node:zlib");
 const { performance } = require("node:perf_hooks");
 const R39 = require("../barcode_web/static/robust39.js");
 const { scene, toRGBA, rng } = require("./code39_scenes.js");
@@ -99,7 +100,7 @@ async function loadWorker(detector = null) {
   assert.equal(ready.type, "ready", ready.message);
   assert.equal(ready.native, Boolean(detector));
   let id = 0;
-  return async (image, time = 0) => {
+  const decode = async (image, time = 0) => {
     message = new Promise(resolve => { resolveMessage = resolve; });
     sandbox.onmessage({ data: { type: "frame", id: ++id, buffer: image.data.slice().buffer,
                                 width: image.width, height: image.height, time } });
@@ -107,6 +108,39 @@ async function loadWorker(detector = null) {
     assert.equal(response.type, "result", response.message);
     return response;
   };
+  decode.send = data => sandbox.onmessage({ data });   // "reset" or "catalog" messages from the page
+  return decode;
+}
+
+/** Real label photos (tests/fixtures/real_labels): grayscale crops around the scan window. */
+function realLabels() {
+  const folder = path.join(__dirname, "fixtures/real_labels");
+  const { labels, catalog } = JSON.parse(fs.readFileSync(path.join(folder, "labels.json"), "utf8"));
+  const cases = Object.entries(labels).map(([tag, label]) => {
+    const sub = zlib.gunzipSync(fs.readFileSync(path.join(folder, `${tag}.gray.gz`)));
+    const gray = new Uint8ClampedArray(sub.length);
+    // Undo the horizontal "Sub" filter applied before compression.
+    for (let y = 0, i = 0; y < label.height; y++) {
+      for (let x = 0, last = 0; x < label.width; x++, i++) gray[i] = last = (last + sub[i]) & 255;
+    }
+    return { tag, ...label, gray };
+  });
+  return { cases, catalog };
+}
+
+/** Successive video frames of a real label: small hand movement (shift, scale) around the window. */
+function handheld({ gray, width, window: [x0, y0, w, h] }, frame) {
+  const dx = ((frame * 7) % 9 - 4) * 1.5, dy = ((frame * 5) % 7 - 3) * 1.5, zoom = 1 + ((frame * 3) % 5 - 2) * .015;
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const sx = x0 + dx + w / 2 + (x + .5 - w / 2) / zoom - .5, sy = y0 + dy + h / 2 + (y + .5 - h / 2) / zoom - .5;
+    const ix = Math.floor(sx), iy = Math.floor(sy), fx = sx - ix, fy = sy - iy, i = iy * width + ix;
+    const v = (gray[i] * (1 - fx) + gray[i + 1] * fx) * (1 - fy) + (gray[i + width] * (1 - fx) + gray[i + width + 1] * fx) * fy;
+    const p = (y * w + x) * 4;
+    data[p] = data[p + 1] = data[p + 2] = v;
+    data[p + 3] = 255;
+  }
+  return { data, width: w, height: h };
 }
 
 /** Feed frames to a fresh recovery session; returns the accepted text and the last partial pattern. */
@@ -272,9 +306,73 @@ async function main() {
     assert.equal((await decode(randomBars(seed), 2e7 + seed * 5000)).results.length, 0, "bar texture read as a code");
   }
 
+  // ---- Catalog checks ----
+  const neighbours = ["53205KTL640ZD", "53206KTL640ZC", "45440KZLE01"];
+  assert.ok(new R39.Catalog([PART]).has(" 53205-ktl-640zc "), "catalog IDs use the stored SKU spelling");
+  // One character hidden in every frame: completed only when exactly one catalog ID fits, never when
+  // another ID differs at the unseen character, and never to a neighbour when the product is missing.
+  const hidden = [];
+  for (let frame = 0; frame < 8; frame++) {
+    hidden.push(scene(PART, { glare: [{ cx: .5, cy: .5, rx: .025, ry: .9 }], seed: frame + 1 }));
+  }
+  const completion = ids => {
+    const session = new R39.Session({ accept: () => false });
+    let completed = null;
+    hidden.forEach((image, frame) => {
+      session.add(R39.scanFrame(image.gray, image.width, image.height), frame * 60);
+      completed ||= new R39.Catalog(ids).complete(session.lattice());
+    });
+    return completed;
+  };
+  assert.equal(completion([PART, ...neighbours]), PART);
+  assert.equal(completion([PART, "53205KXL640ZC", ...neighbours]), null, "two IDs fit the unseen character");
+  assert.equal(completion(neighbours), null, "a product missing from the catalog is not replaced by a neighbour");
+  // A refused complete read keeps its votes: nothing accepted, the lattice still holds the characters.
+  const refusing = new R39.Session({ accept: () => false });
+  const plain = scene(PART, { seed: 3 });
+  for (let frame = 0; frame < 3; frame++) {
+    assert.equal(refusing.add(R39.scanFrame(plain.gray, plain.width, plain.height), frame * 60).text, undefined);
+  }
+  assert.ok(refusing.lattice().start.get(0)?.get("5")?.weight >= 2.5);
+
+  // The worker with a catalog from the laptop.
+  const checked = await loadWorker();
+  checked.send({ type: "catalog", ids: [PART, ...neighbours] });
+  // A clean Code 39 outside the catalog needs a second frame; catalog IDs read at once.
+  const foreign = toRGBA(scene("X1Y2Z3", { width: 950, height: 317, module: 4 }));
+  assert.deepEqual(await checked(foreign, 3e7).then(a => [a.results.length, a.stage, a.present]), [0, "unconfirmed", true]);
+  assert.equal((await checked(foreign, 3e7 + 150)).results[0]?.text, "X1Y2Z3");
+  assert.equal((await checked(toRGBA(scene(PART, { width: 1280, height: 427, module: 4 })), 3.1e7)).results[0]?.text, PART);
+  checked.send({ type: "reset" });
+  let viaCatalog = null;
+  for (let frame = 0; frame < hidden.length && !viaCatalog; frame++) {
+    viaCatalog = (await checked(toRGBA(hidden[frame]), 3.2e7 + frame * 150)).results[0] || null;
+  }
+  assert.deepEqual([viaCatalog?.text, viaCatalog?.format, viaCatalog?.source], [PART, "Code 39 · catalog", "catalog"]);
+
+  // Real labels on plastic bags (wrinkles, shear, glare, damage): never a wrong product.
+  const { cases: photos, catalog: nearby } = realLabels();
+  const real = [];
+  for (const missing of [false, true]) {
+    const worker = await loadWorker();
+    for (const label of photos) {
+      // With the product missing from the catalog, nothing may be read as one of its neighbours.
+      worker.send({ type: "catalog", ids: missing ? nearby.filter(id => id !== label.expected) : nearby });
+      worker.send({ type: "reset" });
+      let got = null;
+      for (let frame = 0; frame < 12 && !got; frame++) {
+        got = (await worker(handheld(label, frame), 4e7 + frame * 150 + label.width * 1e4)).results[0]?.text || null;
+      }
+      if (got) assert.equal(got, missing ? undefined : label.expected, `${label.tag}: wrong product`);
+      if (!missing) real.push(`${label.tag} ${got ? "read" : "-"}`);
+    }
+  }
+  const realReads = real.filter(line => line.endsWith("read")).length;
+  assert.ok(realReads >= 3, `real labels read: ${real.join(", ")}`);
+
   const started = performance.now();
   for (let index = 0; index < 15; index++) await decode(code128(), index * 66);
-  console.log(`Decoder checks passed. Random damage: ${correct}/40 recovered, 0 wrong; strong try ${strongReads}/30 single frames, 0 wrong; `
+  console.log(`Decoder checks passed. Random damage: ${correct}/40 recovered, 0 wrong; strong try ${strongReads}/30 single frames, 0 wrong; real labels ${realReads}/${photos.length} (${real.join(", ")}), 0 wrong; `
     + `recovery ${(time / frames).toFixed(1)} ms per 1280x427 frame; 15 worker frames `
     + `${(performance.now() - started).toFixed(0)} ms (this laptop, not phone FPS).`);
 }

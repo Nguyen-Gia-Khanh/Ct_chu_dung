@@ -21,6 +21,7 @@ const empty = $("#empty");
 const hint = $("#hint");
 const linkState = $("#link-state");
 const torchButton = $("#torch");
+const captureButton = $("#capture");
 const soundButton = $("#sound");
 const zoomControl = $("#zoom-control");
 const zoom = $("#zoom");
@@ -41,6 +42,10 @@ const IDLE_GAP = 150, HOLD_GAP = 300, EAGER_FOR = 3000;
 const UPLOAD_INTERVAL = 1000 / 8;
 // Any text read within this time is a duplicate (one label can carry a QR and a Code 39).
 const REPEAT_MS = 1200;
+// Save-frame button: a short burst of exactly what the decoder analyses, sent to the laptop for tuning.
+const SAMPLE_BURST = 6, SAMPLE_GAP = 150;
+const sampleCanvas = document.createElement("canvas");
+const sampleContext = sampleCanvas.getContext("2d");
 
 function stored(key) {
   try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -65,6 +70,7 @@ const recentReads = new Map();   // text → when it was last read
 let processed = 0, elapsed = 0, sampleAt = 0;
 let lastPresent = 0, lastRead = 0, scanningSince = 0;
 let aimSince = 0;   // when the current barcode-like pattern came into view (0: none in view)
+let lastStage = "", capturing = false;
 let audio = null, sound = stored("scanner-sound") !== "off";
 
 // ---------- Phone-side decoder ----------
@@ -248,6 +254,7 @@ function receive(answer, source) {
       sampleAt = now;
     }
     aimSince = answer.present ? aimSince || now : 0;
+    lastStage = answer.stage;
     // Struggling: tell the person what usually helps, without blocking anything.
     hint.hidden = !(now - lastPresent < 400 && now - Math.max(lastRead, scanningSince) > 2500);
     hint.textContent = "Giữ máy ổn định. Đưa lại gần hoặc phóng to để mã vạch vừa khung.";
@@ -273,12 +280,68 @@ async function resolvePartial(pattern) {
     const answer = await response.json();
     // Only a single catalog ID that fits every read character completes the code.
     if (active && response.ok && answer.status === "unique") {
-      accept({ text: answer.product_id, format: "Code 39 · catalog", source: "catalog", via: "catalog" });
+      accept({ text: answer.product_id, format: "Code 39 · catalog", source: "catalog", via: "catalog:server" });
     }
   } catch (_) {
     /* Keep scanning; completion is only a shortcut. */
   } finally {
     resolving = false;
+  }
+}
+
+/** Catalog product IDs for the phone decoder: recovered Code 39 must be one, damaged reads may be
+ *  completed from them. Fetched at each camera start; without it the decoder works as before. */
+async function loadCatalog() {
+  try {
+    const response = await fetch("/api/catalog", { headers: { Authorization: `Bearer ${token}` },
+                                                   signal: AbortSignal.timeout(10000) });
+    const answer = response.ok ? await response.json() : null;
+    if (Array.isArray(answer?.ids) && answer.ids.length) decoder.worker?.postMessage({ type: "catalog", ids: answer.ids });
+  } catch (_) { /* Optional: scanning continues without catalog checks. */ }
+}
+
+/** A short confirmation in the status line (message() shows only errors). */
+function note(text) {
+  message("");
+  status.textContent = text;
+  status.hidden = false;
+  clearTimeout(note.timer);
+  note.timer = setTimeout(() => { if (status.textContent === text) status.hidden = true; }, 4000);
+}
+
+/** Save-frame button: SAMPLE_BURST scan-window frames, as the decoder sees them, to the laptop. */
+async function saveFrames() {
+  if (capturing || !active) return;
+  capturing = true;
+  captureButton.disabled = true;
+  const burst = crypto.randomUUID().slice(0, 8);
+  let saved = 0;
+  try {
+    for (let index = 0; index < SAMPLE_BURST && active; index++) {
+      if (index) await new Promise(resolve => setTimeout(resolve, SAMPLE_GAP));
+      const crop = windowCrop();
+      if (!crop || crop.width < 16 || crop.height < 16) continue;
+      draw(sampleCanvas, sampleContext, crop, MAX_PHONE_WIDTH);
+      const png = await new Promise(resolve => sampleCanvas.toBlob(resolve, "image/png"));
+      if (!png) continue;
+      const info = { burst, index, zoom: zoomControl.hidden ? null : Number(zoom.value),
+                     video: [video.videoWidth, video.videoHeight], crop: Object.values(crop).map(Math.round),
+                     stage: lastStage, decoder: phoneDecoding() ? "phone" : "laptop", agent: navigator.userAgent };
+      // HTTP headers are ASCII: escape anything else inside the JSON.
+      const header = JSON.stringify(info).replace(/[^\x20-\x7e]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+      const response = await fetch("/api/samples", {
+        method: "POST", headers: { "Content-Type": "image/png", Authorization: `Bearer ${token}`, "X-Sample-Info": header },
+        body: png, signal: AbortSignal.timeout(8000),
+      });
+      if (response.ok) saved++;
+    }
+    if (saved) note(`Đã lưu ${saved} khung hình trên máy tính.`);
+    else message("Chưa lưu được khung hình. Kiểm tra kết nối máy tính.", true);
+  } catch (error) {
+    message(`Chưa lưu được khung hình: ${error.message}`, true);
+  } finally {
+    capturing = false;
+    captureButton.disabled = false;
   }
 }
 
@@ -455,6 +518,7 @@ function stop() {
   startButton.hidden = false;
   startButton.disabled = false;
   stopButton.hidden = true;
+  captureButton.hidden = true;
   torchButton.hidden = true;
   torchButton.setAttribute("aria-pressed", "false");
   zoomControl.hidden = true;
@@ -504,6 +568,7 @@ async function start() {
     if (check.status === 403) throw new Error("Liên kết quét đã hết hạn. Mở liên kết mới từ trang nhận trên máy tính.");
     if (!check.ok) throw new Error("Không kết nối được máy tính. Kiểm tra máy chủ rồi bấm Mở camera lần nữa.");
     if (generation !== current) return;
+    void loadCatalog();
     stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: {
       facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 },
       frameRate: { ideal: 30, min: 15 },
@@ -522,6 +587,7 @@ async function start() {
     sampleAt = scanningSince = performance.now();
     startButton.hidden = true;
     stopButton.hidden = false;
+    captureButton.hidden = false;
     hint.hidden = true;
     showMode();
     decoder.worker?.postMessage({ type: "reset" });
@@ -538,6 +604,7 @@ async function start() {
 startButton.addEventListener("click", start);
 stopButton.addEventListener("click", () => { stop(); message("Đã dừng camera."); });
 retry.addEventListener("click", sendPending);
+captureButton.addEventListener("click", saveFrames);
 search.addEventListener("submit", event => {
   event.preventDefault();
   const text = manual.value.trim();

@@ -3,7 +3,8 @@
  * 1. Cheap look: native BarcodeDetector (Android Chrome; ML Kit engine) when edges are in view,
  *    then zxing-wasm on the original frame without tryHarder.
  * 2. Strong try: zxing on every 3rd row (plain, sharpened, light-flattened, thresholded),
- *    zxing QR/Data Matrix with tryHarder, then Robust39 multi-frame Code 39 recovery.
+ *    Robust39 multi-frame Code 39 recovery and, with the laptop's catalog IDs, strict completion of
+ *    damaged reads; then zxing QR/Data Matrix with tryHarder.
  * Only decoded text leaves the phone; frames never do (unless the laptop fallback asks). */
 importScripts("/vendor/reader.js", "/robust39.js");
 
@@ -17,8 +18,14 @@ const LINEAR = { ...COMMON, formats: ["Code39", "Code128"], tryHarder: true, try
 const MATRIX = { ...COMMON, formats: ["QRCode", "DataMatrix"], tryHarder: true, tryDownscale: true };
 // Linear codes are read along rows: every 3rd row keeps their detail at a third of the cost.
 const ROW_STEP = 3;
+// Recovery also scans along the band of bars at ±10°: sheared/bent labels on plastic bags. Those extra
+// lines repeat a label's own defects, so they run only with the catalog check below.
+const SPREAD = [0, -10, 10];
 const session = new Robust39.Session();
 let native = null, nativeCandidate = null;
+// Catalog IDs from the laptop (optional): recovered reads must be catalog IDs, damaged reads may be
+// completed from it, and a zxing Code 39 that is not a catalog ID must repeat on a second frame.
+let catalog = null, offCatalog = null;
 
 async function prepareNative() {
   if (typeof BarcodeDetector === "undefined") return null;
@@ -212,6 +219,18 @@ async function readNative(rgba, width, height, time) {
   return { box, read: { text: found.rawValue, format, source: "native" } };
 }
 
+/** Code 39 has no check digit: with the catalog loaded, a Code 39 that is no catalog ID (a misread such
+ *  as "45440K//$1", or another company's label) is accepted only when a second frame reads it too. */
+function trusted(read, time) {
+  if (!catalog || read.format !== "Code 39" || catalog.has(read.text)) return true;
+  if (offCatalog?.text === read.text && time - offCatalog.time < 1000) {
+    offCatalog = null;
+    return true;
+  }
+  offCatalog = { text: read.text, time };
+  return false;
+}
+
 /** zxing on an RGBA image; `step` maps rows of a row-subsampled image back to the frame. */
 async function readZxing(image, options, width, height, step = 1) {
   const [read] = await ZXingWASM.readBarcodes(image, options);
@@ -230,6 +249,8 @@ async function decode({ buffer, width, height, time }) {
     session.reset();
     return { results: [read], box, present: true, stage };
   };
+  // A first sighting of a Code 39 outside the catalog: nothing else may confirm it on this frame.
+  const unconfirmed = read => ({ results: [], box: read.box, present: true, stage: "unconfirmed" });
   // ---- Cheap look: every frame ----
   let nativeBox = null;
   if (native && busy) {
@@ -238,7 +259,7 @@ async function decode({ buffer, width, height, time }) {
     nativeBox = answer?.box || null;
   }
   const quick = await readZxing(original, CHEAP, width, height);
-  if (quick) return found(quick, "fast");
+  if (quick) return trusted(quick, time) ? found(quick, "fast") : unconfirmed(quick);
   if (!busy) return { results: [], box: null, present: false, stage: "idle" };
   // ---- Strong try: barcode-like edges are in view, so every variant gets this frame ----
   const rows = rowsOf(gray, width, height);
@@ -252,13 +273,20 @@ async function decode({ buffer, width, height, time }) {
   ];
   for (const [stage, variant] of variants) {
     const read = await readZxing(toImage(variant(), rows.width, rows.height), LINEAR, width, height, ROW_STEP);
-    if (read) return found(read, stage);
+    if (read) return trusted(read, time) ? found(read, stage) : unconfirmed(read);
   }
-  const observation = Robust39.scanFrame(gray, width, height);
+  const observation = Robust39.scanFrame(gray, width, height, catalog ? SPREAD : [0]);
+  // With the catalog, session.accept refuses recovered text that is no catalog ID (keeping its votes).
   const consensus = session.add(observation, time);
   if (consensus.text) {
     return { results: [{ text: consensus.text, format: "Code 39", source: "recovery" }],
              box: observation.box, present: true, stage: "recovery" };
+  }
+  const completed = catalog && observation.present ? catalog.complete(session.lattice()) : null;
+  if (completed) {
+    session.reset();
+    return { results: [{ text: completed, format: "Code 39 · catalog", source: "catalog" }],
+             box: observation.box, present: true, stage: "catalog" };
   }
   // Code 39 characters in view: a QR beside them is not the product code, skip the 2D search.
   const matrix = observation.present ? null : await readZxing(original, MATRIX, width, height);
@@ -268,7 +296,12 @@ async function decode({ buffer, width, height, time }) {
 }
 
 onmessage = async ({ data }) => {
-  if (data.type === "reset") { session.reset(); nativeCandidate = null; return; }
+  if (data.type === "reset") { session.reset(); nativeCandidate = offCatalog = null; return; }
+  if (data.type === "catalog") {
+    catalog = new Robust39.Catalog(data.ids);
+    session.accept = text => catalog.has(text);
+    return;
+  }
   const started = performance.now();
   try {
     await ready;

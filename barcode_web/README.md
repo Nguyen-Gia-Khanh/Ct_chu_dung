@@ -190,8 +190,9 @@ Each frame, the worker does:
    this keeps their detail at a third of the cost): plain; **sharpened** across
    the bars (reads focus blur up to about 1.7 narrow bars wide); light-flattened
    (horizontal closing + division, "local contrast"); and local threshold. Then
-   **Code 39 recovery** (`static/robust39.js`, below). Then QR/Data Matrix with
-   `tryHarder` on the full frame, skipped when Code 39 characters are in view.
+   **Code 39 recovery** (`static/robust39.js`, below), then **catalog completion**
+   (see Catalog checks). Then QR/Data Matrix with `tryHarder` on the full frame,
+   skipped when Code 39 characters are in view.
 
 The rectangle on the preview is an aiming hint from the decoder, not a
 confirmation. A read flashes the frame green, vibrates, and beeps (speaker
@@ -243,6 +244,46 @@ every frame, nothing is accepted. Code 128 labels and random bar texture produce
 no Code 39 reads. These are generated images: real packaging, camera focus and
 phone speed still need testing on actual phones.
 
+### Catalog checks
+
+At each camera start the phone fetches the catalog's product IDs
+(`GET /api/catalog`, IDs only, session token required). Without them (older
+server, database error) decoding works exactly as described above.
+
+- **Recovered reads must be catalog IDs.** Real labels on plastic bags have
+  systematic defects that repeat on every frame of a steady hand, so "two
+  frames" does not protect against them. With heavy synthetic damage and real
+  catalog IDs, every recovered read that was not a catalog ID was wrong (21 of
+  300 labels). A refused read keeps its votes for completion.
+- **zxing Code 39 outside the catalog** (another company's label, or a misread
+  such as `45440K//$1`) is accepted only when a second frame reads it too.
+- **Band scans.** Recovery also scans at ±10° from the bars' normal: on sheared
+  or bent labels the band of bars runs at another angle, and only lines along it
+  cross the whole code. These extra lines repeat defects too, so they run only
+  with the catalog checks.
+- **Completion** (`Robust39.Catalog`). Votes counted from the start and from the
+  stop, and repeated unanchored character runs, are compared with every catalog
+  ID. One ID is completed only if no frame read a different character anywhere in
+  it, at most one character was never seen, at least six were, and no other ID
+  fits nearly as well. Products can be missing from the catalog and it holds
+  near-identical IDs (`64321…`/`64322…`): allowing two unseen characters gave
+  15–19 wrong IDs in 300 labels whose true ID was removed; this rule gave 0. The
+  phone shows "Bổ sung từ danh mục" and logs format `Code 39 · catalog`.
+
+Real label photos (`tests/fixtures/real_labels`: wrinkled, sheared, folded,
+torn and curved Honda labels at about 2.4 px per narrow bar) are checked with
+simulated hand movement: three of six are read or completed, none wrongly, also
+with each true ID removed from the catalog. The others need more detail: at about
+1.9 px per narrow bar nothing reads. Zoom in so the label fills the frame.
+
+### Saved frames
+
+The camera button in the top bar (**Lưu khung hình gửi máy tính**) sends six
+frames, 150 ms apart, of the scan window exactly as the decoder sees it: PNG at
+decode resolution plus JSON details (zoom, video size, crop, last decoder stage,
+browser). They are saved under `data/barcode_web/samples/` (ignored by Git) for
+tuning the decoder on real labels. Nothing is sent unless the button is pressed.
+
 Supported formats: Code 39, Code 128, QR and Data Matrix. Keep the whole code plus
 its blank margins inside the frame. Any value read in the last 1.2 seconds is
 ignored, so a label carrying both a QR and a Code 39 gives at most one scan of
@@ -253,7 +294,8 @@ same value again.
 barcode, with or without the camera running. It goes through `/api/scans` like a
 camera read, so it appears on the laptop receiver with format `Typed`.
 
-Frames never leave the phone during phone decoding. In fallback, JPEG frames are
+Frames never leave the phone during phone decoding, except frames saved with
+the camera button. In fallback, JPEG frames are
 processed in memory on the laptop and discarded without logging. Only decoded
 `{id, text, format}` JSON is saved through `/api/scans`. Camera scans add two
 optional timing fields, saved in `scans.jsonl` to check real phones' speed:
@@ -273,7 +315,8 @@ the hidden `#rate` element for browser diagnostics.
 
 - `server.py`: certificate generation, two foreground HTTP servers, bounded
   frame/text APIs, `/trust-check`, receiver QR codes, untrusted-phone alerts,
-  catalog completion endpoint, JSONL recording and shutdown.
+  catalog completion endpoint, catalog IDs for the phone, saved frames, JSONL
+  recording and shutdown.
 - `processing.py`: laptop fallback: JPEG validation, native barcode localization,
   binary mask, illumination compensation, geometric/local-threshold retry.
 - `lookup.py`: read-only SQLite connection, exact/dashless matching, location
@@ -281,9 +324,10 @@ the hidden `#rate` element for browser diagnostics.
 - `static/scanner.js`: camera lifecycle, scan-frame crop, phone decoder worker,
   laptop fallback, catalog completion, torch/zoom/beep, duplicate suppression and
   acknowledged/retryable delivery.
-- `static/decoder-worker.js`: native detector, zxing-wasm variants and recovery.
-- `static/robust39.js`: damaged/curved/partial Code 39 recovery (no DOM; also
-  runs in Node tests).
+- `static/decoder-worker.js`: native detector, zxing-wasm variants, recovery and
+  catalog checks.
+- `static/robust39.js`: damaged/curved/partial Code 39 recovery and catalog
+  completion (no DOM; also runs in Node tests).
 - `static/index.html`, `receiver.html`, `setup.html`, `style.css`, `icon.svg`,
   `manifest.webmanifest`: scanner, laptop receiver, phone setup with trust check.
 - `static/vendor/`: unmodified zxing-wasm 3.1.5 reader assets and licenses. npm
@@ -291,9 +335,11 @@ the hidden `#rate` element for browser diagnostics.
 - `../tests/test_barcode_web.js` and `code39_scenes.js`: the real worker on Code
   128/QR/Code 39 (first-look reads, idle frames, focus blur), a scripted native
   reader, ZXing agreement with the Code 39 generator, damage scenarios, catalog
-  patterns, false-positive and random-damage (zero wrong reads) checks.
+  patterns and completion, real label photos, false-positive and random-damage
+  (zero wrong reads) checks.
 - `../tests/test_barcode_web.py`: live HTTP validation, persistence, retries,
-  trust check, QR/session loopback limits, resolve validation, private files.
+  trust check, QR/session loopback limits, resolve validation, catalog IDs,
+  saved frames, private files.
 - `../tests/test_barcode_lookup.py`: exact/dashless IDs, catalog/staged
   exceptions, read-only access and unique-only pattern completion.
 - `../tests/test_barcode_processing.py`: laptop fallback pipeline.

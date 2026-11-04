@@ -189,7 +189,7 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 on_phone = width == 393
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.on("request", lambda request: requested_workers.append(request.url)
-                        if "/decoder-worker.js" in request.url else None)
+                        if "/decoder-worker.js" in request.url or "/api/catalog" in request.url else None)
                 if not on_phone:
                     page.route("**/decoder-worker.js", lambda route: route.fulfill(status=404, body="blocked"))
                 def frame_upload(route):
@@ -300,6 +300,17 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 self.assertEqual(store.recent()[0]["text"], "warehouse-test-001")
                 self.assertEqual(page.locator("#locations").inner_text(), "Không tìm thấy mã vạch trong kho.")
                 self.assertTrue(page.locator("#cells").is_hidden())
+                self.assertTrue(any("/api/catalog" in url for url in requested_workers), "catalog IDs fetched at start")
+                if on_phone:
+                    # Save-frame burst: the scan window exactly as the decoder sees it, kept on the laptop.
+                    page.get_by_role("button", name="Lưu khung hình gửi máy tính").click()
+                    page.wait_for_function("document.querySelector('#status').textContent"
+                                           " === 'Đã lưu 6 khung hình trên máy tính.'", timeout=15000)
+                    samples = sorted((self.folder / "samples").glob("*.png"))
+                    self.assertEqual(len(samples), 6)
+                    self.assertTrue(all(sample.read_bytes().startswith(b"\x89PNG") for sample in samples))
+                    details = json.loads(samples[0].with_suffix(".json").read_text(encoding="utf-8"))
+                    self.assertEqual((details["decoder"], details["index"]), ("phone", 0))
                 page.get_by_role("button", name="Dừng", exact=True).click()
                 frame_count = len(uploaded_frames)
                 page.wait_for_timeout(250)

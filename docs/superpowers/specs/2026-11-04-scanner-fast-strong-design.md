@@ -80,3 +80,29 @@ delivery/retry, camera settings, laptop pipeline, receiver.
 - `tests.test_barcode_web_browser`: phone decoding still works; held-label
   decoding stays well under the old 8/s.
 - Latency benchmark (scratch): time to read per scenario, before/after.
+
+## Addendum: real labels (same day)
+
+Six photos of real Honda labels on plastic bags (wrinkled, sheared, folded,
+torn, curved; about 2.4 px per narrow bar) were read 1/12 times by both the old
+and the first new decoder (two scales). Traces showed one end of each code read
+well and the other end lost, so no scanline saw both start and stop; on sheared
+labels the readable characters sat on different scanlines.
+
+Decisions (confirmed with the user: products can be missing from the catalog;
+completed reads are accepted automatically with the catalog badge; a save-frame
+button for real samples):
+
+- The phone fetches catalog IDs. Recovered Code 39 must be a catalog ID (in
+  synthetic heavy damage, all 21 non-catalog recovered reads were wrong); zxing
+  Code 39 outside the catalog needs a second frame.
+- Recovery also scans at ±10°, only with the catalog checks (more lines
+  produced a wrong full read, `40591K.6`, without them).
+- Strict catalog completion: at most one unseen character, no frame reading a
+  different character, at least six seen, unique. Two unseen characters gave
+  15–19/300 wrong IDs when the true ID was removed; this rule gave 0/300.
+- Result on the real photos: 4/12 through the worker (3/6 in the regression
+  test), 0 wrong, 0 wrong with the true IDs removed. Smaller bars (1.9 px) read
+  nothing: zoom matters more than any decoder change.
+- Save-frame button: 6 PNG frames of the decode window plus details to
+  `data/barcode_web/samples/`.
