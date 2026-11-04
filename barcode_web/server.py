@@ -46,6 +46,22 @@ STATIC_FILES = {
     "/vendor/reader.js": ("vendor/reader.js", "text/javascript"),
     "/vendor/zxing_reader.wasm": ("vendor/zxing_reader.wasm", "application/wasm"),
 }
+SCAN_FIELDS = {"id", "text", "format"}
+# Optional, from camera scans: which reader got the code, and how long a barcode was in view first.
+TIMING_FIELDS = {"source", "aim_ms"}
+
+
+def valid_scan(payload: dict) -> bool:
+    if not SCAN_FIELDS <= set(payload) <= SCAN_FIELDS | TIMING_FIELDS:
+        return False
+    if not all(isinstance(payload[key], str) for key in SCAN_FIELDS):
+        return False
+    if (not re.fullmatch(r"[A-Za-z0-9-]{1,64}", payload["id"]) or not 0 < len(payload["text"]) <= 4096
+            or not 0 < len(payload["format"]) <= 64):
+        return False
+    source, aim = payload.get("source", "-"), payload.get("aim_ms", 0)
+    return (isinstance(source, str) and re.fullmatch(r"[ -~]{1,32}", source) is not None
+            and type(aim) is int and 0 <= aim <= 600_000)
 
 
 def load_token(folder: Path) -> str:
@@ -370,11 +386,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 return self.reply(400, {"error": "Invalid barcode data."})
             include_cell_contents = payload.pop("include_cell_contents", False)
-            if (type(include_cell_contents) is not bool or set(payload) != {"id", "text", "format"}
-                    or not all(isinstance(value, str) for value in payload.values())
-                    or not re.fullmatch(r"[A-Za-z0-9-]{1,64}", payload["id"])
-                    or not 0 < len(payload["text"]) <= 4096
-                    or not 0 < len(payload["format"]) <= 64):
+            if type(include_cell_contents) is not bool or not valid_scan(payload):
                 return self.reply(400, {"error": "Invalid barcode data."})
         except (ValueError, UnicodeError):
             return self.reply(400, {"error": "Invalid JSON."})

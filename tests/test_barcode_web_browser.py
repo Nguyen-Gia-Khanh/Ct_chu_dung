@@ -248,6 +248,10 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 page.wait_for_function("document.querySelector('#delivery').textContent === 'Máy tính đã nhận.'")
                 if on_phone:
                     self.assertEqual(attempts[0], attempts[1], "retry must reuse the delivery ID and text")
+                    # Field timing: which reader got it and how long a barcode was in view first.
+                    self.assertTrue(attempts[0]["source"].startswith("zxing:"), attempts[0])
+                    self.assertIsInstance(attempts[0]["aim_ms"], int)
+                    self.assertEqual(store.recent()[0]["source"], attempts[0]["source"])
                 self.assertEqual(page.locator("#result").inner_text(), "001234567890")
                 self.assertTrue(requested_workers, "the phone decoder worker is loaded")
                 if on_phone:
@@ -276,7 +280,11 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 page.wait_for_timeout(2500)
                 decoded, shown = (after - before for after, before in zip(page.evaluate(counts), (decoded, shown)))
                 processed = decoded if on_phone else len(uploaded_frames) - uploads
-                self.assertLessEqual(processed, 2.5 * 8 + 2, "decoding is capped near 8 frames/s")
+                if on_phone:
+                    # The read label stays in view: the phone only re-checks it, about 3 times per second.
+                    self.assertLessEqual(processed, 2.5 * 1000 / 300 + 2, "a label already read is re-checked slowly")
+                else:
+                    self.assertLessEqual(processed, 2.5 * 8 + 2, "laptop uploads are capped near 8 frames/s")
                 self.assertGreaterEqual(processed, 5, "scanning continues while capped")
                 self.assertGreater(shown, processed * 2, "the preview keeps the camera frame rate")
                 self.assertEqual(len(store.recent()), 1 if width == 393 else 4)
@@ -308,6 +316,7 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                     self.assertEqual(page.locator("#result").inner_text(), "001234567890")
                     self.assertEqual(page.locator("#locations").inner_text(), "L1-1A2-3\nL2-2B4-5")
                     self.assertEqual((store.recent()[0]["text"], store.recent()[0]["format"]), ("001234567890", "Typed"))
+                    self.assertNotIn("source", store.recent()[0], "typed searches carry no reader timing")
                     self.assertEqual(search.input_value(), "")
                     page.get_by_role("button", name="Tìm", exact=True).click()
                     self.assertTrue(search.evaluate("element => element === document.activeElement"), "empty search refocuses")

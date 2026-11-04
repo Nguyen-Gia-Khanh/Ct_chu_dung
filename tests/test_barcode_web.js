@@ -63,8 +63,20 @@ function randomBars(seed) {
   return image;
 }
 
-/** Evaluate the actual browser worker. Only transport/loading are adapted; there is no BarcodeDetector. */
-async function loadWorker() {
+/** Stand-in for Android's BarcodeDetector: each detect() returns the next scripted list of codes. */
+function scriptedDetector(script) {
+  return class {
+    static async getSupportedFormats() { return ["code_39", "code_128", "qr_code", "data_matrix"]; }
+    async detect() {
+      return (script.shift() || []).map(([format, rawValue]) => ({ format, rawValue,
+        cornerPoints: [{ x: 10, y: 10 }, { x: 300, y: 10 }, { x: 300, y: 80 }, { x: 10, y: 80 }] }));
+    }
+  };
+}
+
+/** Evaluate the actual browser worker. Only transport/loading are adapted; BarcodeDetector is absent
+ *  unless a scripted stand-in is given. */
+async function loadWorker(detector = null) {
   let resolveMessage;
   const sandbox = vm.createContext({
     console, performance, WebAssembly, Uint8ClampedArray, Uint8Array, ArrayBuffer,
@@ -75,6 +87,8 @@ async function loadWorker() {
                           { headers: { "Content-Type": "application/wasm" } });
     },
     postMessage: message => resolveMessage(message),
+    ...(detector && { BarcodeDetector: detector, ImageData: class { constructor(data, width, height) {
+      Object.assign(this, { data, width, height }); } } }),
   });
   sandbox.self = sandbox;
   sandbox.importScripts = (...urls) => urls.forEach(url =>
@@ -83,7 +97,7 @@ async function loadWorker() {
   vm.runInContext(fs.readFileSync(path.join(staticRoot, "decoder-worker.js"), "utf8"), sandbox);
   const ready = await message;
   assert.equal(ready.type, "ready", ready.message);
-  assert.equal(ready.native, false);
+  assert.equal(ready.native, Boolean(detector));
   let id = 0;
   return async (image, time = 0) => {
     message = new Promise(resolve => { resolveMessage = resolve; });
@@ -112,15 +126,35 @@ function recover(frames, rounds = 3) {
 
 async function main() {
   const decode = await loadWorker();
-  // Variants rotate per frame: linear codes read on every variant, matrix codes within two frames.
+  // Linear and matrix codes read on every frame's first, cheap look.
   for (let index = 0; index < 4; index++) {
-    assert.equal((await decode(code128())).results[0]?.text, "001234567890");
+    const linear = await decode(code128());
+    assert.deepEqual([linear.results[0]?.text, linear.stage], ["001234567890", "fast"]);
+    assert.equal((await decode(qr())).results[0]?.text, "warehouse-test-001");
   }
-  for (let index = 0; index < 4; index++) {
-    const first = await decode(qr());
-    const text = first.results[0]?.text || (await decode(qr())).results[0]?.text;
-    assert.equal(text, "warehouse-test-001");
-  }
+  // Nothing barcode-like: only the cheap look runs, and the page is told nothing is in view.
+  const blank = rgba(950, 317);
+  for (let i = 0; i < blank.data.length; i += 4) blank.data[i] = blank.data[i + 1] = blank.data[i + 2] = 170 + (i * 7919) % 13;
+  assert.deepEqual(await decode(blank).then(({ results, present, stage }) => [results.length, present, stage]), [0, false, "idle"]);
+  // Focus blur wider than a narrow bar defeats plain zxing and recovery; the sharpened row strip reads it at once.
+  const blurred = scene("53168KFM902", { width: 950, height: 317, module: 3, blur: 2, noise: 6 });
+  const unblurred = await decode(toRGBA(blurred));
+  assert.deepEqual([unblurred.results[0]?.text, unblurred.stage], ["53168KFM902", "sharpened"]);
+
+  // Android's native reader (scripted over bar texture that holds no readable code): a linear code wins
+  // over a QR on the same label; Code 39 needs a second agreeing native frame within 1 s; QR reads at once.
+  const script = [];
+  const nativeDecode = await loadWorker(scriptedDetector(script));
+  const texture = randomBars(7);
+  const nativeRead = async (codes, time) => { script.push(codes); return (await nativeDecode(texture, time)).results[0]; };
+  assert.equal(await nativeRead([["qr_code", "259190000061701;APC;13101-KFL-505"], ["code_39", "13101-KFL-505"]], 0),
+               undefined, "an unconfirmed Code 39 is not accepted");
+  const confirmed = await nativeRead([["code_39", "13101-KFL-505"]], 800);
+  assert.deepEqual([confirmed?.text, confirmed?.format, confirmed?.source], ["13101-KFL-505", "Code 39", "native"]);
+  assert.equal((await nativeRead([["qr_code", "warehouse-test-001"]], 5000))?.text, "warehouse-test-001");
+  assert.equal(await nativeRead([["code_39", "45440KZLE01"]], 6000), undefined);
+  assert.equal(await nativeRead([["code_39", "45440KZLE01"]], 7100), undefined, "1.1 s later is not a confirmation");
+  assert.equal(script.length, 0, "the native reader runs whenever edges are in view");
   // The JS Code 39 table/generator agrees with ZXing, so recovery tests are not self-consistent fiction.
   const clean = await decode(toRGBA(scene(PART, { width: 1280, height: 427, module: 4 })));
   assert.deepEqual([clean.results[0]?.text, clean.results[0]?.format], [PART, "Code 39"]);
@@ -220,9 +254,27 @@ async function main() {
   assert.equal(wrong, 0, "random damage produced a wrong Code 39 read");
   assert.ok(correct >= 28, `recovery rate dropped: ${correct}/40`);
 
+  // Every strong-try variant, through the real worker, on single heavily damaged frames: never a wrong code.
+  const harsh = rng(99);
+  let strongReads = 0;
+  for (let trial = 0; trial < 30; trial++) {
+    let text = "";
+    for (let i = 11; i > 0; i--) text += letters[Math.floor(harsh() * letters.length)];
+    const image = scene(text, { width: 950, height: 317, module: 2 + harsh() * 2.5, angle: (harsh() - .5) * 30,
+      curve: harsh() < .5 ? harsh() * .7 : 0, blur: Math.floor(harsh() * 4), noise: harsh() * 30,
+      contrast: .2 + harsh() * .8, shadow: harsh() * .7, ink: harsh() < .3 ? harsh() * .35 : 0, seed: trial + 1,
+      glare: harsh() < .6 ? [{ cx: .2 + harsh() * .6, cy: .2 + harsh() * .6, rx: .02 + harsh() * .1, ry: .1 + harsh() * .8 }] : [] });
+    // Frames 5 s apart: no multi-frame recovery, only single-frame variants can answer.
+    const got = (await decode(toRGBA(image), 1e7 + trial * 5000)).results[0]?.text;
+    if (got) { assert.equal(got, text, "a strong-try variant misread a damaged label"); strongReads++; }
+  }
+  for (let seed = 2; seed < 6; seed++) {
+    assert.equal((await decode(randomBars(seed), 2e7 + seed * 5000)).results.length, 0, "bar texture read as a code");
+  }
+
   const started = performance.now();
   for (let index = 0; index < 15; index++) await decode(code128(), index * 66);
-  console.log(`Decoder checks passed. Random damage: ${correct}/40 recovered, 0 wrong; `
+  console.log(`Decoder checks passed. Random damage: ${correct}/40 recovered, 0 wrong; strong try ${strongReads}/30 single frames, 0 wrong; `
     + `recovery ${(time / frames).toFixed(1)} ms per 1280x427 frame; 15 worker frames `
     + `${(performance.now() - started).toFixed(0)} ms (this laptop, not phone FPS).`);
 }

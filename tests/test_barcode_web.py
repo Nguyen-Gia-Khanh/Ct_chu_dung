@@ -107,6 +107,18 @@ class BarcodeWebTests(WorkspaceTestCase):
         connection.close()
         self.assertFalse(self.store.path.exists())
 
+    def test_optional_scan_timing_is_validated_and_saved(self):
+        payload = {"id": "timed-1", "text": "53168KFM902", "format": "Code 39",
+                   "source": "zxing:sharpened", "aim_ms": 420}
+        self.assertEqual(self.request("POST", "/api/scans", payload)[0], 200)
+        saved = json.loads(self.store.path.read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual((saved["source"], saved["aim_ms"]), ("zxing:sharpened", 420))
+        self.assertEqual(self.store.recent()[0]["source"], "zxing:sharpened")
+        for bad in ({"aim_ms": -1}, {"aim_ms": 1.5}, {"aim_ms": True}, {"aim_ms": "5"}, {"aim_ms": 600_001},
+                    {"source": ""}, {"source": "x" * 33}, {"source": "bad\nsource"}, {"source": 3}):
+            self.assertEqual(self.request("POST", "/api/scans", {**payload, "id": "timed-2", **bad})[0], 400, bad)
+        self.assertEqual(len(self.store.recent()), 1)
+
     def test_assets_session_and_private_files(self):
         for path in ("/scan", "/receiver", "/setup", "/decoder-worker.js", "/robust39.js", "/icon.svg",
                      "/manifest.webmanifest", "/vendor/reader.js", "/vendor/zxing_reader.wasm"):

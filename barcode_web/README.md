@@ -163,22 +163,35 @@ At least four characters must be read; `%` and `_` are matched literally.
 ## Decoding
 
 The scanner page shows a 4:3 camera preview with a **3:1 scan frame**; only the
-frame's pixels are decoded. To keep the phone cool, at most **8 frames per
-second** are decoded (`DECODE_INTERVAL` in `static/scanner.js`); the preview
-itself still plays at the camera's frame rate. Each decoded frame is copied
-at full resolution (up to 1920 px wide, no JPEG) to a Web Worker on the phone
+frame's pixels are decoded. Each analysed frame is copied at full resolution
+(up to 1920 px wide, no JPEG) to a Web Worker on the phone
 (`static/decoder-worker.js`). One frame is in flight; others are skipped, so
-slow phones drop frames instead of lagging. The worker tries, in order:
+slow phones drop frames instead of lagging. The preview itself always plays at
+the camera's frame rate. Pacing (`IDLE_GAP`, `EAGER_FOR`, `HOLD_GAP` in
+`static/scanner.js`) keeps the phone cool between items and reacts at once to a
+barcode:
 
-1. **Native `BarcodeDetector`** when the browser provides it (Android Chrome,
-   backed by the platform's ML Kit engine). Not available in iPhone Safari.
-   A native Code 39 read must repeat on two frames within 0.6 s.
-2. **zxing-wasm 3.1.5** (already vendored) with `tryHarder` and two agreeing
-   scanlines. The original frame is tried every other frame with all formats; in
-   between, a light-flattened (horizontal closing + division, sharpened across
-   bars) or local-threshold copy is tried for linear codes only. These mirror the
-   laptop's "local contrast" and "local threshold" stages.
-3. **Code 39 recovery** (`static/robust39.js`) for labels ZXing cannot read: see below.
+- **Nothing barcode-like in view:** one cheap look every 150 ms.
+- **Barcode in view, not read yet:** strong tries back to back on fresh frames
+  (for 3 s, then at the idle pace).
+- **Barcode read and still in view:** a re-check every 300 ms, only to keep
+  suppressing its duplicates.
+
+Each frame, the worker does:
+
+1. **Cheap look.** A few-scanline edge probe (about 0.1 ms). When edges are in
+   view, the **native `BarcodeDetector`** (Android Chrome, backed by the
+   platform's ML Kit engine; not in iPhone Safari): a native Code 39 read must
+   repeat on a second frame within 1 s, and when a label carries both a QR and a
+   linear code, the linear code wins. Then **zxing-wasm 3.1.5** (vendored) on the
+   original frame, all formats, without `tryHarder`. Frames without edges stop here.
+2. **Strong try**, on the same frame, first read wins. zxing with `tryHarder` and
+   two agreeing scanlines on every 3rd row (linear codes are read along rows, so
+   this keeps their detail at a third of the cost): plain; **sharpened** across
+   the bars (reads focus blur up to about 1.7 narrow bars wide); light-flattened
+   (horizontal closing + division, "local contrast"); and local threshold. Then
+   **Code 39 recovery** (`static/robust39.js`, below). Then QR/Data Matrix with
+   `tryHarder` on the full frame, skipped when Code 39 characters are in view.
 
 The rectangle on the preview is an aiming hint from the decoder, not a
 confirmation. A read flashes the frame green, vibrates, and beeps (speaker
@@ -187,7 +200,7 @@ exposes them; zoom gives the sensor's real detail when labels are small.
 
 **Laptop fallback.** If the worker fails to load or keeps failing, or has not
 become ready after 4 s, the page uploads JPEG frames to `POST /api/frames` at up
-to 8 per second (the same cap), otherwise as before (`processing.py`, unchanged). While the
+to 8 per second (`UPLOAD_INTERVAL`), otherwise as before (`processing.py`, unchanged). While the
 phone decodes, it also sends one frame every ~350 ms to the laptop as a second
 opinion when it has seen a barcode-like pattern for 1.2 s without a read. The
 **Mask** toggle still requests the laptop's thresholded diagnostic image. The
@@ -231,8 +244,10 @@ no Code 39 reads. These are generated images: real packaging, camera focus and
 phone speed still need testing on actual phones.
 
 Supported formats: Code 39, Code 128, QR and Data Matrix. Keep the whole code plus
-its blank margins inside the frame. Move a barcode out for about 1.2 seconds
-before deliberately scanning the same value again.
+its blank margins inside the frame. Any value read in the last 1.2 seconds is
+ignored, so a label carrying both a QR and a Code 39 gives at most one scan of
+each. Move a barcode out for about 1.2 seconds before deliberately scanning the
+same value again.
 
 **Typed search.** The box at the top of the result sheet looks up a typed
 barcode, with or without the camera running. It goes through `/api/scans` like a
@@ -240,7 +255,11 @@ camera read, so it appears on the laptop receiver with format `Typed`.
 
 Frames never leave the phone during phone decoding. In fallback, JPEG frames are
 processed in memory on the laptop and discarded without logging. Only decoded
-`{id, text, format}` JSON is saved through `/api/scans`. A failed delivery stays
+`{id, text, format}` JSON is saved through `/api/scans`. Camera scans add two
+optional timing fields, saved in `scans.jsonl` to check real phones' speed:
+`source` (which reader: `native`, `zxing:<stage>`, `recovery`, `catalog` or
+`laptop:<stage>`) and `aim_ms` (how long a barcode-like pattern was in view
+before the read; 0 means the first look read it). Typed searches have neither. A failed delivery stays
 pending on the phone and blocks accepting another barcode until retried. Retries
 reuse the same ID; the server suppresses duplicate delivery IDs in its last
 2,000 records. Each request uses the session token from the phone link.
@@ -270,8 +289,9 @@ the hidden `#rate` element for browser diagnostics.
 - `static/vendor/`: unmodified zxing-wasm 3.1.5 reader assets and licenses. npm
   archive integrity verified before extraction; no CDN requests at runtime.
 - `../tests/test_barcode_web.js` and `code39_scenes.js`: the real worker on Code
-  128/QR/Code 39, ZXing agreement with the Code 39 generator, damage scenarios,
-  catalog patterns, false-positive and random-damage (zero wrong reads) checks.
+  128/QR/Code 39 (first-look reads, idle frames, focus blur), a scripted native
+  reader, ZXing agreement with the Code 39 generator, damage scenarios, catalog
+  patterns, false-positive and random-damage (zero wrong reads) checks.
 - `../tests/test_barcode_web.py`: live HTTP validation, persistence, retries,
   trust check, QR/session loopback limits, resolve validation, private files.
 - `../tests/test_barcode_lookup.py`: exact/dashless IDs, catalog/staged

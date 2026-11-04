@@ -32,8 +32,15 @@ const phoneContext = phoneCanvas.getContext("2d", { willReadFrequently: true });
 const laptopCanvas = document.createElement("canvas");
 const laptopContext = laptopCanvas.getContext("2d");
 const MAX_PHONE_WIDTH = 1920, MAX_UPLOAD_WIDTH = 1280;
-// Decoding every camera frame heats the phone; ~8 reads/s is still instant. The preview keeps camera fps.
-const DECODE_INTERVAL = 1000 / 8;
+// Phone decoder pacing (the preview keeps the camera's frame rate). With nothing barcode-like in view,
+// a cheap look every IDLE_GAP keeps the phone cool. With a barcode in view but unread, strong tries run
+// back to back on fresh frames for EAGER_FOR, then at the idle pace. A barcode already read and still
+// in view is re-checked every HOLD_GAP, only to keep suppressing its duplicates.
+const IDLE_GAP = 150, HOLD_GAP = 300, EAGER_FOR = 3000;
+// Laptop uploads (fallback decoding, mask preview, second opinion): at most 8 per second.
+const UPLOAD_INTERVAL = 1000 / 8;
+// Any text read within this time is a duplicate (one label can carry a QR and a Code 39).
+const REPEAT_MS = 1200;
 
 function stored(key) {
   try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -53,9 +60,11 @@ addEventListener("hashchange", () => {
 });
 
 let stream, track, frameHandle, active = false, starting = false, generation = 0;
-let lastText = null, lastSeen = 0, pending = null, sending = false;
+let pending = null, sending = false;
+const recentReads = new Map();   // text → when it was last read
 let processed = 0, elapsed = 0, sampleAt = 0;
 let lastPresent = 0, lastRead = 0, scanningSince = 0;
+let aimSince = 0;   // when the current barcode-like pattern came into view (0: none in view)
 let audio = null, sound = stored("scanner-sound") !== "off";
 
 // ---------- Phone-side decoder ----------
@@ -84,6 +93,7 @@ function startDecoder() {
     decoder.errors = 0;
     if (!active) return;
     receive(data, "phone");
+    schedulePhone(data);
     if (data.partial) void resolvePartial(data.partial);
   };
   decoder.worker.onerror = () => { decoder.failed = true; decoder.busy = false; showMode(); };
@@ -91,6 +101,14 @@ function startDecoder() {
 
 function phoneDecoding() {
   return decoder.ready && !decoder.failed;
+}
+
+/** When the phone decoder looks again: at once while a barcode is in view and unread, else after a pause. */
+function schedulePhone(answer) {
+  const now = performance.now();
+  const read = Boolean(answer.results?.length);
+  const eager = answer.present && !read && now - (aimSince || now) < EAGER_FOR;
+  decoder.next = now + (eager ? 0 : read ? HOLD_GAP : IDLE_GAP);
 }
 
 /** The worker failed, or is still not ready after 4 s: decode on the laptop meanwhile. */
@@ -229,12 +247,17 @@ function receive(answer, source) {
       elapsed = 0;
       sampleAt = now;
     }
+    aimSince = answer.present ? aimSince || now : 0;
     // Struggling: tell the person what usually helps, without blocking anything.
     hint.hidden = !(now - lastPresent < 400 && now - Math.max(lastRead, scanningSince) > 2500);
     hint.textContent = "Giữ máy ổn định. Đưa lại gần hoặc phóng to để mã vạch vừa khung.";
   }
   const found = answer.results?.[0];
-  if (found) accept(found);
+  if (found) {
+    // Which reader got it, logged with the scan to check real phones' speed.
+    const via = source === "laptop" ? `laptop:${answer.stage}` : found.source === "zxing" ? `zxing:${answer.stage}` : found.source;
+    accept({ ...found, via });
+  }
 }
 
 async function resolvePartial(pattern) {
@@ -250,7 +273,7 @@ async function resolvePartial(pattern) {
     const answer = await response.json();
     // Only a single catalog ID that fits every read character completes the code.
     if (active && response.ok && answer.status === "unique") {
-      accept({ text: answer.product_id, format: "Code 39 · catalog", source: "catalog" });
+      accept({ text: answer.product_id, format: "Code 39 · catalog", source: "catalog", via: "catalog" });
     }
   } catch (_) {
     /* Keep scanning; completion is only a shortcut. */
@@ -261,14 +284,16 @@ async function resolvePartial(pattern) {
 
 function accept(found) {
   const now = performance.now();
-  const repeated = found.text === lastText && now - lastSeen < 1200;
-  lastText = found.text;
-  lastSeen = now;
+  for (const [text, at] of recentReads) if (now - at >= REPEAT_MS) recentReads.delete(text);
+  const repeated = recentReads.has(found.text);
+  recentReads.set(found.text, now);
   lastRead = now;
+  const aimMs = now - (aimSince || now);
+  aimSince = 0;   // the next barcode's aim starts at its first unread look
   if (repeated || pending) return;
   decoder.worker?.postMessage({ type: "reset" });
   feedback();
-  lookUp(found);
+  lookUp({ ...found, aimMs });
 }
 
 function lookUp(found) {
@@ -283,6 +308,7 @@ function lookUp(found) {
   cells.replaceChildren();
   cells.hidden = true;
   pending = { id: crypto.randomUUID(), text: found.text, format: found.format };
+  if (found.via) Object.assign(pending, { source: found.via.slice(0, 32), aim_ms: Math.round(found.aimMs || 0) });
   sessionStorage.setItem("pending-scan", JSON.stringify(pending));
   void sendPending();
 }
@@ -404,13 +430,10 @@ function frame(now) {
     const laptopNow = laptopDue(now);
     const crop = phoneDue || laptopNow ? windowCrop() : null;
     if (crop && crop.width >= 16 && crop.height >= 16) {
-      // No network, no JPEG, full resolution; at most DECODE_INTERVAL apart.
-      if (phoneDue) {
-        decoder.next = Math.max(decoder.next + DECODE_INTERVAL, now);
-        sendToPhoneDecoder(crop, performance.now());
-      }
+      // No network, no JPEG, full resolution; the result sets when the next look is due.
+      if (phoneDue) sendToPhoneDecoder(crop, performance.now());
       if (laptopNow) {
-        laptop.previous = Math.max(laptop.previous + DECODE_INTERVAL, now + 1);
+        laptop.previous = Math.max(laptop.previous + UPLOAD_INTERVAL, now + 1);
         void sendToLaptop(crop, generation);
       }
     }
@@ -492,7 +515,8 @@ async function start() {
     await cameraControls();
     if (generation !== current) { stop(); return; }
     active = true;
-    lastText = null;
+    recentReads.clear();
+    aimSince = 0;
     processed = elapsed = 0;
     laptop.previous = decoder.next = 0;
     sampleAt = scanningSince = performance.now();
