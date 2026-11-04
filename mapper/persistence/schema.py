@@ -38,6 +38,11 @@ CREATE TABLE IF NOT EXISTS slots (
     slot_name TEXT NOT NULL UNIQUE,
     UNIQUE (shelf_id, row_number, slot_number)
 );
+-- Cells removed from the shelf design that still hold products (or keep a ghost
+-- further right in place). Created on startup, so older databases need no migration.
+CREATE TABLE IF NOT EXISTS ghost_slots (
+    slot_id INTEGER NOT NULL PRIMARY KEY REFERENCES slots(slot_id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS placements (
     product_id TEXT NOT NULL PRIMARY KEY REFERENCES catalog_products(product_id) ON DELETE CASCADE {SKU_CHECK},
     slot_id INTEGER NOT NULL REFERENCES slots(slot_id) ON DELETE RESTRICT,

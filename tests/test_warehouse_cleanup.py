@@ -272,15 +272,17 @@ class WarehouseCleanupTests(WorkspaceTestCase):
         extra=db.get_slot_address('1','1','A',3,1)
         db.assign_exception('ZERO',first.slot_id,FIRST,5)
         db.assign_exception('ZERO',extra.slot_id,FIRST)
-        with self.assertRaises(LayoutConflictError):
-            db.save_shelf('1','A',[2],shelf_id=1)
-        self.assertEqual(db.get_shelf(1)[3],[2,0,1,0])
         db.save_shelf('1','B',[2,0,1,0],shelf_id=1)
         self.assertEqual(db.get_slot_address('1','1','B',1,1).slot_id,first.slot_id)
         self.assertEqual(db.get_product_locations('ZERO'),['L1-1B1-1','L1-1B3-1'])
         self.assertEqual(LabelDatabase(db.path).read_shelves([1])[0].rows,((1,2),(2,0),(3,1),(4,0)))
         with self.assertRaises(ValueError):
             db.save_shelf('1','B',[2,-1],shelf_id=1)
+        # Removing the occupied rows keeps Row 3's extra location as a ghost row above the top.
+        db.save_shelf('1','B',[2],shelf_id=1)
+        self.assertEqual(db.get_shelf(1)[3],[2])
+        self.assertEqual(db.get_product_locations('ZERO'),['L1-1B1-1','L1-1B2-1'])
+        self.assertEqual(db.get_shelf_ghosts(1),[(2,1,'L1-1B2-1')])
 
     def test_cell_combine_does_not_add_shared_stock_or_lose_registration_flags(self):
         db=self.fresh()

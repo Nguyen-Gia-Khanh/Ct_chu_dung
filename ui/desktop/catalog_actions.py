@@ -8,6 +8,7 @@ from tkinter import filedialog, messagebox
 
 from mapper.core.common import MAX_VISIBLE_PRODUCTS, exact_product_search_id, normalize_search, normalize_sku
 from mapper.features.csv_import import prepare_import, read_csv
+from mapper.persistence.database import GhostCellError
 from mapper.services.assignment import catalog_shift_error, shift_transfer
 from .csv_dialog import ColumnMappingDialog
 from .widgets import sync_tree_rows
@@ -118,6 +119,8 @@ class CatalogActions:
                     parent=self.root,
                 )
                 return
+            if self._refuse_ghost():
+                return
 
             refusal = catalog_shift_error(product_ids)
             if refusal:
@@ -129,6 +132,9 @@ class CatalogActions:
             }
             try:
                 moved, transfer_data = shift_transfer(self.database, self.selected_address.slot_id, records)
+            except GhostCellError as error:
+                self._refuse_ghost(error.slot_name)
+                return
             except Exception as error:
                 messagebox.showerror("Transfer failed", str(error), parent=self.root)
                 return

@@ -11,6 +11,7 @@ import sqlite3
 from collections.abc import Iterable
 
 from mapper.core.common import clean_product_name, iso_timestamp, normalize_sku
+from .models import GhostCellError
 
 # Every location reads its quantity from the one primary placement.
 LOCATION_SQL = """SELECT p.product_id, p.slot_id, p.stock_qty, p.assigned_at, 0 AS extra
@@ -57,6 +58,20 @@ def check_slots(connection: sqlite3.Connection, *slot_ids: int) -> None:
     found = connection.execute(f'SELECT COUNT(*) FROM slots WHERE slot_id {IN_IDS}', (ids_param(unique),)).fetchone()[0]
     if found != len(unique):
         raise KeyError('One of the selected shelf cells no longer exists.')
+
+
+def refuse_ghost_targets(connection: sqlite3.Connection, slot_ids: Iterable[int]) -> None:
+    """Products may leave a ghost cell but never arrive in one."""
+    ghost = connection.execute(f"""SELECT s.slot_name FROM slots s JOIN ghost_slots g USING(slot_id)
+                                    WHERE s.slot_id {IN_IDS} ORDER BY s.slot_name LIMIT 1""",
+                               (ids_param(set(slot_ids)),)).fetchone()
+    if ghost:
+        raise GhostCellError(ghost[0])
+
+
+def occupied_slots(connection: sqlite3.Connection, slot_ids: Iterable[int]) -> set[int]:
+    return {row[0] for row in connection.execute(
+        f'SELECT DISTINCT slot_id FROM ({LOCATION_SQL}) WHERE slot_id {IN_IDS}', (ids_param(set(slot_ids)),))}
 
 
 def slot_names(connection: sqlite3.Connection, slot_ids: Iterable[int]) -> dict[int, str]:

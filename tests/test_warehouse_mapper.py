@@ -50,13 +50,13 @@ class WarehouseDatabaseTests(unittest.TestCase):
         self.database.commit_shelf("1", "A", layout, {"P1": placement(second_cell)}, set())
         self.assertEqual(self.database.get_placements()["P1"], second_cell)
 
-    def test_occupied_top_row_cannot_be_removed(self):
+    def test_occupied_top_row_stays_as_a_ghost_row(self):
         first_layout = [2, 5]
         slot_name = make_slot_name("1", "A", 2, 1)
-        self.database.commit_shelf("1", "A", first_layout, {"P1": placement(slot_name)}, set())
-        with self.assertRaises(LayoutConflictError):
-            self.database.commit_shelf("1", "A", [2], {}, set())
+        shelf_id = self.database.commit_shelf("1", "A", first_layout, {"P1": placement(slot_name)}, set())
+        self.database.commit_shelf("1", "A", [2], {}, set())
         self.assertEqual(self.database.get_placements(), {"P1": slot_name})
+        self.assertEqual(self.database.get_shelf_ghosts(shelf_id), [(2, 1, slot_name)])
 
     def test_top_row_growth_and_shrink_preserve_lower_ids_and_products(self):
         layout = [6, 6]

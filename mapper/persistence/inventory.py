@@ -11,7 +11,8 @@ from mapper.core.common import iso_timestamp, normalize_sku
 from .models import OnHandProduct, Placement, ProductLocation, validate_stock_quantity
 from .shared import (
     IN_IDS, LOCATION_SQL, PRODUCT_NAME_SQL, check_slots, ids_param, location_names, merge_cell_duplicates,
-    move_exception_cells, normalize_records, record_stock_modification, relocate_staging, remove_from_slot,
+    move_exception_cells, normalize_records, occupied_slots, record_stock_modification, refuse_ghost_targets,
+    relocate_staging, remove_from_slot,
 )
 
 # Restore order for a Shift transfer revert; extra locations defer their placement foreign key.
@@ -137,6 +138,9 @@ class InventoryOperations:
             check_slots(c, first_slot_id, second_slot_id)
             counts = dict(c.execute(f'SELECT slot_id, COUNT(*) FROM ({LOCATION_SQL}) WHERE slot_id IN (?,?) GROUP BY slot_id',
                                     (first_slot_id, second_slot_id)))
+            # A full ghost may trade with an empty cell; a ghost never receives products.
+            refuse_ghost_targets(c, [slot for slot, other in ((first_slot_id, second_slot_id),
+                                                              (second_slot_id, first_slot_id)) if counts.get(other)])
             c.execute('UPDATE placements SET slot_id=CASE slot_id WHEN ? THEN ? ELSE ? END WHERE slot_id IN (?,?)',
                       (first_slot_id, second_slot_id, first_slot_id, first_slot_id, second_slot_id))
             move_exception_cells(c, {first_slot_id: second_slot_id, second_slot_id: first_slot_id})
@@ -148,6 +152,7 @@ class InventoryOperations:
         with closing(self.connect()) as c, c:
             c.execute('BEGIN IMMEDIATE')
             check_slots(c, source_slot_id, target_slot_id)
+            refuse_ghost_targets(c, [target_slot_id])
             overlaps = [row[0] for row in c.execute(f"""SELECT product_id FROM ({LOCATION_SQL}) WHERE slot_id IN (?,?)
                                                        GROUP BY product_id HAVING COUNT(*)>1""", (source_slot_id, target_slot_id))]
             if overlaps and not merge_duplicates:
@@ -173,6 +178,7 @@ class InventoryOperations:
         with closing(self.connect()) as c, c:
             c.execute('BEGIN IMMEDIATE')
             check_slots(c, *moves, *moves.values())
+            refuse_ghost_targets(c, [moves[source] for source in occupied_slots(c, moves)])
             occupied = c.execute(f"""SELECT s.slot_name FROM ({LOCATION_SQL}) l JOIN slots s USING(slot_id)
                                      WHERE l.slot_id {IN_IDS} ORDER BY s.slot_name LIMIT 1""",
                                  (ids_param(set(moves.values()) - moves.keys()),)).fetchone()
@@ -193,6 +199,7 @@ class InventoryOperations:
         with closing(self.connect()) as c, c:
             c.execute('BEGIN IMMEDIATE')
             check_slots(c, slot_id)
+            refuse_ghost_targets(c, [slot_id])
             ids = (tuple(row[0] for row in c.execute('SELECT product_id FROM on_hand_queue')) if product_ids is None
                    else _unique_skus(product_ids))
             batch = ids_param(ids)
@@ -224,6 +231,7 @@ class InventoryOperations:
         with closing(self.connect()) as c, c:
             c.execute('BEGIN IMMEDIATE')
             check_slots(c, slot_id)
+            refuse_ghost_targets(c, [slot_id])
             c.executemany('INSERT INTO catalog_products(product_id,full_name) VALUES (?,?) ON CONFLICT DO NOTHING',
                           [(pid, full_name) for pid, (full_name, _brand) in products.items()])
             # Read before deleting: 0 is a known count; 999 and NULL are unknown.

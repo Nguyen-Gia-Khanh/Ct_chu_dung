@@ -135,13 +135,14 @@ class ShelfBrowserView(ttk.Frame):
             self.shelf_selector.set(label)
 
     def show_preview(self, floor: str, side: str, shelf_code: str, layout: list[int],
-                     contents: Contents | None = None, *, revert_location_id: bool = False) -> None:
+                     contents: Contents | None = None, *, revert_location_id: bool = False,
+                     ghosts=()) -> None:
         """Show an editor preview without pretending it is already committed."""
         contents = list(contents or [])
         self.current_shelf_id = None
         self.shelf_selector.set("")
         self._show(build_grid(floor, side, shelf_code, layout, (p.slot_name for _, _, p in contents),
-                              revert_location_id=revert_location_id),
+                              revert_location_id=revert_location_id, ghosts=ghosts),
                    contents, summary="Uncommitted shelf preview")
 
     def _show(self, grid, contents: Contents, *, summary: str) -> None:
@@ -149,7 +150,9 @@ class ShelfBrowserView(ttk.Frame):
         self.current_contents = contents
         self.shelf_address_lookup.set_address(*grid.key)
         layout = grid.layout
-        self.summary_text.set(f"{summary} · {len(layout)} rows · {sum(layout)} cells")
+        ghosts = sum(1 for cell in grid.ghosts if cell.count)  # spacers hold nothing to move
+        self.summary_text.set(f"{summary} · {len(layout)} rows · {sum(layout)} cells"
+                              + (f" · {ghosts} ghost cell{'s' if ghosts != 1 else ''}" if ghosts else ""))
         self.shelf_grid.show(grid, selected=self.shelf_grid.selected)
         self._show_contents(self.shelf_grid.selected)
 

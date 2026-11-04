@@ -124,10 +124,34 @@ asks for login, sign in there and retry the web action.
 
 1. On tab 1, import the working product CSV and full catalog CSV as needed.
 2. Enter floor, side, shelf code, and row count.
-3. Enter the number of cells in every row. Row 1 is at ground level; adding or
-   removing rows always changes the top of the shelf first.
-4. Press **Build / refresh 2D shelf** to inspect the preview on tab 4.
-5. Return to tab 1 and press **Commit shelf design**.
+3. Enter the number of cells in every row. Row 1 is at ground level; the row
+   count adds or removes rows at the top.
+4. To add a row in the middle, drag the blue **▶ new row goes here** bar into
+   the gap and press **Insert row at bar**. Each row's **✕** removes that row.
+   Rows above an inserted or removed row move up or down by one, and on Commit
+   their products move with them (their location IDs change, e.g. `L1-1A3-5`
+   becomes `L1-1A4-5`). Labels such as "Row 4 (was 3)" show the change first.
+5. Press **Build / refresh 2D shelf** to inspect the preview on tab 4.
+6. Return to tab 1 and press **Commit shelf design**.
+
+### Ghost cells
+
+Lowering a row's cell count or removing a row never blocks Commit. Removed
+cells that still hold products become **ghost cells**: they keep their products,
+stock and physical spot, and every shelf canvas (Tabs 2–5) draws them solid red
+with ⚠. A removed row with products becomes a ghost row above the top row.
+Empty removed cells between the row's new end and a ghost further right stay as
+pale red spacers so the ghost keeps its position. Instead of a popup, Tab 1
+shows a red line such as "⚠ Ghost cells still hold products: Row 2 cells 9–10".
+
+Move the products out of a ghost cell with Tab 2 (return to on-hand) or Tab 5
+(switch with an empty cell, combine, or move a block up into the widened row).
+Nothing can be put into a ghost cell: Tabs 2, 5 and 6 play the error sound and
+move nothing. An emptied ghost disappears from the views at once; its database
+record goes at that shelf's next Commit. Widening the row again turns ghosts
+inside the new width back into normal cells. On reverse-ID shelves a ghost is
+numbered by its position from the left (e.g. 9, 10). The label printer skips
+ghost cells.
 
 To delete a saved shelf, select it under **Edit existing shelf**, press
 **Delete shelf**, and confirm. Deletion saves immediately and removes the shelf's
@@ -320,6 +344,10 @@ View: [shelf_browser.py](ui/desktop/shelf_browser.py). Every shelf drawing is a
 3. Use **Switch cells ↔** to exchange both complete contents, or either
    **Combine** button to empty its source into the other cell while keeping the
    target's existing products.
+
+Ghost cells (red, see [Ghost cells](#ghost-cells)) can be switched with an empty
+cell, combined into a normal cell, or moved as part of a block; anything that
+would put products into a ghost plays the error sound and moves nothing.
 
 Each action asks for confirmation and writes one immediate SQLite transaction.
 Stock quantities and original shelf-added timestamps are preserved. The two

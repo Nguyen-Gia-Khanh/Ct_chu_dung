@@ -86,7 +86,7 @@ class ActionDefaultTests(unittest.TestCase):
         app.pending_unassignments = set()
         app.on_hand_products = {}
         app.transferred_stock = {}
-        app.selected_address = SimpleNamespace(slot_id=7, slot_name="L1-1A1-1")
+        app.selected_address = SimpleNamespace(slot_id=7, slot_name="L1-1A1-1", ghost=False)
         app.queue_shift_timer = None
         app.queue_shift_clicks = 0
         app.reconcile_inventory_products = Mock()

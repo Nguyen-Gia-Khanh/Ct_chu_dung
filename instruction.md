@@ -86,13 +86,21 @@ changed (`StateActions.refresh_if_stale`, `WarehouseDatabase.data_version`).
 ## Tab 1: Shelf Designer
 
 **View:** [designer.py](ui/desktop/designer.py), `ShelfDesigner`.
-`prepare_row_inputs`, `add_row`, `remove_top_row`, and `validated_layout` own
-the structure controls. Row 1 is the ground row; new rows are added at the top.
+`prepare_row_inputs` (row count box: adds/removes at the top), `insert_row` (at
+the draggable blue bar, `insert_gap`; `gap_at` maps the pointer to a gap),
+`remove_row` (each row's ✕), and `validated_layout` / `typed_layout` own the
+structure controls. Row 1 is the ground row. `row_origins` records which saved
+row each editor row came from (None for a new row); labels show "(was 3)" /
+"(new)". `set_ghost_warning` shows the red ghost-cell line; cell-count edits call
+`on_cells_edited` after a short delay.
 
 **Actions:** [shelf_actions.py](ui/desktop/shelf_actions.py), `ShelfActions`.
-`new_shelf` / `load_selected_shelf` manage editor state; `can_resize_rows` and
-`_slots_are_empty` guard removal of occupied cells; `build_shelf_preview` and
-`render_shelf` send the preview to Tab 4; `commit_changes` saves it.
+`new_shelf` / `load_selected_shelf` manage editor state; `_plan_layout` plans the
+editor rows against the saved shelf (working occupancy included) with
+`mapper/services/layout_plan.py`; `refresh_ghost_warning` updates the red line
+without popups; `build_shelf_preview` applies the plan (`_apply_preview_renames`
+renames working caches from saved IDs) and `render_shelf` sends the preview,
+ghosts included, to Tab 4; `commit_changes` saves it with `row_origins`.
 `has_pending_changes` / `confirm_discard_pending` also protect navigation and
 Tab 5 operations. Previewing is unsaved; **Commit shelf design** is explicit.
 `delete_selected_shelf` deletes the shelf chosen in the existing-shelf selector
@@ -104,14 +112,18 @@ regular or exception placements. Deletion saves immediately.
 `ColumnMappingDialog` handle this tab's two import buttons through the shared
 `CatalogActions._import_csv` flow. Imports write
 immediately through `catalog.py` rather than waiting for the shelf commit.
-`ShelfOperations.commit_shelf` / `_sync_layout` in `shelves.py` save layouts.
+`ShelfOperations.commit_shelf` / `sync_layout` in `shelves.py` save layouts
+through the same `plan_layout` as the preview.
 `StateActions.reload_database_state`, `remember_imported_products`, and
 `refresh_shelf_selector` in `ShelfActions` keep caches/selectors current.
 `ScrollableFrame` scrolls the row editor; `clean_location_segment` and
 `make_slot_name` provide naming shared with the other tabs.
 
-**Check:** preview then commit a new shelf; reload it for editing; verify that
-occupied cells cannot be removed. **Reverse location ID (right to left)** is a
+**Check:** preview then commit a new shelf; reload it for editing; lower an
+occupied row and confirm the red line, the red ghost cells in Tabs 2–5, and the
+commit; insert and remove a middle row and confirm products move with their
+rows. Tests: `tests/test_tab1_row_edit.py`, `tests/test_ghost_cells.py`,
+`tests/test_ghost_tab_refusals.py`. **Reverse location ID (right to left)** is a
 per-shelf setting (`shelves.revert_location_id`) saved on Commit; it changes only
 cell numbers and location names while every product stays in the same physical
 position. Exception staging names update atomically on Commit. New shelves
@@ -228,6 +240,22 @@ renderers position the highest row first on screen. Cells display left to right 
 of side. On Commit, cells keep their stable `slot_id` and product bindings,
 while `slot_number`, `slot_name`, and copied exception staging names flip.
 Row order and physical product positions stay the same.
+
+**Ghost cells** are saved cells listed in the `ghost_slots` table (created on
+startup; no migration): cells removed from the design that still hold products,
+plus empty spacers up to the last occupied ghost of their row. A ghost's
+`slot_number` is its left-to-right position, so on reverse-ID rows it is renamed
+past the row's width. Ghost rows sit above `shelves.row_count`. `get_shelf`
+ignores ghosts; `get_shelf_ghosts` returns the visible ones (emptied ghosts are
+hidden at once and deleted by the shelf's next commit). `build_grid(ghosts=...)`
+appends them to their rows and draws ghost rows on top; `ShelfGrid.layout` stays
+the designed layout. `ShelfGridCanvas` paints them red (`GHOST_COLOR`, pale
+`GHOST_SPACER_COLOR`) with ⚠, and `set_count` on a ghost redraws through
+`trim_ghosts` so an emptied ghost leaves the drawing. `refuse_ghost_targets`
+(`shared.py`) raises `GhostCellError` for every write that would put products
+into a ghost; Tabs 2, 5 and 6 catch it (and check `SlotAddress.ghost` first) to
+play `play_error_sound` and show a status message. `next_cell` skips ghosts;
+`plan_block_shift` reports ghost targets in `BlockShift.ghosts`.
 
 The compact Tab 2 cell label uses bold row/column text and a numeric product
 count on the following line. Empty cells are gray, occupied cells are green,
@@ -462,8 +490,9 @@ identify the relevant code section without depending on changing line numbers.
 | File / function section | Tabs served | Purpose |
 | --- | --- | --- |
 | `catalog.py`: `import_products`, `import_catalog_products`, `get_display_catalog_products` | Imports on 1; transfers on 2; reads on 2, 3, 6 | Product stores and combined display names. |
-| `shelves.py`: `commit_shelf`, `_sync_layout` | 1 | Save structure; other tabs read the committed result. |
-| `shelves.py`: `get_shelf`, `get_slot_address`, `get_slot_contents`, `get_shelf_contents` | 1–6 through editor/view/actions | Resolve saved addresses and render contents. |
+| `shelves.py`: `commit_shelf`, `sync_layout`, `saved_cells`, `get_layout_cells` | 1 | Save structure (ghost cells, moved rows); other tabs read the committed result. |
+| `mapper/services/layout_plan.py`: `plan_layout`, `ghost_warning` | 1 (preview and commit) | One plan for where every saved cell goes and which become ghosts. |
+| `shelves.py`: `get_shelf`, `get_shelf_ghosts`, `get_slot_address`, `get_slot_contents`, `get_shelf_contents` | 1–6 through editor/view/actions | Resolve saved addresses and render contents. |
 | `inventory.py`: queue/on-hand/direct/stock/revert methods | 2 | Immediate inventory changes and Shift reversal. |
 | `inventory.py`: `swap_slot_contents`, `combine_slot_contents` | 5 | Atomic cell transfers. |
 | `inventory.py`: `get_product_inventory_states` | Writes on 2/5 through state reconciliation | Read back only affected product state. |

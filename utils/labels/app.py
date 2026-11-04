@@ -171,13 +171,21 @@ class LabelDatabase:
         connection.row_factory = sqlite3.Row
         return connection
 
+    @staticmethod
+    def _designed(connection, column: str) -> str:
+        """SQL condition leaving out ghost cells (removed from the shelf design); older
+        databases without the ghost table have none."""
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ghost_slots'").fetchone():
+            return f"{column} NOT IN (SELECT slot_id FROM ghost_slots)"
+        return "1"
+
     def list_shelves(self):
         with closing(self.connect()) as connection:
-            return connection.execute("""
+            return connection.execute(f"""
                 SELECT s.shelf_id, s.floor, s.side, s.shelf_code,
                        COUNT(DISTINCT sl.slot_id) AS cell_count
                 FROM shelves s
-                LEFT JOIN slots sl ON sl.shelf_id = s.shelf_id
+                LEFT JOIN slots sl ON sl.shelf_id = s.shelf_id AND {self._designed(connection, "sl.slot_id")}
                 GROUP BY s.shelf_id
                 ORDER BY s.floor COLLATE NOCASE, s.side COLLATE NOCASE, s.shelf_code COLLATE NOCASE
             """).fetchall()
@@ -194,6 +202,7 @@ class LabelDatabase:
         result = []
         with closing(self.connect()) as connection:
             connection.execute("BEGIN")
+            designed, designed_cell = (self._designed(connection, column) for column in ("slot_id", "sl.slot_id"))
             for shelf_id in dict.fromkeys(shelf_ids):
                 info = connection.execute(
                     "SELECT shelf_id, floor, side, shelf_code, row_count, revert_location_id FROM shelves WHERE shelf_id = ?", (shelf_id,),
@@ -201,7 +210,8 @@ class LabelDatabase:
                 if info is None:
                     raise ValueError("A selected shelf was removed. Refresh the database list.")
                 rows = connection.execute(
-                    "SELECT row_number, COUNT(*) AS slot_count FROM slots WHERE shelf_id = ? GROUP BY row_number", (shelf_id,),
+                    f"SELECT row_number, COUNT(*) AS slot_count FROM slots WHERE shelf_id = ? AND {designed} "
+                    "GROUP BY row_number", (shelf_id,),
                 ).fetchall()
                 counts = {row['row_number']:row['slot_count'] for row in rows}
                 label_name = "COALESCE(p.full_name,p.brand_name,p.product_id)"
@@ -211,7 +221,7 @@ class LabelDatabase:
                     FROM slots sl
                     LEFT JOIN (SELECT product_id,slot_id FROM placements UNION SELECT product_id,slot_id FROM exception_placements) pl ON pl.slot_id = sl.slot_id
                     LEFT JOIN catalog_products p ON p.product_id = pl.product_id
-                    WHERE sl.shelf_id = ?
+                    WHERE sl.shelf_id = ? AND {designed_cell}
                     ORDER BY sl.row_number, sl.slot_number, p.product_id COLLATE NOCASE
                 """, (shelf_id,)).fetchall()
                 metadata, products = {}, defaultdict(list)

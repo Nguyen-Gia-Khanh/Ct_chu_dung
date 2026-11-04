@@ -125,10 +125,12 @@ class SetBasedOperationTests(WorkspaceTestCase):
         self.assertEqual(self.db.get_on_hand_products()["ABCDE1"].stock_qty, 3)
         self.assertEqual(self.db.get_shelf(self.a1.shelf_id)[3], [2])
 
-    def test_layout_shrink_names_the_first_occupied_cell(self) -> None:
+    def test_layout_shrink_keeps_the_occupied_cell_as_a_ghost(self) -> None:
         self.db.assign_exception("ABCDE1", self.a3.slot_id, SECOND)
-        with self.assertRaisesRegex(ValueError, self.a3.slot_name):
-            self.db.save_shelf("1", "A", [1], shelf_id=self.a1.shelf_id)
+        self.db.save_shelf("1", "A", [1], shelf_id=self.a1.shelf_id)
+        self.assertTrue(self.db.get_slot_by_name(self.a3.slot_name).ghost)
+        self.assertTrue(self.db.get_slot_by_name(self.a2.slot_name).ghost)  # spacer keeps cell 3 in place
+        self.assertEqual(self.db.get_product_locations("ABCDE1"), [self.a3.slot_name])
 
     def test_add_to_on_hand_rejects_placed_products_before_writing(self) -> None:
         self.db.assign_exception("ABCDE1", self.a1.slot_id, SECOND)

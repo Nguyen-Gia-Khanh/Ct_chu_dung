@@ -349,8 +349,9 @@ class Api:
             revert_location_id = saved_grid.revert_location_id if saved_grid else False
         grid = build_grid(floor, side, code, layout, revert_location_id=revert_location_id)
         if saved_grid is not None:
+            # Ghost cells (already removed from the design) never block a preview.
             saved_positions = {(cell.row, position): cell for row in saved_grid.rows
-                               for position, cell in enumerate(row, 1)}
+                               for position, cell in enumerate(row, 1) if not cell.ghost}
             new_positions = {(cell.row, position): cell for row in grid.rows
                              for position, cell in enumerate(row, 1)}
             occupied = sorted(cell.slot_name for coordinate, cell in saved_positions.items()
