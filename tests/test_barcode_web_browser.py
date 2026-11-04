@@ -287,7 +287,7 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                     self.assertLessEqual(processed, 2.5 * 8 + 2, "laptop uploads are capped near 8 frames/s")
                 self.assertGreaterEqual(processed, 5, "scanning continues while capped")
                 self.assertGreater(shown, processed * 2, "the preview keeps the camera frame rate")
-                self.assertEqual(len(store.recent()), 1 if width == 393 else 4)
+                self.assertEqual(len(store.recent()), 1 if width == 393 else 5)
                 self.assertEqual(page.evaluate("document.body.scrollWidth <= innerWidth"), True)
                 print(f"Chrome {width}x{height}: {page.locator('#rate').inner_text()}")
                 page.screenshot(path=str(preview / f"scanner-{width}.png"), full_page=True)
@@ -302,6 +302,17 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 self.assertTrue(page.locator("#cells").is_hidden())
                 self.assertTrue(any("/api/catalog" in url for url in requested_workers), "catalog IDs fetched at start")
                 if on_phone:
+                    # Laptop second opinions: a Code 39 that is no catalog ID is ignored, a catalog ID is a scan.
+                    page.wait_for_function("catalogIds !== null")
+                    scans = len(store.recent())
+                    page.evaluate("receive({results: [{text: '0', format: 'Code 39'}], present: true, stage: 'test'}, 'laptop')")
+                    page.wait_for_timeout(300)
+                    self.assertEqual(len(store.recent()), scans, "a laptop Code 39 outside the catalog is no scan")
+                    page.evaluate("receive({results: [{text: 'CAT001', format: 'Code 39'}], present: true, stage: 'test'},"
+                                  " 'laptop')")
+                    page.wait_for_function("document.querySelector('#result').textContent === 'CAT001'"
+                                           " && document.querySelector('#delivery').textContent === 'Máy tính đã nhận.'")
+                    self.assertEqual((store.recent()[0]["text"], store.recent()[0]["source"]), ("CAT001", "laptop:test"))
                     # Save-frame burst: the scan window exactly as the decoder sees it, kept on the laptop.
                     page.get_by_role("button", name="Lưu khung hình gửi máy tính").click()
                     page.wait_for_function("document.querySelector('#status').textContent"
@@ -335,7 +346,7 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 page.close()
             receiver = browser.new_page(viewport={"width": 1000, "height": 760})
             receiver.goto(base + "/receiver")
-            receiver.wait_for_function("document.querySelector('#scans').children.length === 5")
+            receiver.wait_for_function("document.querySelector('#scans').children.length === 6")
             self.assertIn("warehouse-test-001", receiver.locator("#scans").inner_text())
             receiver.screenshot(path=str(preview / "receiver.png"))
             receiver.close()

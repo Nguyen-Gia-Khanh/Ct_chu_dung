@@ -106,3 +106,15 @@ button for real samples):
   nothing: zoom matters more than any decoder change.
 - Save-frame button: 6 PNG frames of the decode window plus details to
   `data/barcode_web/samples/`.
+
+## Addendum: saved phone frames (same day)
+
+144 frames (24 bursts) saved with the new button on an iPhone, all at zoom
+0.5 (the ultra-wide lens: the slider's left end, which looked like 1×). Replayed
+6-frame bursts: main 14/23 labels, this branch 14/23 without and 16/23 with the
+catalog, 0 wrong; the laptop pipeline read 2 more. The receiver log showed two
+wrong scans, both laptop second opinions (`0` as Code 39, `059521` as ITF), so:
+the laptop reads only Code 39/128, QR and Data Matrix; a second opinion's Code 39
+must be a catalog ID; second opinions start after 0.6 s instead of 1.2 s. Votes
+for `$ / + % . -` are ignored by catalog completion (no ID contains them).
+`tests/check_barcode_samples.js` replays saved bursts.

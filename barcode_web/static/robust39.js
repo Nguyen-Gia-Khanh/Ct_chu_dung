@@ -529,7 +529,7 @@
   // completion fills at most one character no frame saw, and none that any frame read differently.
   // (Synthetic heavy damage, 300 labels with real catalog IDs: 0 wrong; with each true ID removed from
   // the catalog, 0 wrong. Allowing 2 unseen characters gave 15–19 wrong IDs for missing products.)
-  const CATALOG_SLACK = 1, WEAK_AGAINST = .5, MIN_CONFIRMED = 6;
+  const CATALOG_SLACK = 1, WEAK_AGAINST = .5, MIN_CONFIRMED = 6, ID_CHAR = /^[0-9A-Z]$/;
 
   /** Catalog IDs: a check for complete reads, and completion of damaged reads from their evidence. */
   class Catalog {
@@ -562,6 +562,9 @@
           const votes = new Map();
           for (const source of [start.get(p), end.get(length - 1 - p)]) {
             for (const [char, entry] of source || []) {
+              // "$ / + % . - space" are in no product ID: where a bend squeezes the bars they appear
+              // instead of the real character, as evidence of distortion, never of another product.
+              if (!ID_CHAR.test(char)) continue;
               const merged = votes.get(char) || { weight: 0, frames: new Set() };
               merged.weight += entry.weight;
               for (const frame of entry.frames) merged.frames.add(frame);

@@ -197,13 +197,19 @@ Each frame, the worker does:
 The rectangle on the preview is an aiming hint from the decoder, not a
 confirmation. A read flashes the frame green, vibrates, and beeps (speaker
 button toggles the beep). Torch and zoom buttons appear when the phone's camera
-exposes them; zoom gives the sensor's real detail when labels are small.
+exposes them; zoom gives the sensor's real detail when labels are small. On
+iPhones with an ultra-wide lens the zoom range starts at 0.5: that is the
+ultra-wide lens, which focuses close up but has half the detail of 1×.
 
 **Laptop fallback.** If the worker fails to load or keeps failing, or has not
 become ready after 4 s, the page uploads JPEG frames to `POST /api/frames` at up
-to 8 per second (`UPLOAD_INTERVAL`), otherwise as before (`processing.py`, unchanged). While the
+to 8 per second (`UPLOAD_INTERVAL`), otherwise as before (`processing.py`). While the
 phone decodes, it also sends one frame every ~350 ms to the laptop as a second
-opinion when it has seen a barcode-like pattern for 1.2 s without a read. The
+opinion when it has seen a barcode-like pattern for 0.6 s without a read
+(`SECOND_OPINION_AFTER`): on saved real frames the laptop read two warped labels
+the phone missed. A second opinion's Code 39 must be a catalog ID. The laptop
+reads only the supported formats below; other linear codes (ITF, Codabar, EAN)
+produced false reads such as `059521` on warped labels. The
 **Mask** toggle still requests the laptop's thresholded diagnostic image. The
 status pill says "Scanning on phone" or "Scanning on laptop".
 
@@ -283,6 +289,9 @@ frames, 150 ms apart, of the scan window exactly as the decoder sees it: PNG at
 decode resolution plus JSON details (zoom, video size, crop, last decoder stage,
 browser). They are saved under `data/barcode_web/samples/` (ignored by Git) for
 tuning the decoder on real labels. Nothing is sent unless the button is pressed.
+Replay them through the decoder (catalog from the warehouse database) with
+`node tests/check_barcode_samples.js`; an optional `labels.json` in the samples
+folder, mapping a burst ID to its true product ID, counts correct and wrong reads.
 
 Supported formats: Code 39, Code 128, QR and Data Matrix. Keep the whole code plus
 its blank margins inside the frame. Any value read in the last 1.2 seconds is

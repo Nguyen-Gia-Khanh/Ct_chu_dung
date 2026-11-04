@@ -40,6 +40,9 @@ const MAX_PHONE_WIDTH = 1920, MAX_UPLOAD_WIDTH = 1280;
 const IDLE_GAP = 150, HOLD_GAP = 300, EAGER_FOR = 3000;
 // Laptop uploads (fallback decoding, mask preview, second opinion): at most 8 per second.
 const UPLOAD_INTERVAL = 1000 / 8;
+// Second opinion: while the phone sees a barcode it cannot read, a frame to the laptop every 350 ms
+// after 0.6 s. On saved real frames the laptop read 2 warped labels in 23 that the phone missed.
+const SECOND_OPINION_AFTER = 600, SECOND_OPINION_EVERY = 350;
 // Any text read within this time is a duplicate (one label can carry a QR and a Code 39).
 const REPEAT_MS = 1200;
 // Save-frame button: a short burst of exactly what the decoder analyses, sent to the laptop for tuning.
@@ -71,6 +74,8 @@ let processed = 0, elapsed = 0, sampleAt = 0;
 let lastPresent = 0, lastRead = 0, scanningSince = 0;
 let aimSince = 0;   // when the current barcode-like pattern came into view (0: none in view)
 let lastStage = "", capturing = false;
+let catalogIds = null;   // stored-spelling catalog IDs, to check the laptop's second opinions
+const normalizeId = text => String(text).trim().toUpperCase().replace(/[- ]/g, "");
 let audio = null, sound = stored("scanner-sound") !== "off";
 
 // ---------- Phone-side decoder ----------
@@ -184,7 +189,8 @@ function laptopDue(now) {
   if (laptop.busy || now < laptop.previous) return false;
   if (laptopDecoding(now) || filter.checked) return true;
   if (!phoneDecoding()) return false;
-  return now - lastPresent < 300 && now - Math.max(lastRead, scanningSince) > 1200 && now - laptop.previous > 350;
+  return now - lastPresent < 300 && now - Math.max(lastRead, scanningSince) > SECOND_OPINION_AFTER
+    && now - laptop.previous > SECOND_OPINION_EVERY;
 }
 
 async function sendToLaptop(crop, current) {
@@ -260,6 +266,12 @@ function receive(answer, source) {
     hint.textContent = "Giữ máy ổn định. Đưa lại gần hoặc phóng to để mã vạch vừa khung.";
   }
   const found = answer.results?.[0];
+  // A second opinion is one laptop frame: its Code 39 must be a catalog ID (a warped label once gave "0").
+  // The phone's own reads are checked in the worker; full laptop fallback keeps its old behaviour.
+  if (found && source === "laptop" && phoneDecoding() && catalogIds
+      && String(found.format).replace(/\s/g, "").toLowerCase().startsWith("code39") && !catalogIds.has(normalizeId(found.text))) {
+    return;
+  }
   if (found) {
     // Which reader got it, logged with the scan to check real phones' speed.
     const via = source === "laptop" ? `laptop:${answer.stage}` : found.source === "zxing" ? `zxing:${answer.stage}` : found.source;
@@ -296,7 +308,10 @@ async function loadCatalog() {
     const response = await fetch("/api/catalog", { headers: { Authorization: `Bearer ${token}` },
                                                    signal: AbortSignal.timeout(10000) });
     const answer = response.ok ? await response.json() : null;
-    if (Array.isArray(answer?.ids) && answer.ids.length) decoder.worker?.postMessage({ type: "catalog", ids: answer.ids });
+    if (Array.isArray(answer?.ids) && answer.ids.length) {
+      catalogIds = new Set(answer.ids.map(normalizeId));
+      decoder.worker?.postMessage({ type: "catalog", ids: answer.ids });
+    }
   } catch (_) { /* Optional: scanning continues without catalog checks. */ }
 }
 
