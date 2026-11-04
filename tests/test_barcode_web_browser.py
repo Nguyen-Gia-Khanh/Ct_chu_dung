@@ -221,6 +221,12 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                       if (message?.type === 'frame') window.decodedFrames++;
                       return post.call(this, message, ...rest);
                     };
+                    // An iPhone-like zoom range: 0.5 is the ultra-wide lens.
+                    MediaStreamTrack.prototype.getCapabilities = () => ({ zoom: { min: 0.5, max: 10, step: 0.1 } });
+                    window.appliedConstraints = [];
+                    MediaStreamTrack.prototype.applyConstraints = async constraints => {
+                      window.appliedConstraints.push(constraints);
+                    };
                     navigator.mediaDevices.getUserMedia = async () => {
                       window.fakeStream = source.captureStream(30);
                       return window.fakeStream;
@@ -254,6 +260,8 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                     self.assertEqual(store.recent()[0]["source"], attempts[0]["source"])
                 self.assertEqual(page.locator("#result").inner_text(), "001234567890")
                 self.assertTrue(requested_workers, "the phone decoder worker is loaded")
+                self.assertEqual(page.evaluate("[zoom.value, appliedConstraints[0].advanced[0].zoom]"), ["1", 1],
+                                 "the camera starts on the main lens (1x), not the ultra-wide 0.5")
                 if on_phone:
                     self.assertFalse(uploaded_frames, "decoded on the phone: no camera frames leave it")
                     self.assertEqual(page.locator("#link-state").inner_text(), "Đang quét trên điện thoại")

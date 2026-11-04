@@ -199,7 +199,8 @@ confirmation. A read flashes the frame green, vibrates, and beeps (speaker
 button toggles the beep). Torch and zoom buttons appear when the phone's camera
 exposes them; zoom gives the sensor's real detail when labels are small. On
 iPhones with an ultra-wide lens the zoom range starts at 0.5: that is the
-ultra-wide lens, which focuses close up but has half the detail of 1×.
+ultra-wide lens, which focuses close up but has half the detail of 1×. The camera
+starts at 1× (the main lens); a zoom you set with the slider is remembered.
 
 **Laptop fallback.** If the worker fails to load or keeps failing, or has not
 become ready after 4 s, the page uploads JPEG frames to `POST /api/frames` at up

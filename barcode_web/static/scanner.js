@@ -45,6 +45,9 @@ const UPLOAD_INTERVAL = 1000 / 8;
 const SECOND_OPINION_AFTER = 600, SECOND_OPINION_EVERY = 350;
 // Any text read within this time is a duplicate (one label can carry a QR and a Code 39).
 const REPEAT_MS = 1200;
+// iPhones list their ultra-wide lens as zoom 0.5; start on the main lens (1×), which has twice the
+// detail. A zoom the person sets is remembered; the new key drops values saved from the old 0.5 start.
+const DEFAULT_ZOOM = 1, ZOOM_KEY = "scanner-zoom-level";
 // Save-frame button: a short burst of exactly what the decoder analyses, sent to the laptop for tuning.
 const SAMPLE_BURST = 6, SAMPLE_GAP = 150;
 const sampleCanvas = document.createElement("canvas");
@@ -551,8 +554,8 @@ async function cameraControls() {
   if (capabilities.zoom) {
     const { min, max, step } = capabilities.zoom;
     Object.assign(zoom, { min, max, step: step || .1 });
-    const saved = Number(stored("scanner-zoom"));
-    zoom.value = saved >= min && saved <= max ? saved : min;
+    const saved = stored(ZOOM_KEY) === null ? NaN : Number(stored(ZOOM_KEY));
+    zoom.value = saved >= min && saved <= max ? saved : Math.min(max, Math.max(min, DEFAULT_ZOOM));
     advanced.zoom = Number(zoom.value);
     zoomControl.hidden = max <= min;
   }
@@ -651,7 +654,7 @@ torchButton.addEventListener("click", async () => {
   } catch (_) { torchButton.hidden = true; }
 });
 zoom.addEventListener("input", () => {
-  store("scanner-zoom", zoom.value);
+  store(ZOOM_KEY, zoom.value);
   track?.applyConstraints({ advanced: [{ zoom: Number(zoom.value) }] }).catch(() => {});
 });
 addEventListener("pagehide", stop);
