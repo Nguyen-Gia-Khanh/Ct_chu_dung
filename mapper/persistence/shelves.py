@@ -4,23 +4,28 @@ from __future__ import annotations
 
 import sqlite3
 from collections import Counter
+from collections.abc import Sequence
 from contextlib import closing
 from uuid import uuid4
 
-from mapper.core.common import UTC_DEFAULT, clean_location_segment, iso_timestamp, normalize_sku, shelf_cell_number, shelf_slot_names
-from .models import LayoutConflictError, Placement, SlotAddress, validate_stock_quantity
+from mapper.core.common import UTC_DEFAULT, clean_location_segment, iso_timestamp, normalize_sku, shelf_cell_number
+from mapper.services.layout_plan import LayoutPlan, SavedCell, plan_layout
+from .models import GhostCellError, LayoutConflictError, Placement, SlotAddress, validate_stock_quantity
 from .shared import IN_IDS, LOCATION_SQL, PRODUCT_NAME_SQL, ids_param
 
 SLOT_ADDRESS_SQL = """SELECT slots.slot_id, shelves.shelf_id, shelves.floor, shelves.side, shelves.shelf_code,
-                             slots.row_number, slots.slot_number, slots.slot_name
+                             slots.row_number, slots.slot_number, slots.slot_name,
+                             EXISTS (SELECT 1 FROM ghost_slots g WHERE g.slot_id = slots.slot_id) AS ghost
                       FROM slots JOIN shelves ON shelves.shelf_id = slots.shelf_id"""
+OCCUPIED_SQL = """(EXISTS (SELECT 1 FROM placements p WHERE p.slot_id = {cell}.slot_id)
+                  OR EXISTS (SELECT 1 FROM exception_placements e WHERE e.slot_id = {cell}.slot_id))"""
 
 
-def rename_slots(connection: sqlite3.Connection, changes: dict[int, tuple[int, str]]) -> None:
-    """Renumber cells in place, including the exception table's copied location IDs."""
+def rename_slots(connection: sqlite3.Connection, changes: dict[int, tuple[int, int, str]]) -> None:
+    """Move cells to a new (row, number, name), including the exception table's copied location IDs."""
     if not changes:
         return
-    if len({name for number, name in changes.values()}) != len(changes):
+    if len({name for _row, _number, name in changes.values()}) != len(changes):
         raise LayoutConflictError("These shelf codes produce duplicate location IDs. Use distinct shelf codes.")
     prefix = f"__location_update_{uuid4().hex}_"
     highest = connection.execute("SELECT COALESCE(MAX(slot_number), 0) FROM slots").fetchone()[0]
@@ -32,47 +37,63 @@ def rename_slots(connection: sqlite3.Connection, changes: dict[int, tuple[int, s
     connection.executemany("UPDATE slots SET slot_number = ?, slot_name = ? WHERE slot_id = ?",
                            [(highest + sid + 1, f"{prefix}{sid}", sid) for sid in changes])
     try:
-        connection.executemany("UPDATE slots SET slot_number = ?, slot_name = ? WHERE slot_id = ?",
-                               [(number, name, sid) for sid, (number, name) in changes.items()])
+        connection.executemany("UPDATE slots SET row_number = ?, slot_number = ?, slot_name = ? WHERE slot_id = ?",
+                               [(row, number, name, sid) for sid, (row, number, name) in changes.items()])
         connection.executemany("UPDATE wait_to_update_csv SET slot_name = ? WHERE id = ?",
-                               [(changes[row['slot_id']][1], row['id']) for row in staged])
+                               [(changes[row['slot_id']][2], row['id']) for row in staged])
     except sqlite3.IntegrityError as error:
         raise LayoutConflictError(
             "A renamed location ID conflicts with another shelf or staged exception. Nothing was saved."
         ) from error
 
 
+def saved_cells(connection: sqlite3.Connection, shelf_id: int) -> tuple[int, bool, list[SavedCell]]:
+    """(row count, reverse flag, cells): each cell's left-to-right position, ghost flag,
+    occupancy and location ID. A ghost's position is its number."""
+    shelf = connection.execute("SELECT revert_location_id, row_count FROM shelves WHERE shelf_id = ?",
+                               (shelf_id,)).fetchone()
+    if shelf is None:
+        raise KeyError(f"Shelf {shelf_id} does not exist.")
+    reverse = bool(shelf["revert_location_id"])
+    rows = connection.execute(f"""SELECT s.slot_id, s.row_number, s.slot_number, s.slot_name,
+                                         EXISTS (SELECT 1 FROM ghost_slots g WHERE g.slot_id = s.slot_id) AS ghost,
+                                         {OCCUPIED_SQL.format(cell="s")} AS occupied
+                                  FROM slots s WHERE s.shelf_id = ?""", (shelf_id,)).fetchall()
+    widths = Counter(row["row_number"] for row in rows if not row["ghost"])
+    return shelf["row_count"], reverse, [
+        SavedCell(row["slot_id"], row["row_number"],
+                  row["slot_number"] if row["ghost"] else
+                  shelf_cell_number(row["slot_number"], widths[row["row_number"]], reverse),
+                  bool(row["ghost"]), bool(row["occupied"]), row["slot_name"]) for row in rows]
+
+
 def sync_layout(connection: sqlite3.Connection, shelf_id: int, floor: str, shelf_code: str,
-                layout: list[int], *, side: str = "1", revert_location_id: bool | None = None) -> None:
-    """Keep cell IDs and products at their physical positions while labels change."""
-    previous_reverse = bool(connection.execute(
-        "SELECT revert_location_id FROM shelves WHERE shelf_id = ?", (shelf_id,)).fetchone()[0])
+                layout: list[int], *, side: str = "1", revert_location_id: bool | None = None,
+                row_origins: Sequence[int | None] | None = None) -> LayoutPlan:
+    """Keep cell IDs and products at their physical positions while labels change.
+
+    Removed cells that still hold products stay as ghost cells, and rows follow
+    row_origins (see mapper.services.layout_plan).
+    """
+    row_count, previous_reverse, saved = saved_cells(connection, shelf_id)
     if revert_location_id is None:
         revert_location_id = previous_reverse
-    saved = connection.execute("SELECT * FROM slots WHERE shelf_id = ?", (shelf_id,)).fetchall()
-    widths = Counter(row['row_number'] for row in saved)
-    existing = {(row['row_number'], shelf_cell_number(row['slot_number'], widths[row['row_number']], previous_reverse)): row
-                for row in saved}
-    names = shelf_slot_names(floor, side, shelf_code, layout, revert_location_id=revert_location_id)
-    removed = [row['slot_id'] for key, row in existing.items() if key not in names]
-    if removed:
-        occupied = connection.execute(f"""SELECT slot_name FROM slots WHERE slot_id {IN_IDS}
-            AND (EXISTS (SELECT 1 FROM placements p WHERE p.slot_id = slots.slot_id)
-                 OR EXISTS (SELECT 1 FROM exception_placements e WHERE e.slot_id = slots.slot_id))
-            ORDER BY row_number, slot_number LIMIT 1""", (ids_param(removed),)).fetchone()
-        if occupied:
-            raise LayoutConflictError(f"{occupied[0]} still contains committed products. "
-                                      "Return or move those products before removing its row or cell.")
-        connection.execute(f"DELETE FROM slots WHERE slot_id {IN_IDS}", (ids_param(removed),))
-    rename_slots(connection, {row['slot_id']: (
-        shelf_cell_number(position, layout[row_number - 1], revert_location_id), names[(row_number, position)])
-        for (row_number, position), row in existing.items()
-        if (row_number, position) in names and row['slot_name'] != names[(row_number, position)]})
+    plan = plan_layout(saved, row_count, layout, floor=floor, side=side, shelf_code=shelf_code,
+                       revert_location_id=revert_location_id, row_origins=row_origins)
+    if plan.deleted:
+        connection.execute(f"DELETE FROM slots WHERE slot_id {IN_IDS}", (ids_param(plan.deleted),))
+    current = {cell.key: (cell.row, cell.name) for cell in saved}
+    rename_slots(connection, {sid: (cell.row, cell.number, cell.name) for sid, cell in plan.kept.items()
+                              if current[sid] != (cell.row, cell.name)})
+    connection.execute(f"DELETE FROM ghost_slots WHERE slot_id {IN_IDS}",
+                       (ids_param(sid for sid, cell in plan.kept.items() if not cell.ghost),))
+    connection.executemany("INSERT OR IGNORE INTO ghost_slots (slot_id) VALUES (?)",
+                           [(sid,) for sid, cell in plan.kept.items() if cell.ghost])
     connection.executemany("INSERT INTO slots (shelf_id, row_number, slot_number, slot_name) VALUES (?, ?, ?, ?)",
-                           [(shelf_id, row, shelf_cell_number(position, layout[row - 1], revert_location_id), name)
-                            for (row, position), name in names.items() if (row, position) not in existing])
+                           [(shelf_id, cell.row, cell.number, cell.name) for cell in plan.created])
     connection.execute("UPDATE shelves SET row_count = ?, revert_location_id = ? WHERE shelf_id = ?",
                        (len(layout), int(revert_location_id), shelf_id))
+    return plan
 
 
 def _validated_staging(staged_assignments: dict[str, Placement]) -> dict[str, Placement]:
@@ -108,8 +129,28 @@ class ShelfOperations:
             if shelf is None:
                 raise KeyError(f"Shelf {shelf_id} does not exist.")
             counts = dict(connection.execute(
-                "SELECT row_number, COUNT(*) FROM slots WHERE shelf_id = ? GROUP BY row_number", (shelf_id,)))
+                """SELECT row_number, COUNT(*) FROM slots WHERE shelf_id = ?
+                   AND slot_id NOT IN (SELECT slot_id FROM ghost_slots) GROUP BY row_number""", (shelf_id,)))
         return shelf["floor"], shelf["side"], shelf["shelf_code"], [counts.get(n, 0) for n in range(1, shelf["row_count"] + 1)]
+
+    def get_layout_cells(self, shelf_id: int) -> tuple[int, list[SavedCell]]:
+        """The saved row count and cells, as the layout planner reads them."""
+        with closing(self.connect()) as connection:
+            row_count, _reverse, cells = saved_cells(connection, shelf_id)
+        return row_count, cells
+
+    def get_shelf_ghosts(self, shelf_id: int) -> list[tuple[int, int, str]]:
+        """Ghost cells to draw as (row, number, location ID): in each row, those up to the
+        last ghost still holding products. Emptied ones stay saved until the next commit."""
+        with closing(self.connect()) as connection:
+            rows = connection.execute(f"""
+                SELECT s.row_number, s.slot_number, s.slot_name FROM slots s JOIN ghost_slots USING(slot_id)
+                WHERE s.shelf_id = ? AND EXISTS (
+                    SELECT 1 FROM slots o JOIN ghost_slots USING(slot_id)
+                    WHERE o.shelf_id = s.shelf_id AND o.row_number = s.row_number
+                      AND o.slot_number >= s.slot_number AND {OCCUPIED_SQL.format(cell="o")})
+                ORDER BY s.row_number, s.slot_number""", (shelf_id,)).fetchall()
+        return [tuple(row) for row in rows]
 
     def get_shelf_revert_location_id(self, shelf_id: int) -> bool:
         with closing(self.connect()) as connection:
@@ -121,7 +162,7 @@ class ShelfOperations:
     def _fetch_slot(self, where: str, params: tuple) -> SlotAddress | None:
         with closing(self.connect()) as connection:
             row = connection.execute(f"{SLOT_ADDRESS_SQL} WHERE {where}", params).fetchone()
-        return SlotAddress(**row) if row is not None else None
+        return SlotAddress(**{**dict(row), "ghost": bool(row["ghost"])}) if row is not None else None
 
     def get_slot_address(self, floor: str, side: str, shelf_code: str, row_number: int, slot_number: int) -> SlotAddress | None:
         return self._fetch_slot(
@@ -166,8 +207,12 @@ class ShelfOperations:
         side: str = "1",
         shelf_id: int | None = None,
         revert_location_id: bool | None = None,
+        row_origins: Sequence[int | None] | None = None,
     ) -> int:
-        """Save a layout plus the designer's staged moves and removals in one transaction."""
+        """Save a layout plus the designer's staged moves and removals in one transaction.
+
+        row_origins[i] is the saved row that becomes row i + 1 (None for a new row);
+        omitted, rows keep their numbers and change only at the top."""
         if any(type(count) is not int or count < 0 for count in layout):
             raise ValueError('Each shelf row needs a nonnegative whole-number cell count.')
         if revert_location_id is not None and type(revert_location_id) is not bool:
@@ -187,7 +232,7 @@ class ShelfOperations:
             connection.execute(f"DELETE FROM placements WHERE product_id {IN_IDS}", (ids_param(unassigned | staged.keys()),))
             connection.execute(f"DELETE FROM on_hand_queue WHERE product_id {IN_IDS}", (ids_param(staged),))
             sync_layout(connection, shelf_id, floor, shelf_code, layout, side=side,
-                        revert_location_id=revert_location_id)
+                        revert_location_id=revert_location_id, row_origins=row_origins)
             self._place_staged(connection, shelf_id, staged)
         return shelf_id
 
@@ -227,6 +272,11 @@ class ShelfOperations:
         unknown = sorted({placement.slot_name for placement in staged.values()} - slot_ids.keys())
         if unknown:
             raise ValueError(f"Unknown slot in staged assignments: {unknown[0]}")
+        ghosts = {row[0] for row in connection.execute(
+            "SELECT slot_name FROM slots JOIN ghost_slots USING(slot_id) WHERE shelf_id = ?", (shelf_id,))}
+        into_ghost = sorted({placement.slot_name for placement in staged.values()} & ghosts)
+        if into_ghost:
+            raise GhostCellError(into_ghost[0])
         connection.executemany("DELETE FROM exception_placements WHERE product_id = ? AND slot_id = ?",
                                [(pid, slot_ids[p.slot_name]) for pid, p in staged.items()])
         connection.executemany("INSERT INTO placements (product_id, slot_id, stock_qty, assigned_at) VALUES (?, ?, ?, ?)",

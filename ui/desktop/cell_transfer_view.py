@@ -7,11 +7,12 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
 from mapper.core.common import clean_location_segment, normalize_sku
-from mapper.persistence.database import Placement, SlotAddress, WarehouseDatabase
+from mapper.persistence.database import GhostCellError, Placement, SlotAddress, WarehouseDatabase
 from mapper.features.web_upload import LocationUpdate
 from mapper.services.cell_lookup import find_cell
 from mapper.services.shelf_grid import cells_in_id_order, load_grid, plan_block_shift
 from .shelf_address_lookup import ShelfAddressLookup
+from .sounds import play_error_sound
 from .widgets import ShelfGridCanvas, sync_tree_rows
 from utils.barcode_scanner import BarcodeScanner
 
@@ -650,6 +651,11 @@ class CellTransferView(ttk.Frame):
             return None
         return left, right
 
+    def _refuse_ghost(self, slot_name: str) -> None:
+        """Products may leave a ghost cell but never arrive in one: error sound, no popup."""
+        play_error_sound(self)
+        self.status_text.set(f"Nothing moved: {GhostCellError(slot_name)}")
+
     def swap_cells(self) -> None:
         if not self.can_change():
             return
@@ -660,6 +666,10 @@ class CellTransferView(ttk.Frame):
         if pair is None:
             return
         left, right = pair
+        for ghost, other in ((left, self.right), (right, self.left)):
+            if ghost.ghost and other.selected_product_count:
+                self._refuse_ghost(ghost.slot_name)
+                return
         if not messagebox.askyesno(
             "Switch complete cell contents?",
             f"Exchange all products in {left.slot_name} and {right.slot_name}?\n\n"
@@ -692,6 +702,9 @@ class CellTransferView(ttk.Frame):
                 [LocationUpdate(pid, right.slot_name) for pid in left_products] +
                 [LocationUpdate(pid, left.slot_name) for pid in right_products]
             )
+        except GhostCellError as error:
+            self._refuse_ghost(error.slot_name)
+            return
         except Exception as error:
             messagebox.showerror("Cells could not be switched", str(error), parent=self)
             return
@@ -719,6 +732,9 @@ class CellTransferView(ttk.Frame):
         source_count = source.selected_product_count
         if source_count == 0:
             self.status_text.set(f"{source_address.slot_name} is already empty.")
+            return
+        if target_address.ghost:
+            self._refuse_ghost(target_address.slot_name)
             return
         source_products: list[str] = []
         target_products: list[str] = []
@@ -758,6 +774,9 @@ class CellTransferView(ttk.Frame):
             self.last_changed_updates = [
                 LocationUpdate(pid, target_address.slot_name) for pid in source_products
             ]
+        except GhostCellError as error:
+            self._refuse_ghost(error.slot_name)
+            return
         except Exception as error:
             messagebox.showerror("Cells could not be combined", str(error), parent=self)
             return
@@ -820,6 +839,11 @@ class CellTransferView(ttk.Frame):
             messagebox.showerror("Shelf not found", "A shelf no longer exists. Press Refresh both.", parent=self)
             return
         pairs = list(zip(cells_in_id_order(left_grid, left_marked), cells_in_id_order(right_grid, right_marked)))
+        into_ghost = next((ghost.slot_name for first, second in pairs
+                           for ghost, other in ((first, second), (second, first)) if ghost.ghost and other.count), None)
+        if into_ghost is not None:
+            self._refuse_ghost(into_ghost)
+            return
         moves = {left.slot_name: right.slot_name for left, right in pairs}
         moves.update({right.slot_name: left.slot_name for left, right in pairs})
         left_count = sum(left.count for left, _right in pairs)
@@ -834,6 +858,9 @@ class CellTransferView(ttk.Frame):
             return
         try:
             moved = self._move_cells(moves, [*left_contents, *right_contents])
+        except GhostCellError as error:
+            self._refuse_ghost(error.slot_name)
+            return
         except Exception as error:
             messagebox.showerror("Blocks could not be switched", str(error), parent=self)
             return
@@ -857,7 +884,7 @@ class CellTransferView(ttk.Frame):
         direction = _direction_text(rows_up, cells_right)
         plan = plan_block_shift(grid, pane.shelf_grid.marked, rows_up, cells_right)
         if plan.missing:
-            hint = ("\n\nTo make room at the top, add the row in Tab 1 (Add row at top, then commit) first."
+            hint = ("\n\nTo make room at the top, add the row in Tab 1 (Insert row at bar, then commit) first."
                     if rows_up > 0 else "")
             messagebox.showerror(
                 "Block would leave the shelf",
@@ -869,6 +896,9 @@ class CellTransferView(ttk.Frame):
                 "Target cell is not empty",
                 f"{plan.blocked[0]} already holds products and is not part of the block.\n\n"
                 "Empty it, or include it in the block. Nothing was moved.", parent=self)
+            return
+        if plan.ghosts:
+            self._refuse_ghost(plan.ghosts[0])
             return
         if not plan.moves:
             self.status_text.set("The selected cells are empty. Nothing to move.")
@@ -884,6 +914,9 @@ class CellTransferView(ttk.Frame):
             return
         try:
             moved = self._move_cells(plan.moves, contents)
+        except GhostCellError as error:
+            self._refuse_ghost(error.slot_name)
+            return
         except Exception as error:
             messagebox.showerror("Block could not be moved", str(error), parent=self)
             return

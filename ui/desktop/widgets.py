@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from tkinter import ttk
 from weakref import WeakSet
 
-from mapper.services.shelf_grid import GridCell, ShelfGrid, cell_color
+from mapper.services.shelf_grid import GridCell, ShelfGrid, cell_color, trim_ghosts
 
 
 MARKED_COLOR = "#9fc5ec"
@@ -17,6 +17,11 @@ DRAG_THRESHOLD_PX = 5
 
 def products_label(count: int) -> str:
     return f"{count} product{'s' if count != 1 else ''}"
+
+
+def _grid_key(grid: ShelfGrid) -> tuple:
+    """Same key means same cells: only colors and counts need repainting."""
+    return (*grid.key, grid.layout, grid.revert_location_id, tuple(cell.slot_name for cell in grid.ghosts))
 
 
 @dataclass
@@ -106,14 +111,14 @@ class ShelfGridCanvas(ttk.Frame):
 
     @property
     def key(self) -> tuple | None:
-        return None if self.model is None else (*self.model.key, self.model.layout, self.model.revert_location_id)
+        return None if self.model is None else _grid_key(self.model)
 
     def show(self, grid: ShelfGrid, *, selected: str | None = None, staged: dict[str, int] | None = None,
              keep_view: bool = True) -> None:
         """Draw a shelf; the same shelf with the same layout only recolors its cells."""
         counts = {cell.slot_name: cell.count for cell in grid.cells()}
         self.marked &= counts.keys()
-        if self.key == (*grid.key, grid.layout, grid.revert_location_id):
+        if self.key == _grid_key(grid):
             self.model, self.counts, self.staged = grid, counts, dict(staged or {})
             self.selected = selected if selected in counts else None
             for slot_name in self.cells:
@@ -139,6 +144,10 @@ class ShelfGridCanvas(ttk.Frame):
         if slot_name in self.cells:
             self.counts[slot_name] = count
             self.staged[slot_name] = staged
+            if self.cells[slot_name].ghost:
+                # An emptied ghost (with nothing occupied to its right) leaves the drawing.
+                self.show(trim_ghosts(self.model, self.counts), selected=self.selected, staged=self.staged)
+                return
             self._paint(slot_name)
 
     def select(self, slot_name: str | None, *, reveal: bool = True) -> None:
@@ -213,15 +222,18 @@ class ShelfGridCanvas(ttk.Frame):
 
     def _paint(self, slot_name: str, *, marked: bool | None = None) -> None:
         rect, text = self._items[slot_name]
+        cell = self.cells[slot_name]
         count = self.counts.get(slot_name, 0)
         staged = self.staged.get(slot_name, 0)
         selected = slot_name == self.selected
         if marked is None:
             marked = slot_name in self.marked
-        fill = MARKED_COLOR if marked else cell_color(count + staged, staged=bool(staged), selected=selected)
-        self.canvas.itemconfigure(rect, fill=fill,
-                                  outline="#1f5f99" if selected else "#8a8a8a", width=3 if selected else 1)
-        self.canvas.itemconfigure(text, text=f"{self.label(self.cells[slot_name])}\n{self.count_text(count + staged)}",
+        fill = MARKED_COLOR if marked else cell_color(count + staged, staged=bool(staged), selected=selected,
+                                                      ghost=cell.ghost)
+        outline = "#1f5f99" if selected else "#b03a3a" if cell.ghost else "#8a8a8a"
+        self.canvas.itemconfigure(rect, fill=fill, outline=outline, width=3 if selected else 1)
+        warning = "\u26a0 " if cell.ghost else ""
+        self.canvas.itemconfigure(text, text=f"{warning}{self.label(cell)}\n{self.count_text(count + staged)}",
                                   font=self.bold_font if selected else self.font)
 
     def _clicked(self, _event: tk.Event) -> None:

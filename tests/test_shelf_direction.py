@@ -76,7 +76,7 @@ class ShelfDirectionTests(WorkspaceTestCase):
         self.assertTrue(WarehouseDatabase(self.path).get_shelf_revert_location_id(self.sid))
         self.assertFalse(self.db.get_shelf_revert_location_id(self.db.save_shelf("1", "B", [2], side="4")))
 
-    def test_reversed_resize_preserves_positions_and_blocks_occupied_right_edge(self):
+    def test_reversed_resize_preserves_positions_and_keeps_occupied_right_edge_as_ghost(self):
         self.populate()
         before = self.positions()
         self.db.save_shelf('1', 'A', [3, 2], side='2', shelf_id=self.sid, revert_location_id=True)
@@ -85,13 +85,12 @@ class ShelfDirectionTests(WorkspaceTestCase):
             self.assertEqual(self.positions()[key], value)
         self.assertEqual(self.db.get_product_locations('LEFT'), ['L1-2A1-4', 'L1-2A2-2'])
         self.db.save_shelf('1', 'A', [3, 2], side='2', shelf_id=self.sid)
-        with closing(self.db.connect()) as c:
-            snapshot = preserved_data(c)
-        with self.assertRaisesRegex(LayoutConflictError, 'still contains committed products'):
-            self.db.save_shelf('1', 'A', [2, 2], side='2', shelf_id=self.sid, revert_location_id=False)
-        with closing(self.db.connect()) as c:
-            self.assertEqual(preserved_data(c), snapshot)
-        self.assertTrue(self.db.get_shelf_revert_location_id(self.sid))
+        # RIGHT sits past the new edge: it stays where it is as a ghost cell numbered by position.
+        self.db.save_shelf('1', 'A', [2, 2], side='2', shelf_id=self.sid, revert_location_id=False)
+        self.assertFalse(self.db.get_shelf_revert_location_id(self.sid))
+        self.assertEqual(self.db.get_shelf(self.sid)[3], [2, 2])
+        self.assertEqual(self.db.get_product_locations('RIGHT'), ['L1-2A1-3'])
+        self.assertTrue(self.db.get_slot_by_name('L1-2A1-3').ghost)
         self.assertEqual(self.positions(), before)
 
     def test_exception_name_conflict_rolls_back_whole_commit(self):

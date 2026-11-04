@@ -132,6 +132,14 @@ class SidecarTests(WorkspaceTestCase):
         self.assertTrue(committed["changes"]["shelves"])
         self.assertEqual(len(self.call("shelves.grid", shelf_id=self.first.shelf_id)["rows"]), 2)
 
+    def test_existing_ghost_cells_do_not_block_the_designer_preview(self) -> None:
+        self.call("exceptions.assign", product_id="C1", slot_id=self.third.slot_id)
+        WarehouseDatabase(self.path).save_shelf("1", "A", [2], side="1", shelf_id=self.first.shelf_id)
+        preview = self.call("designer.preview", floor="1", side="1", code="A", layout=[2], shelf_id=self.first.shelf_id)
+        self.assertEqual(preview["layout"], [2])
+        grid = self.call("shelves.grid", shelf_id=self.first.shelf_id)
+        self.assertEqual([cell["ghost"] for cell in grid["rows"][0]], [False, False, True])
+
     def test_designer_reverse_id_round_trip_and_preview(self) -> None:
         sid = self.first.shelf_id
         self.call("exceptions.assign", product_id="C1", slot_id=self.first.slot_id, stock=4)

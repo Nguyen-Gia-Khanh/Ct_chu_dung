@@ -12,6 +12,7 @@ from mapper.services.assignment import (
 )
 from mapper.services.shelf_grid import load_grid
 from .dialogs import StockQuantityDialog
+from mapper.persistence.database import GhostCellError
 from .sounds import play_error_sound
 from .widgets import sync_tree_rows
 
@@ -23,6 +24,8 @@ class AssignmentActions:
             messagebox.showinfo(
                 "Load an address", "Load the destination shelf address first.", parent=self.root,
             )
+            return
+        if self._refuse_ghost():
             return
         address = self.selected_address
         initial_quantities = {}
@@ -48,6 +51,9 @@ class AssignmentActions:
             moved = self.database.assign_catalog_direct_to_slot(
                 address.slot_id, assigned_at, records, quantities=dialog.result,
             )
+        except GhostCellError as error:
+            self._refuse_ghost(error.slot_name)
+            return
         except Exception as error:
             messagebox.showerror("Assignment failed", str(error), parent=self.root)
             return
@@ -71,6 +77,20 @@ class AssignmentActions:
             self.assignments.search_location_text.set(message)
         if hasattr(self.assignments, "search_location_label"):
             self.assignments.search_location_label.configure(foreground="#c62828")
+
+    def _refuse_ghost(self, slot_name: str | None = None) -> bool:
+        """The loaded cell is a ghost (removed from the shelf design): error sound,
+        nothing assigned. Returns True when the action was refused."""
+        if slot_name is None:
+            address = self.selected_address
+            if address is None or not address.ghost:
+                return False
+            slot_name = address.slot_name
+        play_error_sound(self.root)
+        message = f"Not assigned: {GhostCellError(slot_name)}"
+        self._show_search_refusal(message)
+        self.status_text.set(message)
+        return True
 
     def _refuse_shelved(self, product_ids) -> bool:
         """Assigning a product that is already on a shelf: error sound, nothing assigned.
@@ -146,6 +166,9 @@ class AssignmentActions:
             )
             self._reset_queue_shift_clicks()
             return
+        if self._refuse_ghost():
+            self._reset_queue_shift_clicks()
+            return
 
         visible = [
             item_id.removeprefix("product::")
@@ -195,6 +218,9 @@ class AssignmentActions:
 
         try:
             moved, transfer_data = shift_transfer(self.database, self.selected_address.slot_id, records)
+        except GhostCellError as error:
+            self._refuse_ghost(error.slot_name)
+            return
         except Exception as error:
             messagebox.showerror("Transfer failed", str(error), parent=self.root)
             return
@@ -352,7 +378,11 @@ class AssignmentActions:
         self.selected_address = address
         self.assignments.highlight_shelf_cell(address.row_number, address.slot_number)
         self.refresh_address_contents()
-        self.status_text.set(f"Loaded {address.slot_name}.")
+        if address.ghost:
+            self.status_text.set(f"Ghost cell {address.slot_name}: move these products out. "
+                                 "Nothing can be added here.")
+        else:
+            self.status_text.set(f"Loaded {address.slot_name}.")
 
     def refresh_address_contents(self, contents=None) -> None:
         if not hasattr(self.assignments, "contents_tree") or not hasattr(
@@ -417,6 +447,8 @@ class AssignmentActions:
                 parent=self.root,
             )
             return
+        if self._refuse_ghost():
+            return
 
         is_whole = whole_mode or getattr(self.assignments, "whole_mode", False)
         transfer_data = None
@@ -455,6 +487,9 @@ class AssignmentActions:
                 assigned_at,
                 product_ids,
             )
+        except GhostCellError as error:
+            self._refuse_ghost(error.slot_name)
+            return
         except Exception as error:
             messagebox.showerror("Assignment failed", str(error), parent=self.root)
             return

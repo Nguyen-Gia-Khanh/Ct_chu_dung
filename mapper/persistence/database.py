@@ -10,6 +10,7 @@ from .catalog import CatalogOperations
 from .exceptions import ExceptionOperations
 from .inventory import InventoryOperations
 from .models import (
+    GhostCellError,
     LayoutConflictError,
     OnHandProduct,
     Placement,
@@ -21,7 +22,7 @@ from .schema import SchemaOperations
 from .shelves import ShelfOperations
 
 __all__ = [
-    "LayoutConflictError", "OnHandProduct", "Placement", "ProductLocation", "SlotAddress",
+    "GhostCellError", "LayoutConflictError", "OnHandProduct", "Placement", "ProductLocation", "SlotAddress",
     "WarehouseDatabase", "validate_stock_quantity",
 ]
 

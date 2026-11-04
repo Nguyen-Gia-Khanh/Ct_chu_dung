@@ -9,7 +9,9 @@ from pathlib import Path
 from mapper.core.common import clean_product_name, iso_timestamp, normalize_sku
 from mapper.features.csv_import import write_product_names
 from .models import validate_stock_quantity
-from .shared import IN_IDS, LOCATION_SQL, PRODUCT_NAME_SQL, find_product_locations, ids_param, remove_from_slot
+from .shared import (
+    IN_IDS, LOCATION_SQL, PRODUCT_NAME_SQL, find_product_locations, ids_param, refuse_ghost_targets, remove_from_slot,
+)
 
 
 class ExceptionOperations:
@@ -41,6 +43,7 @@ class ExceptionOperations:
             slot = c.execute('SELECT slot_name FROM slots WHERE slot_id=?', (slot_id,)).fetchone()
             if slot is None:
                 raise ValueError('The selected cell no longer exists.')
+            refuse_ghost_targets(c, [slot_id])
             catalog = c.execute('SELECT * FROM catalog_products WHERE product_id=?', (pid,)).fetchone()
             c.execute('INSERT INTO catalog_products(product_id,full_name) VALUES (?,?) ON CONFLICT DO NOTHING', (pid, name))
             changed = catalog and name and name != (catalog['full_name'] or catalog['brand_name'] or pid)

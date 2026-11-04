@@ -13,7 +13,7 @@ class ShelfDesignerResourceTests(TestCase):
         except tk.TclError as error:
             self.skipTest(f"Tk display unavailable: {error}")
         try:
-            designer = ShelfDesigner(root, lambda: None, lambda _count: True, lambda: None)
+            designer = ShelfDesigner(root, lambda: None, lambda: None)
             designer.pack()
             initial_count = len(root.tk.call("info", "commands"))
             for _ in range(30):

@@ -60,6 +60,9 @@ class WarehouseMapperApp(
         self.current_layout: list[int] = []
         self.preview_key: tuple[str, str, str] | None = None
         self.preview_revert_location_id = False
+        # Saved location ID -> ID in the Tab 1 preview, and that preview's layout plan.
+        self._preview_renames: dict[str, str] = {}
+        self._preview_plan = None
         self.current_shelf_id: int | None = None
         self.selected_slot: str | None = None
         self.shelf_choices: dict[str, int] = {}
@@ -194,8 +197,8 @@ class WarehouseMapperApp(
         self.designer = ShelfDesigner(
             self.designer_tab,
             self.build_shelf_preview,
-            self.can_resize_rows,
             self.on_rows_changed,
+            self.refresh_ghost_warning,
         )
         self.designer.pack(fill="both", expand=True)
         self.assignments = LocationAssignmentView(

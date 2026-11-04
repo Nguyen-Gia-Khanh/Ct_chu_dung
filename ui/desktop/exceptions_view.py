@@ -9,7 +9,8 @@ from tkinter import filedialog, messagebox, ttk
 
 from mapper.core.common import MAX_VISIBLE_PRODUCTS, clean_location_segment, make_slot_name, normalize_sku, vietnam_time
 from mapper.core.search import ProductIndex
-from mapper.persistence.database import SlotAddress, WarehouseDatabase
+from mapper.persistence.database import GhostCellError, SlotAddress, WarehouseDatabase
+from .sounds import play_error_sound
 from .widgets import sync_tree_rows
 from utils.barcode_scanner import (
     BarcodeScanner,
@@ -458,7 +459,8 @@ class ExceptionsView(ttk.Frame):
             return
 
         self.selected_address = slot
-        self.loaded_slot_text.set(f"Loaded: {slot.slot_name}")
+        self.loaded_slot_text.set(f"Loaded: {slot.slot_name}"
+                                  + (" (ghost cell: move its products out)" if slot.ghost else ""))
         self.refresh_cell_contents()
 
     def refresh_cell_contents(self) -> None:
@@ -488,6 +490,11 @@ class ExceptionsView(ttk.Frame):
             )
         self.loaded_slot_text.set(f"Loaded: {self.selected_address.slot_name} · {len(contents)} product(s)")
 
+    def _refuse_ghost(self, slot_name: str) -> None:
+        play_error_sound(self)
+        if self.status_text:
+            self.status_text.set(f"Not assigned: {GhostCellError(slot_name)}")
+
     def assign_exception(self) -> None:
         raw_id = self.product_id_var.get().strip()
         if not raw_id:
@@ -506,6 +513,10 @@ class ExceptionsView(ttk.Frame):
                 )
                 return
 
+        if self.selected_address.ghost:
+            self._refuse_ghost(self.selected_address.slot_name)
+            return
+
         raw_qty = self.qty_var.get().strip()
         stock_qty = int(raw_qty) if raw_qty and raw_qty.isdigit() else None
 
@@ -516,6 +527,9 @@ class ExceptionsView(ttk.Frame):
                 stock_qty=stock_qty,
                 product_name=self.product_name_var.get().strip() or None,
             )
+        except GhostCellError as error:
+            self._refuse_ghost(error.slot_name)
+            return
         except Exception as error:
             messagebox.showerror("Assignment Failed", str(error), parent=self)
             return
