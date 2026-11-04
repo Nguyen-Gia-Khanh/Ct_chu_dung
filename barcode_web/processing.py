@@ -9,7 +9,9 @@ import zxingcpp
 
 MAX_FRAME_BYTES = 1_000_000
 MAX_FRAME_PIXELS = 1920 * 1080
-FORMATS = (zxingcpp.BarcodeFormat.LinearCodes, zxingcpp.BarcodeFormat.QRCode, zxingcpp.BarcodeFormat.DataMatrix)
+# The scanner's formats only: other linear codes (ITF, Codabar, EAN…) misread warped labels ("059521" ITF).
+FORMATS = (zxingcpp.BarcodeFormat.Code39, zxingcpp.BarcodeFormat.Code128, zxingcpp.BarcodeFormat.QRCode,
+           zxingcpp.BarcodeFormat.DataMatrix)
 # Sharpen across vertical bars, without mixing pixels along their length.
 VERTICAL_SHARPEN = np.array([[-.25, 1.5, -.25]], dtype=np.float32)
 BARCODE_DETECTOR = cv2.barcode_BarcodeDetector()

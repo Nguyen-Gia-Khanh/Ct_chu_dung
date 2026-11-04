@@ -86,6 +86,9 @@ class WarehouseLookupTests(WorkspaceTestCase):
             with self.assertRaises(ValueError):
                 self.lookup.resolve_pattern(invalid)
 
+    def test_catalog_ids_are_every_catalog_product_including_staged(self):
+        self.assertEqual(sorted(self.lookup.catalog_ids()), ["001234567890", "CAT001", "NOLOC", "STAGE01"])
+
     def test_optional_cell_contents_include_all_barcodes_and_names(self):
         from unittest.mock import patch
         with patch.object(self.lookup, "cell_contents", wraps=self.lookup.cell_contents) as contents:

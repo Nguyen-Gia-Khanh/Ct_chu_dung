@@ -189,7 +189,7 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 on_phone = width == 393
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.on("request", lambda request: requested_workers.append(request.url)
-                        if "/decoder-worker.js" in request.url else None)
+                        if "/decoder-worker.js" in request.url or "/api/catalog" in request.url else None)
                 if not on_phone:
                     page.route("**/decoder-worker.js", lambda route: route.fulfill(status=404, body="blocked"))
                 def frame_upload(route):
@@ -221,6 +221,12 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                       if (message?.type === 'frame') window.decodedFrames++;
                       return post.call(this, message, ...rest);
                     };
+                    // An iPhone-like zoom range: 0.5 is the ultra-wide lens.
+                    MediaStreamTrack.prototype.getCapabilities = () => ({ zoom: { min: 0.5, max: 10, step: 0.1 } });
+                    window.appliedConstraints = [];
+                    MediaStreamTrack.prototype.applyConstraints = async constraints => {
+                      window.appliedConstraints.push(constraints);
+                    };
                     navigator.mediaDevices.getUserMedia = async () => {
                       window.fakeStream = source.captureStream(30);
                       return window.fakeStream;
@@ -248,8 +254,14 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 page.wait_for_function("document.querySelector('#delivery').textContent === 'Máy tính đã nhận.'")
                 if on_phone:
                     self.assertEqual(attempts[0], attempts[1], "retry must reuse the delivery ID and text")
+                    # Field timing: which reader got it and how long a barcode was in view first.
+                    self.assertTrue(attempts[0]["source"].startswith("zxing:"), attempts[0])
+                    self.assertIsInstance(attempts[0]["aim_ms"], int)
+                    self.assertEqual(store.recent()[0]["source"], attempts[0]["source"])
                 self.assertEqual(page.locator("#result").inner_text(), "001234567890")
                 self.assertTrue(requested_workers, "the phone decoder worker is loaded")
+                self.assertEqual(page.evaluate("[zoom.value, appliedConstraints[0].advanced[0].zoom]"), ["1", 1],
+                                 "the camera starts on the main lens (1x), not the ultra-wide 0.5")
                 if on_phone:
                     self.assertFalse(uploaded_frames, "decoded on the phone: no camera frames leave it")
                     self.assertEqual(page.locator("#link-state").inner_text(), "Đang quét trên điện thoại")
@@ -276,10 +288,14 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 page.wait_for_timeout(2500)
                 decoded, shown = (after - before for after, before in zip(page.evaluate(counts), (decoded, shown)))
                 processed = decoded if on_phone else len(uploaded_frames) - uploads
-                self.assertLessEqual(processed, 2.5 * 8 + 2, "decoding is capped near 8 frames/s")
+                if on_phone:
+                    # The read label stays in view: the phone only re-checks it, about 3 times per second.
+                    self.assertLessEqual(processed, 2.5 * 1000 / 300 + 2, "a label already read is re-checked slowly")
+                else:
+                    self.assertLessEqual(processed, 2.5 * 8 + 2, "laptop uploads are capped near 8 frames/s")
                 self.assertGreaterEqual(processed, 5, "scanning continues while capped")
                 self.assertGreater(shown, processed * 2, "the preview keeps the camera frame rate")
-                self.assertEqual(len(store.recent()), 1 if width == 393 else 4)
+                self.assertEqual(len(store.recent()), 1 if width == 393 else 5)
                 self.assertEqual(page.evaluate("document.body.scrollWidth <= innerWidth"), True)
                 print(f"Chrome {width}x{height}: {page.locator('#rate').inner_text()}")
                 page.screenshot(path=str(preview / f"scanner-{width}.png"), full_page=True)
@@ -292,6 +308,28 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 self.assertEqual(store.recent()[0]["text"], "warehouse-test-001")
                 self.assertEqual(page.locator("#locations").inner_text(), "Không tìm thấy mã vạch trong kho.")
                 self.assertTrue(page.locator("#cells").is_hidden())
+                self.assertTrue(any("/api/catalog" in url for url in requested_workers), "catalog IDs fetched at start")
+                if on_phone:
+                    # Laptop second opinions: a Code 39 that is no catalog ID is ignored, a catalog ID is a scan.
+                    page.wait_for_function("catalogIds !== null")
+                    scans = len(store.recent())
+                    page.evaluate("receive({results: [{text: '0', format: 'Code 39'}], present: true, stage: 'test'}, 'laptop')")
+                    page.wait_for_timeout(300)
+                    self.assertEqual(len(store.recent()), scans, "a laptop Code 39 outside the catalog is no scan")
+                    page.evaluate("receive({results: [{text: 'CAT001', format: 'Code 39'}], present: true, stage: 'test'},"
+                                  " 'laptop')")
+                    page.wait_for_function("document.querySelector('#result').textContent === 'CAT001'"
+                                           " && document.querySelector('#delivery').textContent === 'Máy tính đã nhận.'")
+                    self.assertEqual((store.recent()[0]["text"], store.recent()[0]["source"]), ("CAT001", "laptop:test"))
+                    # Save-frame burst: the scan window exactly as the decoder sees it, kept on the laptop.
+                    page.get_by_role("button", name="Lưu khung hình gửi máy tính").click()
+                    page.wait_for_function("document.querySelector('#status').textContent"
+                                           " === 'Đã lưu 6 khung hình trên máy tính.'", timeout=15000)
+                    samples = sorted((self.folder / "samples").glob("*.png"))
+                    self.assertEqual(len(samples), 6)
+                    self.assertTrue(all(sample.read_bytes().startswith(b"\x89PNG") for sample in samples))
+                    details = json.loads(samples[0].with_suffix(".json").read_text(encoding="utf-8"))
+                    self.assertEqual((details["decoder"], details["index"]), ("phone", 0))
                 page.get_by_role("button", name="Dừng", exact=True).click()
                 frame_count = len(uploaded_frames)
                 page.wait_for_timeout(250)
@@ -308,6 +346,7 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                     self.assertEqual(page.locator("#result").inner_text(), "001234567890")
                     self.assertEqual(page.locator("#locations").inner_text(), "L1-1A2-3\nL2-2B4-5")
                     self.assertEqual((store.recent()[0]["text"], store.recent()[0]["format"]), ("001234567890", "Typed"))
+                    self.assertNotIn("source", store.recent()[0], "typed searches carry no reader timing")
                     self.assertEqual(search.input_value(), "")
                     page.get_by_role("button", name="Tìm", exact=True).click()
                     self.assertTrue(search.evaluate("element => element === document.activeElement"), "empty search refocuses")
@@ -315,7 +354,7 @@ class BarcodeBrowserTest(WorkspaceTestCase):
                 page.close()
             receiver = browser.new_page(viewport={"width": 1000, "height": 760})
             receiver.goto(base + "/receiver")
-            receiver.wait_for_function("document.querySelector('#scans').children.length === 5")
+            receiver.wait_for_function("document.querySelector('#scans').children.length === 6")
             self.assertIn("warehouse-test-001", receiver.locator("#scans").inner_text())
             receiver.screenshot(path=str(preview / "receiver.png"))
             receiver.close()

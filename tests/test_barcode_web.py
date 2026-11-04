@@ -107,6 +107,51 @@ class BarcodeWebTests(WorkspaceTestCase):
         connection.close()
         self.assertFalse(self.store.path.exists())
 
+    def test_optional_scan_timing_is_validated_and_saved(self):
+        payload = {"id": "timed-1", "text": "53168KFM902", "format": "Code 39",
+                   "source": "zxing:sharpened", "aim_ms": 420}
+        self.assertEqual(self.request("POST", "/api/scans", payload)[0], 200)
+        saved = json.loads(self.store.path.read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual((saved["source"], saved["aim_ms"]), ("zxing:sharpened", 420))
+        self.assertEqual(self.store.recent()[0]["source"], "zxing:sharpened")
+        for bad in ({"aim_ms": -1}, {"aim_ms": 1.5}, {"aim_ms": True}, {"aim_ms": "5"}, {"aim_ms": 600_001},
+                    {"source": ""}, {"source": "x" * 33}, {"source": "bad\nsource"}, {"source": 3}):
+            self.assertEqual(self.request("POST", "/api/scans", {**payload, "id": "timed-2", **bad})[0], 400, bad)
+        self.assertEqual(len(self.store.recent()), 1)
+
+    def test_catalog_ids_need_the_session_token(self):
+        self.assertEqual(self.request("GET", "/api/catalog", token="wrong")[0], 403)
+        status, body = self.request("GET", "/api/catalog")
+        self.assertEqual(status, 200)
+        self.assertEqual(sorted(json.loads(body)["ids"]), ["001234567890", "CAT001", "NOLOC", "STAGE01"])
+
+    def test_saved_frames_are_png_with_details(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
+
+        def save(body, info='{"burst": "b1", "index": 0, "zoom": 2}', content_type="image/png", token="test-token"):
+            connection = http.client.HTTPConnection(*self.server.server_address, timeout=5)
+            connection.request("POST", "/api/samples", body, {
+                "Authorization": f"Bearer {token}", "Content-Type": content_type, "X-Sample-Info": info})
+            response = connection.getresponse()
+            status, answer = response.status, response.read()
+            connection.close()
+            return status, answer
+
+        status, answer = save(png)
+        self.assertEqual(status, 200)
+        name = json.loads(answer)["name"]
+        folder = self.folder / "samples"
+        self.assertEqual((folder / f"{name}.png").read_bytes(), png)
+        details = json.loads((folder / f"{name}.json").read_text(encoding="utf-8"))
+        self.assertEqual((details["burst"], details["zoom"]), ("b1", 2))
+        self.assertIn("received_at", details)
+        self.assertEqual(save(png, token="wrong")[0], 403)
+        self.assertEqual(save(b"\xff\xd8 not a png")[0], 400)
+        self.assertEqual(save(png, content_type="image/jpeg")[0], 415)
+        self.assertEqual(save(png, info="not json")[0], 400)
+        self.assertEqual(save(png, info="[1]")[0], 400)
+        self.assertEqual(len(list(folder.glob("*.png"))), 1)
+
     def test_assets_session_and_private_files(self):
         for path in ("/scan", "/receiver", "/setup", "/decoder-worker.js", "/robust39.js", "/icon.svg",
                      "/manifest.webmanifest", "/vendor/reader.js", "/vendor/zxing_reader.wasm"):

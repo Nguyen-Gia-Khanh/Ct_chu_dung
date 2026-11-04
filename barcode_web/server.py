@@ -46,6 +46,23 @@ STATIC_FILES = {
     "/vendor/reader.js": ("vendor/reader.js", "text/javascript"),
     "/vendor/zxing_reader.wasm": ("vendor/zxing_reader.wasm", "application/wasm"),
 }
+MAX_SAMPLE_BYTES = 8 * 1024 * 1024   # one saved scan-window PNG (up to 1920 px wide)
+SCAN_FIELDS = {"id", "text", "format"}
+# Optional, from camera scans: which reader got the code, and how long a barcode was in view first.
+TIMING_FIELDS = {"source", "aim_ms"}
+
+
+def valid_scan(payload: dict) -> bool:
+    if not SCAN_FIELDS <= set(payload) <= SCAN_FIELDS | TIMING_FIELDS:
+        return False
+    if not all(isinstance(payload[key], str) for key in SCAN_FIELDS):
+        return False
+    if (not re.fullmatch(r"[A-Za-z0-9-]{1,64}", payload["id"]) or not 0 < len(payload["text"]) <= 4096
+            or not 0 < len(payload["format"]) <= 64):
+        return False
+    source, aim = payload.get("source", "-"), payload.get("aim_ms", 0)
+    return (isinstance(source, str) and re.fullmatch(r"[ -~]{1,32}", source) is not None
+            and type(aim) is int and 0 <= aim <= 600_000)
 
 
 def load_token(folder: Path) -> str:
@@ -183,6 +200,17 @@ class ScanStore:
     def recent(self) -> list[dict]:
         with self.lock:
             return list(reversed(self.scans))
+
+    def save_sample(self, frame: bytes, info: dict) -> str:
+        """Keep a frame the person chose to save (exactly what the phone decoder analyses) for tuning."""
+        folder = self.path.parent / "samples"
+        folder.mkdir(exist_ok=True)
+        moment = datetime.now(timezone.utc)
+        name = f"{moment.strftime('%Y%m%dT%H%M%S%f')}-{secrets.token_hex(2)}"
+        (folder / f"{name}.png").write_bytes(frame)
+        (folder / f"{name}.json").write_text(json.dumps({**info, "received_at": moment.isoformat()},
+                                                        ensure_ascii=False), encoding="utf-8")
+        return name
 
 
 class TrustAlerts:
@@ -335,6 +363,17 @@ class Handler(BaseHTTPRequestHandler):
             if self.authorized():
                 self.reply(200, self.server.store.recent())
             return
+        if path == "/api/catalog":
+            # Product IDs only: the phone decoder checks recovered Code 39 and completes damaged labels.
+            if not self.server.secure and not local:
+                return self.reply(403, {"error": "Use the HTTPS phone link."})
+            if not self.authorized():
+                return
+            try:
+                ids = self.server.lookup.catalog_ids() if self.server.lookup else []
+            except sqlite3.Error:
+                return self.reply(503, {"error": "Warehouse lookup failed."})
+            return self.reply(200, {"ids": ids})
         if path == "/rootCA.cer":
             public_cert = DATA / "certs" / "rootCA.cer"
             if not public_cert.exists():
@@ -350,7 +389,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
-        if path not in ("/api/scans", "/api/frames", "/api/resolve"):
+        if path not in ("/api/scans", "/api/frames", "/api/resolve", "/api/samples"):
             return self.reply(404, {"error": "Not found"})
         if not self.server.secure and not ipaddress.ip_address(self.client_address[0]).is_loopback:
             return self.reply(403, {"error": "Send scans over HTTPS."})
@@ -358,6 +397,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/frames":
             return self.process_frame()
+        if path == "/api/samples":
+            return self.save_sample()
         if self.headers.get_content_type() != "application/json":
             return self.reply(415, {"error": "Only barcode JSON is accepted."})
         if path == "/api/resolve":
@@ -370,11 +411,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 return self.reply(400, {"error": "Invalid barcode data."})
             include_cell_contents = payload.pop("include_cell_contents", False)
-            if (type(include_cell_contents) is not bool or set(payload) != {"id", "text", "format"}
-                    or not all(isinstance(value, str) for value in payload.values())
-                    or not re.fullmatch(r"[A-Za-z0-9-]{1,64}", payload["id"])
-                    or not 0 < len(payload["text"]) <= 4096
-                    or not 0 < len(payload["format"]) <= 64):
+            if type(include_cell_contents) is not bool or not valid_scan(payload):
                 return self.reply(400, {"error": "Invalid barcode data."})
         except (ValueError, UnicodeError):
             return self.reply(400, {"error": "Invalid JSON."})
@@ -405,6 +442,31 @@ class Handler(BaseHTTPRequestHandler):
         except sqlite3.Error:
             return self.reply(503, {"error": "Warehouse lookup failed."})
         self.reply(200, {"ok": True, **answer})
+
+    def save_sample(self):
+        """A frame from the phone's save-frame burst: PNG of the scan window plus a little JSON context."""
+        if self.headers.get_content_type() != "image/png":
+            return self.reply(415, {"error": "Send a PNG frame."})
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return self.reply(400, {"error": "Invalid frame length."})
+        if not 0 < length <= MAX_SAMPLE_BYTES:
+            return self.reply(413, {"error": "Frame is too large or empty."})
+        frame = self.rfile.read(length)
+        if len(frame) != length or not frame.startswith(b"\x89PNG\r\n\x1a\n"):
+            return self.reply(400, {"error": "Not a PNG frame."})
+        try:
+            info = json.loads(self.headers.get("X-Sample-Info") or "{}")
+        except ValueError:
+            info = None
+        if not isinstance(info, dict) or len(json.dumps(info)) > 4000:
+            return self.reply(400, {"error": "Invalid frame details."})
+        try:
+            name = self.server.store.save_sample(frame, info)
+        except OSError:
+            return self.reply(503, {"error": "Could not save the frame. Check the laptop's disk."})
+        self.reply(200, {"ok": True, "name": name})
 
     def process_frame(self):
         from barcode_web.processing import MAX_FRAME_BYTES, decode_frame

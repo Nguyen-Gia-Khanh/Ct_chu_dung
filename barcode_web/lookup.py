@@ -47,6 +47,11 @@ class WarehouseLookup:
             result["cells"] = self.cell_contents(locations)
         return result
 
+    def catalog_ids(self) -> list[str]:
+        """Every catalog product ID (stored spelling), for the phone decoder's Code 39 checks."""
+        with closing(self.connect()) as connection:
+            return [row[0] for row in connection.execute("SELECT product_id FROM catalog_products")]
+
     def resolve_pattern(self, pattern: str) -> dict:
         """Complete a partly read barcode only when exactly one catalog ID fits; never guess."""
         pattern = pattern.strip().upper()

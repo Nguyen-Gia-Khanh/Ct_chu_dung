@@ -21,6 +21,7 @@ const empty = $("#empty");
 const hint = $("#hint");
 const linkState = $("#link-state");
 const torchButton = $("#torch");
+const captureButton = $("#capture");
 const soundButton = $("#sound");
 const zoomControl = $("#zoom-control");
 const zoom = $("#zoom");
@@ -32,8 +33,25 @@ const phoneContext = phoneCanvas.getContext("2d", { willReadFrequently: true });
 const laptopCanvas = document.createElement("canvas");
 const laptopContext = laptopCanvas.getContext("2d");
 const MAX_PHONE_WIDTH = 1920, MAX_UPLOAD_WIDTH = 1280;
-// Decoding every camera frame heats the phone; ~8 reads/s is still instant. The preview keeps camera fps.
-const DECODE_INTERVAL = 1000 / 8;
+// Phone decoder pacing (the preview keeps the camera's frame rate). With nothing barcode-like in view,
+// a cheap look every IDLE_GAP keeps the phone cool. With a barcode in view but unread, strong tries run
+// back to back on fresh frames for EAGER_FOR, then at the idle pace. A barcode already read and still
+// in view is re-checked every HOLD_GAP, only to keep suppressing its duplicates.
+const IDLE_GAP = 150, HOLD_GAP = 300, EAGER_FOR = 3000;
+// Laptop uploads (fallback decoding, mask preview, second opinion): at most 8 per second.
+const UPLOAD_INTERVAL = 1000 / 8;
+// Second opinion: while the phone sees a barcode it cannot read, a frame to the laptop every 350 ms
+// after 0.6 s. On saved real frames the laptop read 2 warped labels in 23 that the phone missed.
+const SECOND_OPINION_AFTER = 600, SECOND_OPINION_EVERY = 350;
+// Any text read within this time is a duplicate (one label can carry a QR and a Code 39).
+const REPEAT_MS = 1200;
+// iPhones list their ultra-wide lens as zoom 0.5; start on the main lens (1×), which has twice the
+// detail. A zoom the person sets is remembered; the new key drops values saved from the old 0.5 start.
+const DEFAULT_ZOOM = 1, ZOOM_KEY = "scanner-zoom-level";
+// Save-frame button: a short burst of exactly what the decoder analyses, sent to the laptop for tuning.
+const SAMPLE_BURST = 6, SAMPLE_GAP = 150;
+const sampleCanvas = document.createElement("canvas");
+const sampleContext = sampleCanvas.getContext("2d");
 
 function stored(key) {
   try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -53,9 +71,14 @@ addEventListener("hashchange", () => {
 });
 
 let stream, track, frameHandle, active = false, starting = false, generation = 0;
-let lastText = null, lastSeen = 0, pending = null, sending = false;
+let pending = null, sending = false;
+const recentReads = new Map();   // text → when it was last read
 let processed = 0, elapsed = 0, sampleAt = 0;
 let lastPresent = 0, lastRead = 0, scanningSince = 0;
+let aimSince = 0;   // when the current barcode-like pattern came into view (0: none in view)
+let lastStage = "", capturing = false;
+let catalogIds = null;   // stored-spelling catalog IDs, to check the laptop's second opinions
+const normalizeId = text => String(text).trim().toUpperCase().replace(/[- ]/g, "");
 let audio = null, sound = stored("scanner-sound") !== "off";
 
 // ---------- Phone-side decoder ----------
@@ -84,6 +107,7 @@ function startDecoder() {
     decoder.errors = 0;
     if (!active) return;
     receive(data, "phone");
+    schedulePhone(data);
     if (data.partial) void resolvePartial(data.partial);
   };
   decoder.worker.onerror = () => { decoder.failed = true; decoder.busy = false; showMode(); };
@@ -91,6 +115,14 @@ function startDecoder() {
 
 function phoneDecoding() {
   return decoder.ready && !decoder.failed;
+}
+
+/** When the phone decoder looks again: at once while a barcode is in view and unread, else after a pause. */
+function schedulePhone(answer) {
+  const now = performance.now();
+  const read = Boolean(answer.results?.length);
+  const eager = answer.present && !read && now - (aimSince || now) < EAGER_FOR;
+  decoder.next = now + (eager ? 0 : read ? HOLD_GAP : IDLE_GAP);
 }
 
 /** The worker failed, or is still not ready after 4 s: decode on the laptop meanwhile. */
@@ -160,7 +192,8 @@ function laptopDue(now) {
   if (laptop.busy || now < laptop.previous) return false;
   if (laptopDecoding(now) || filter.checked) return true;
   if (!phoneDecoding()) return false;
-  return now - lastPresent < 300 && now - Math.max(lastRead, scanningSince) > 1200 && now - laptop.previous > 350;
+  return now - lastPresent < 300 && now - Math.max(lastRead, scanningSince) > SECOND_OPINION_AFTER
+    && now - laptop.previous > SECOND_OPINION_EVERY;
 }
 
 async function sendToLaptop(crop, current) {
@@ -229,12 +262,24 @@ function receive(answer, source) {
       elapsed = 0;
       sampleAt = now;
     }
+    aimSince = answer.present ? aimSince || now : 0;
+    lastStage = answer.stage;
     // Struggling: tell the person what usually helps, without blocking anything.
     hint.hidden = !(now - lastPresent < 400 && now - Math.max(lastRead, scanningSince) > 2500);
     hint.textContent = "Giữ máy ổn định. Đưa lại gần hoặc phóng to để mã vạch vừa khung.";
   }
   const found = answer.results?.[0];
-  if (found) accept(found);
+  // A second opinion is one laptop frame: its Code 39 must be a catalog ID (a warped label once gave "0").
+  // The phone's own reads are checked in the worker; full laptop fallback keeps its old behaviour.
+  if (found && source === "laptop" && phoneDecoding() && catalogIds
+      && String(found.format).replace(/\s/g, "").toLowerCase().startsWith("code39") && !catalogIds.has(normalizeId(found.text))) {
+    return;
+  }
+  if (found) {
+    // Which reader got it, logged with the scan to check real phones' speed.
+    const via = source === "laptop" ? `laptop:${answer.stage}` : found.source === "zxing" ? `zxing:${answer.stage}` : found.source;
+    accept({ ...found, via });
+  }
 }
 
 async function resolvePartial(pattern) {
@@ -250,7 +295,7 @@ async function resolvePartial(pattern) {
     const answer = await response.json();
     // Only a single catalog ID that fits every read character completes the code.
     if (active && response.ok && answer.status === "unique") {
-      accept({ text: answer.product_id, format: "Code 39 · catalog", source: "catalog" });
+      accept({ text: answer.product_id, format: "Code 39 · catalog", source: "catalog", via: "catalog:server" });
     }
   } catch (_) {
     /* Keep scanning; completion is only a shortcut. */
@@ -259,16 +304,77 @@ async function resolvePartial(pattern) {
   }
 }
 
+/** Catalog product IDs for the phone decoder: recovered Code 39 must be one, damaged reads may be
+ *  completed from them. Fetched at each camera start; without it the decoder works as before. */
+async function loadCatalog() {
+  try {
+    const response = await fetch("/api/catalog", { headers: { Authorization: `Bearer ${token}` },
+                                                   signal: AbortSignal.timeout(10000) });
+    const answer = response.ok ? await response.json() : null;
+    if (Array.isArray(answer?.ids) && answer.ids.length) {
+      catalogIds = new Set(answer.ids.map(normalizeId));
+      decoder.worker?.postMessage({ type: "catalog", ids: answer.ids });
+    }
+  } catch (_) { /* Optional: scanning continues without catalog checks. */ }
+}
+
+/** A short confirmation in the status line (message() shows only errors). */
+function note(text) {
+  message("");
+  status.textContent = text;
+  status.hidden = false;
+  clearTimeout(note.timer);
+  note.timer = setTimeout(() => { if (status.textContent === text) status.hidden = true; }, 4000);
+}
+
+/** Save-frame button: SAMPLE_BURST scan-window frames, as the decoder sees them, to the laptop. */
+async function saveFrames() {
+  if (capturing || !active) return;
+  capturing = true;
+  captureButton.disabled = true;
+  const burst = crypto.randomUUID().slice(0, 8);
+  let saved = 0;
+  try {
+    for (let index = 0; index < SAMPLE_BURST && active; index++) {
+      if (index) await new Promise(resolve => setTimeout(resolve, SAMPLE_GAP));
+      const crop = windowCrop();
+      if (!crop || crop.width < 16 || crop.height < 16) continue;
+      draw(sampleCanvas, sampleContext, crop, MAX_PHONE_WIDTH);
+      const png = await new Promise(resolve => sampleCanvas.toBlob(resolve, "image/png"));
+      if (!png) continue;
+      const info = { burst, index, zoom: zoomControl.hidden ? null : Number(zoom.value),
+                     video: [video.videoWidth, video.videoHeight], crop: Object.values(crop).map(Math.round),
+                     stage: lastStage, decoder: phoneDecoding() ? "phone" : "laptop", agent: navigator.userAgent };
+      // HTTP headers are ASCII: escape anything else inside the JSON.
+      const header = JSON.stringify(info).replace(/[^\x20-\x7e]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+      const response = await fetch("/api/samples", {
+        method: "POST", headers: { "Content-Type": "image/png", Authorization: `Bearer ${token}`, "X-Sample-Info": header },
+        body: png, signal: AbortSignal.timeout(8000),
+      });
+      if (response.ok) saved++;
+    }
+    if (saved) note(`Đã lưu ${saved} khung hình trên máy tính.`);
+    else message("Chưa lưu được khung hình. Kiểm tra kết nối máy tính.", true);
+  } catch (error) {
+    message(`Chưa lưu được khung hình: ${error.message}`, true);
+  } finally {
+    capturing = false;
+    captureButton.disabled = false;
+  }
+}
+
 function accept(found) {
   const now = performance.now();
-  const repeated = found.text === lastText && now - lastSeen < 1200;
-  lastText = found.text;
-  lastSeen = now;
+  for (const [text, at] of recentReads) if (now - at >= REPEAT_MS) recentReads.delete(text);
+  const repeated = recentReads.has(found.text);
+  recentReads.set(found.text, now);
   lastRead = now;
+  const aimMs = now - (aimSince || now);
+  aimSince = 0;   // the next barcode's aim starts at its first unread look
   if (repeated || pending) return;
   decoder.worker?.postMessage({ type: "reset" });
   feedback();
-  lookUp(found);
+  lookUp({ ...found, aimMs });
 }
 
 function lookUp(found) {
@@ -283,6 +389,7 @@ function lookUp(found) {
   cells.replaceChildren();
   cells.hidden = true;
   pending = { id: crypto.randomUUID(), text: found.text, format: found.format };
+  if (found.via) Object.assign(pending, { source: found.via.slice(0, 32), aim_ms: Math.round(found.aimMs || 0) });
   sessionStorage.setItem("pending-scan", JSON.stringify(pending));
   void sendPending();
 }
@@ -404,13 +511,10 @@ function frame(now) {
     const laptopNow = laptopDue(now);
     const crop = phoneDue || laptopNow ? windowCrop() : null;
     if (crop && crop.width >= 16 && crop.height >= 16) {
-      // No network, no JPEG, full resolution; at most DECODE_INTERVAL apart.
-      if (phoneDue) {
-        decoder.next = Math.max(decoder.next + DECODE_INTERVAL, now);
-        sendToPhoneDecoder(crop, performance.now());
-      }
+      // No network, no JPEG, full resolution; the result sets when the next look is due.
+      if (phoneDue) sendToPhoneDecoder(crop, performance.now());
       if (laptopNow) {
-        laptop.previous = Math.max(laptop.previous + DECODE_INTERVAL, now + 1);
+        laptop.previous = Math.max(laptop.previous + UPLOAD_INTERVAL, now + 1);
         void sendToLaptop(crop, generation);
       }
     }
@@ -432,6 +536,7 @@ function stop() {
   startButton.hidden = false;
   startButton.disabled = false;
   stopButton.hidden = true;
+  captureButton.hidden = true;
   torchButton.hidden = true;
   torchButton.setAttribute("aria-pressed", "false");
   zoomControl.hidden = true;
@@ -449,8 +554,8 @@ async function cameraControls() {
   if (capabilities.zoom) {
     const { min, max, step } = capabilities.zoom;
     Object.assign(zoom, { min, max, step: step || .1 });
-    const saved = Number(stored("scanner-zoom"));
-    zoom.value = saved >= min && saved <= max ? saved : min;
+    const saved = stored(ZOOM_KEY) === null ? NaN : Number(stored(ZOOM_KEY));
+    zoom.value = saved >= min && saved <= max ? saved : Math.min(max, Math.max(min, DEFAULT_ZOOM));
     advanced.zoom = Number(zoom.value);
     zoomControl.hidden = max <= min;
   }
@@ -481,6 +586,7 @@ async function start() {
     if (check.status === 403) throw new Error("Liên kết quét đã hết hạn. Mở liên kết mới từ trang nhận trên máy tính.");
     if (!check.ok) throw new Error("Không kết nối được máy tính. Kiểm tra máy chủ rồi bấm Mở camera lần nữa.");
     if (generation !== current) return;
+    void loadCatalog();
     stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: {
       facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 },
       frameRate: { ideal: 30, min: 15 },
@@ -492,12 +598,14 @@ async function start() {
     await cameraControls();
     if (generation !== current) { stop(); return; }
     active = true;
-    lastText = null;
+    recentReads.clear();
+    aimSince = 0;
     processed = elapsed = 0;
     laptop.previous = decoder.next = 0;
     sampleAt = scanningSince = performance.now();
     startButton.hidden = true;
     stopButton.hidden = false;
+    captureButton.hidden = false;
     hint.hidden = true;
     showMode();
     decoder.worker?.postMessage({ type: "reset" });
@@ -514,6 +622,7 @@ async function start() {
 startButton.addEventListener("click", start);
 stopButton.addEventListener("click", () => { stop(); message("Đã dừng camera."); });
 retry.addEventListener("click", sendPending);
+captureButton.addEventListener("click", saveFrames);
 search.addEventListener("submit", event => {
   event.preventDefault();
   const text = manual.value.trim();
@@ -545,7 +654,7 @@ torchButton.addEventListener("click", async () => {
   } catch (_) { torchButton.hidden = true; }
 });
 zoom.addEventListener("input", () => {
-  store("scanner-zoom", zoom.value);
+  store(ZOOM_KEY, zoom.value);
   track?.applyConstraints({ advanced: [{ zoom: Number(zoom.value) }] }).catch(() => {});
 });
 addEventListener("pagehide", stop);
